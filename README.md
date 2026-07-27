@@ -298,8 +298,8 @@ Filter     category=tool-outputs, min-tokens=2000
            4 of 228 items, 27,462 of 135,668 tokens — 20.2% of this turn,
            excluding the unattributed remainder
 
-   14,805   10.9%  Tool outputs   Tool output: Read C:\Users\anes…repos\VoxMux\BACKLOG.md
-    7,822    5.8%  Tool outputs   Tool output: Read C:\Users\anes…epos\VoxMux\docs\HANDOFF.md
+   14,805   10.9%  Tool outputs   Read C:\Users\anesk\source\repos\VoxMux\BACKLOG.md
+    7,822    5.8%  Tool outputs   Read C:\Users\anesk\source\repos\VoxMux\docs\HANDOFF.md
     ...
 Shares are of the turn's full 135,668 tokens, so these rows deliberately do not
 add up to 100%. 4 of 228 items matched.
@@ -331,7 +331,9 @@ turn holding four `Read` results is otherwise four identical rows with different
 numbers. The argument names are tried in order of specificity rather than
 hardcoded per tool, so an unfamiliar MCP tool taking a `path` or a `query` is
 named correctly anyway; where nothing matches, the bare tool name stands, because
-a wrong filename is worse than no filename.
+a wrong filename is worse than no filename. There is no `Tool output:` prefix —
+the category column beside it already says that, and a label restating its own
+column spends a fifth of the width saying nothing.
 
 `ct residual` tracks the context the agent never wrote down, turn by turn. Since
 nothing in the log records a tool being registered or an MCP server connecting,
