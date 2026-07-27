@@ -175,17 +175,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
-            let snapshot = match &calibrated {
-                Some((estimator, _)) => {
-                    app.snapshot_with(&session, resolved.binding, turn, estimator)?
-                }
-                None => app.snapshot(&session, resolved.binding, turn)?,
-            };
-            let name = match &calibrated {
-                Some((estimator, _)) => estimator.name().to_string(),
-                None => app.estimator_name(resolved.binding).to_string(),
-            };
-            render::context(&snapshot, &name, calibrated.as_ref().map(|(_, r)| *r), json);
+            let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn)?;
+            render::context(&snapshot, &calibrated.name(&app, resolved.binding), calibrated.ratio, json);
         }
 
         Command::Largest {
@@ -196,13 +187,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
-            let snapshot = match session_estimator(&app, &session, resolved.binding) {
-                Some((estimator, _)) => {
-                    app.snapshot_with(&session, resolved.binding, turn, &estimator)?
-                }
-                None => app.snapshot(&session, resolved.binding, turn)?,
-            };
-            render::largest(&snapshot, limit, json);
+            let calibrated = session_estimator(&app, &session, resolved.binding);
+            let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn)?;
+            render::largest(&snapshot, calibrated.ratio, limit, json);
         }
 
         Command::Doctor { id, json } => {
@@ -212,6 +199,40 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// The estimator to use for one session, and the measurement behind it.
+///
+/// Both are carried together because every consumer needs both: the estimator to
+/// produce the numbers, and the [`DerivedRatio`] to know what may honestly be
+/// said about them. Splitting them is how `ct largest` came to print a residual
+/// captioned "system prompt + tool schemas" for sessions where `ct context`
+/// correctly reported the figure as not measurable.
+struct SessionCalibration {
+    estimator: Option<HeuristicEstimator>,
+    ratio: Option<DerivedRatio>,
+}
+
+impl SessionCalibration {
+    fn snapshot(
+        &self,
+        app: &ContextTrace,
+        session: &ct_domain::AgentSession,
+        binding: usize,
+        turn: TurnNumber,
+    ) -> Result<ct_domain::ContextSnapshot, Box<dyn std::error::Error>> {
+        Ok(match &self.estimator {
+            Some(e) => app.snapshot_with(session, binding, turn, e)?,
+            None => app.snapshot(session, binding, turn)?,
+        })
+    }
+
+    fn name(&self, app: &ContextTrace, binding: usize) -> String {
+        match &self.estimator {
+            Some(e) => e.name().to_string(),
+            None => app.estimator_name(binding).to_string(),
+        }
+    }
 }
 
 /// Build an estimator calibrated to this session, where that makes sense.
@@ -226,15 +247,15 @@ fn session_estimator(
     app: &ContextTrace,
     session: &ct_domain::AgentSession,
     binding: usize,
-) -> Option<(HeuristicEstimator, DerivedRatio)> {
-    if session.agent() != AgentKind::ClaudeCode {
-        return None;
+) -> SessionCalibration {
+    let ratio = (session.agent() == AgentKind::ClaudeCode)
+        .then(|| app.derive_ratio(session, binding))
+        .flatten();
+
+    SessionCalibration {
+        estimator: ratio.map(|r| HeuristicEstimator::with_ratio(r.chars_per_token)),
+        ratio,
     }
-    let derived = app.derive_ratio(session, binding)?;
-    Some((
-        HeuristicEstimator::with_ratio(derived.chars_per_token),
-        derived,
-    ))
 }
 
 /// Resolve `--turn`, defaulting to the session's largest turn.

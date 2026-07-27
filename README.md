@@ -18,11 +18,11 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 
 > **Status: milestone 1 complete.** Both adapters, the reconstruction engine and
 > the CLI work end to end against real sessions. Verified on a local corpus of
-> 774 sessions: the 120 largest parse with zero failures and 100%
-> event-recognition fidelity, reported totals match the raw JSONL, and a
-> before/after mtime check confirms nothing is written. 83 of 98 Claude Code
-> sessions now report a *measured* figure for the context their agent never
-> logged. See [Current state](#current-state).
+> 774 sessions: the **150 largest — 126 Claude Code and 24 Codex — parse with
+> zero failures** and 100% event-recognition fidelity, reported totals match the
+> raw JSONL, and a before/after mtime check confirms nothing is written. Most
+> Claude Code sessions now report a *measured* figure for the context their agent
+> never logged. See [Current state](#current-state).
 
 ---
 
@@ -126,9 +126,16 @@ and `ct doctor` names the affected turns.
 written with an empty `thinking` field and only an opaque `signature` — 27
 million characters of signature corpus-wide. That reasoning still occupied the
 model's context, so counting it as zero drops the largest single category of
-unlogged content. Where text *was* retained, signature length tracks it closely
-(median 2.09 characters of signature per character of thinking, quartiles 1.76
-and 2.42), so size is derived from that ratio and flagged as derived.
+unlogged content.
+
+Size is derived from signature length, but *not* from the obvious statistic. The
+median of `signature / thinking` across the 49 blocks that kept both is 2.09 —
+and applying it here would be wrong, because those ratios are strongly
+size-dependent (6.07 at 60 characters of thinking, 2.49 at 5,957) and the sample's
+typical block is 3.7× smaller than the redacted blocks it would be applied to.
+Regressing signature on thinking length instead gives slope **2.353**, intercept
+−175, R² 0.9707. Using the median would have inflated every redacted block by
+about 12%.
 
 *Not everything logged was sent.* A large tool result is persisted to disk and
 only a truncated form appears in `message.content`; the full `toolUseResult` was
@@ -161,9 +168,8 @@ Differencing consecutive turns cancels the unknown constant, leaving
 anomalous turn. Only then is the constant recovered from the levels. That order
 matters: solving for the constant first makes the two chase each other.
 
-The payoff is that "what the agent never wrote down" becomes a measurement.
-Across the 98 sessions swept, **83 now report a figure** where previously none
-could:
+The payoff is that "what the agent never wrote down" becomes a measurement. Most
+swept sessions now report a figure where previously none could:
 
 ```
 Context at turn 104 — 419,905 tokens  [observed]
@@ -175,21 +181,26 @@ Context at turn 104 — 419,905 tokens  [observed]
 
   Ratio      2.42 characters per token, measured from this session's own
              usage across 118 turn pairs (spread 1.9x).
-  Unlogged   ~36,506 tokens the agent never wrote down — its system prompt
+  Unlogged   ~37,143 tokens the agent never wrote down — its system prompt
              and tool JSON schemas. Measured, not assumed.
 ```
 
-That 36,506 is corroborated independently: at turn 1 of a session, where the
-cache is cold, the gap between logged content and reported prompt is ~40,000
-tokens.
+That figure is corroborated independently: at turn 1 of a session, where the
+cache is cold and the arithmetic needs no fitting at all, the gap between logged
+content and reported prompt is ~40,000 tokens.
 
 ### When it does not work, it says so
 
-On 14 of 98 sessions the reconstruction accounts for **more** content than the
-prompt held, so the constant comes out negative. Claude Code drops old content
-from the context without recording that it did, and no marker for it exists
-anywhere in the log. Rather than invent semantics for undocumented behaviour, the
-tool reports the failure:
+On roughly one Claude Code session in seven the reconstruction accounts for
+**more** content than the prompt held, so the constant comes out negative.
+
+What causes this is **not established**. The leading hypothesis is that Claude
+Code removes old content from the context without recording that it has: the
+affected sessions have linear chains with no rewinds, yet hold several times more
+logged content than their reported prompt. But no marker for such a removal
+exists anywhere in the log, and absent one this remains a hypothesis rather than
+a finding — so the tool reports the discrepancy rather than modelling a cause it
+cannot observe:
 
 ```
   Unlogged   not measurable here: reconstruction accounted for more content
@@ -237,7 +248,7 @@ cheaper audit of the "nothing leaves this machine" claim.
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-141 tests passing.
+144 tests passing.
 
 Committed fixtures are hand-authored synthetic sessions, never captured, each
 encoding one way the real formats mislead a reader: a rewound branch that must
@@ -277,10 +288,9 @@ Two limitations are stated by the tool rather than hidden by it:
   reasoning events whose text the log stripped — both cases where a number is
   weaker than its presentation might suggest.
 
-**The main known gap** is that Claude Code removes old content from the context
-without recording that it has done so. No marker for it exists in the log, so
-ContextTrace detects the discrepancy and reports it rather than modelling a
-behaviour it cannot observe.
+**The main known gap** is the over-counting described above, whose cause is not
+yet established. ContextTrace detects the discrepancy and reports it rather than
+modelling a behaviour it cannot observe.
 
 ---
 

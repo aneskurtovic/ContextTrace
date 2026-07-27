@@ -409,11 +409,23 @@ fn block_type(block: &Value) -> Option<&str> {
 /// those blocks as zero would silently drop the largest single category of
 /// unlogged context.
 ///
-/// On the 38 blocks that *did* retain their text, signature length tracks text
-/// length closely: median 2.09 characters of signature per character of
-/// thinking, quartiles 1.76 and 2.42. That ratio is a measurement, not a guess
-/// about the encoding, and it is only ever used to produce an *estimate*.
-const SIGNATURE_CHARS_PER_THINKING_CHAR: f32 = 2.09;
+/// # Why a regression slope and not the median ratio
+///
+/// 49 blocks in the corpus retained both their text and their signature. The
+/// obvious statistic -- the median of `signature / thinking` -- gives 2.09, and
+/// it is *wrong to apply here*: those ratios are strongly size-dependent (6.07
+/// at 60 characters of thinking, 2.49 at 5,957), so a median drawn from a sample
+/// whose typical block is 936 characters cannot be applied to redacted blocks
+/// averaging 3,454.
+///
+/// Regressing signature length on thinking length instead gives slope 2.353 with
+/// an intercept of -175 and an R² of 0.9707: near-proportional, tightly fitted,
+/// and stable across the size range that matters. Using the median would inflate
+/// every redacted block by about 12%.
+///
+/// This is a measurement of an observed relationship, not a claim about how the
+/// signature is encoded, and it only ever produces an *estimate*.
+const SIGNATURE_CHARS_PER_THINKING_CHAR: f32 = 2.353;
 
 /// Character budget standing in for an image's ~1,600-token ceiling.
 ///
@@ -871,14 +883,14 @@ mod tests {
     fn redacted_thinking_is_sized_from_its_signature_rather_than_counted_as_zero() {
         // 99.2% of thinking blocks in the corpus look like this: no text, a
         // large signature, and context that was genuinely occupied.
-        let signature: String = "s".repeat(20_900);
+        let signature: String = "s".repeat(23_530);
         let blocks = vec![json!({
             "type": "thinking", "thinking": "", "signature": signature
         })];
         let chars = content_chars(&blocks);
         assert_eq!(
             chars, 10_000,
-            "signature length divided by the measured 2.09 ratio"
+            "signature length divided by the regressed 2.353 slope"
         );
 
         let line = json!({"type": "assistant", "message": {"content": blocks}});

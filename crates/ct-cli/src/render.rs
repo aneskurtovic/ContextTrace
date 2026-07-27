@@ -309,7 +309,12 @@ pub fn context(
     );
 }
 
-pub fn largest(snapshot: &ContextSnapshot, limit: usize, json: bool) {
+pub fn largest(
+    snapshot: &ContextSnapshot,
+    derived: Option<DerivedRatio>,
+    limit: usize,
+    json: bool,
+) {
     let top = snapshot.largest_contributors(limit);
 
     if json {
@@ -344,7 +349,12 @@ pub fn largest(snapshot: &ContextSnapshot, limit: usize, json: bool) {
         );
     }
 
-    if snapshot.residual_is_meaningful() {
+    // The residual may only be *called* the system prompt and tool schemas when
+    // it was actually measurable. Where reconstruction over-counted, the derived
+    // overhead is `None` and this row would be a caption invented for arithmetic
+    // left over from a broken measurement -- which is precisely the overclaim
+    // `ct context` suppresses, so it must be suppressed here too.
+    if snapshot.residual_is_meaningful() && may_name_the_residual(derived) {
         println!(
             "\n{}  {}  {}",
             rpad(&thousands(snapshot.residual()), 9),
@@ -354,6 +364,14 @@ pub fn largest(snapshot: &ContextSnapshot, limit: usize, json: bool) {
             ),
             "unattributed (system prompt + tool schemas)"
         );
+    } else if let Some(ratio) = derived {
+        if ratio.unlogged_overhead.is_none() {
+            println!(
+                "\nThe unlogged remainder is not measurable for this session -- reconstruction\n\
+                 accounted for more content than the reported prompt held. These rows are\n\
+                 proportions of the observed total, not a complete inventory."
+            );
+        }
     }
 }
 
@@ -442,9 +460,56 @@ pub fn doctor(
     }
 }
 
+/// Whether the leftover tokens may be *called* the system prompt and tool
+/// schemas.
+///
+/// Only when the session's unlogged overhead was actually measurable. Where
+/// reconstruction over-counted, the leftover is arithmetic from a broken
+/// measurement, and captioning it would be exactly the overclaim this tool
+/// exists to prevent. Where no ratio was derived at all -- Codex, whose items are
+/// counted exactly -- the residual is trustworthy and may be named.
+fn may_name_the_residual(derived: Option<DerivedRatio>) -> bool {
+    derived.is_none_or(|r| r.unlogged_overhead.is_some())
+}
+
 fn print_json<T: serde::Serialize + ?Sized>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(text) => println!("{text}"),
         Err(e) => eprintln!("error: could not serialise output: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ratio(overhead: Option<u32>) -> DerivedRatio {
+        DerivedRatio {
+            chars_per_token: 2.4,
+            pairs_used: 40,
+            unlogged_overhead: overhead,
+            dispersion: 1.4,
+        }
+    }
+
+    #[test]
+    fn an_unmeasurable_overhead_is_never_captioned_as_the_system_prompt() {
+        // The regression this guards: `ct context` reported "not measurable"
+        // while `ct largest` printed the same session's leftover tokens labelled
+        // "system prompt + tool schemas". Two views, one session, contradictory
+        // confidence.
+        assert!(!may_name_the_residual(Some(ratio(None))));
+    }
+
+    #[test]
+    fn a_measured_overhead_may_be_named() {
+        assert!(may_name_the_residual(Some(ratio(Some(36_506)))));
+    }
+
+    #[test]
+    fn an_agent_with_exact_counts_keeps_its_residual() {
+        // Codex derives no ratio because tiktoken counts its items exactly, so
+        // suppressing its residual would hide a figure that is trustworthy.
+        assert!(may_name_the_residual(None));
     }
 }

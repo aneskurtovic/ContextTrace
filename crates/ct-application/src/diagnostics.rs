@@ -65,15 +65,52 @@ pub struct Diagnostics {
 
 impl Diagnostics {
     /// True when the parse understood everything the agent wrote.
+    ///
+    /// Says nothing about whether the agent wrote everything down -- see
+    /// [`Diagnostics::reconstruction_caveats`].
     pub fn is_fully_understood(&self) -> bool {
         self.unrecognised_events == 0
     }
 
+    /// Ways this session is reconstructed less directly than its fidelity score
+    /// suggests, phrased for a one-line summary.
+    pub fn reconstruction_caveats(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.redacted_reasoning > 0 {
+            out.push(format!(
+                "{} reasoning event(s) were logged without their text",
+                self.redacted_reasoning
+            ));
+        }
+        if self.multi_call_turns > 0 {
+            out.push(format!(
+                "{} turn(s) report figures from several API calls",
+                self.multi_call_turns
+            ));
+        }
+        out
+    }
+
     /// One-line summary for terminal output.
+    ///
+    /// Recognising every event is not the same as reconstructing it faithfully.
+    /// A session can score full fidelity while hundreds of its reasoning blocks
+    /// were logged without their text and its turns report figures summed across
+    /// several API calls. Since this line is the one people quote, it must not
+    /// claim more than the parse actually established.
     pub fn headline(&self) -> String {
         if self.is_fully_understood() {
-            format!("{} events, all recognised", self.total_events)
-        } else {
+            let caveats = self.reconstruction_caveats();
+            return match caveats.is_empty() {
+                true => format!("{} events, all recognised", self.total_events),
+                false => format!(
+                    "{} events, all recognised - but {}",
+                    self.total_events,
+                    caveats.join(" and ")
+                ),
+            };
+        }
+        {
             format!(
                 "{} events, {} unrecognised ({:.1}% fidelity) - context reconstruction may be incomplete",
                 self.total_events,
