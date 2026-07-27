@@ -516,6 +516,12 @@ pub struct ItemSize {
 /// is the calibration scale, so a per-turn size column would show the item
 /// growing and shrinking when nothing about it changed. One figure, from one
 /// turn, named as being from that turn.
+///
+/// Naming the turn is not decoration. This sizes at the last turn holding the
+/// item, while `ct largest` defaults to the session's peak turn, so the same
+/// item legitimately reads as 12.3% of 73,138 there and 2.6% of 339,687 here.
+/// The token count is the same; only the denominator moved, and the line says
+/// which one it used.
 pub fn trace(life: &ItemLifecycle, size: Option<&ItemSize>, agent: AgentKind, json: bool) {
     if json {
         print_json(&TraceReport {
@@ -560,15 +566,24 @@ pub fn trace(life: &ItemLifecycle, size: Option<&ItemSize>, agent: AgentKind, js
         life.scanned_turns
     );
 
-    if let Some(size) = size {
-        println!(
+    match size {
+        Some(size) => println!(
             "Size      {} tokens at turn {} - {} of that turn's {} {}",
             thousands(size.contributor.tokens),
             size.turn,
             percent(size.contributor.share),
             thousands(size.turn_total.tokens()),
             confidence_tag(size.contributor.confidence)
-        );
+        ),
+        // Never just omit the row. A silently missing figure reads as "this
+        // item has no size", when what happened is that the turn could not be
+        // calibrated -- which is a fact about the turn, not about the item.
+        None => println!(
+            "Size      not available: turn {} could not be calibrated, so there is no\n\
+             {:10}total to state a share of",
+            life.last_present().unwrap_or_default(),
+            ""
+        ),
     }
 
     match (&life.departure, life.still_present) {

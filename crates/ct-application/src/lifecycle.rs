@@ -149,8 +149,10 @@ pub struct ItemLifecycle {
     pub departure: Option<Departure>,
     /// True when the item was still in context at the last turn on its thread.
     pub still_present: bool,
-    /// Turns on this item's thread whose reconstruction failed. Presence there
-    /// is unknown; it is neither counted as present nor read as a gap.
+    /// Unreadable turns bearing on this item: those inside its span, and the
+    /// one directly after it if that is why no departure could be established.
+    /// Presence there is unknown -- neither counted as present nor read as a
+    /// gap. Unreadable turns outside the span are not this item's business.
     pub unknown_turns: Vec<u32>,
     /// Turns scanned on this item's thread.
     pub scanned_turns: usize,
@@ -358,6 +360,22 @@ impl LifecycleSweep {
             (false, Some(last)) => departure_after(&scanned, last.to, self.agent),
             _ => None,
         };
+
+        // Only the unreadable turns that bear on *this* item's history: the ones
+        // inside its span, which broke a run, and the one directly after it,
+        // which is why no departure could be established. An unreadable turn
+        // fifty turns before the item existed says nothing about it, and
+        // reporting it under "the runs above stop at them" would be false.
+        let span = runs.first().map(|r| r.from).zip(runs.last().map(|r| r.to));
+        let blocking = runs
+            .last()
+            .and_then(|last| scanned.iter().position(|s| s.turn == last.to))
+            .and_then(|i| scanned.get(i + 1))
+            .filter(|next| !next.readable)
+            .map(|next| next.turn);
+        unknown_turns.retain(|t| {
+            span.is_some_and(|(from, to)| (from..=to).contains(t)) || blocking == Some(*t)
+        });
 
         ItemLifecycle {
             id: record.id.clone(),
@@ -591,6 +609,22 @@ mod tests {
         assert_eq!(life.runs.len(), 2, "an unknown turn must not be read as continuity");
         assert!(life.still_present);
         assert!(life.departure.is_none());
+    }
+
+    #[test]
+    fn an_unreadable_turn_outside_the_item_s_life_is_not_its_business() {
+        // Reporting it would put "the runs above stop at them" beside a turn
+        // that has nothing to do with the runs above.
+        let turns = vec![
+            scan(1, false, None),
+            scan(2, true, None),
+            scan(3, true, None),
+            scan(4, true, None),
+        ];
+        let life = lifecycle(&sweep(turns, vec![3, 4], AgentKind::ClaudeCode));
+
+        assert!(life.unknown_turns.is_empty(), "got {:?}", life.unknown_turns);
+        assert_eq!(life.first_present(), Some(3));
     }
 
     #[test]

@@ -253,12 +253,12 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
 | `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 87 tests |
-| `ct-application` — use cases, diagnostics, item lifecycle | Implemented, 30 tests |
+| `ct-application` — use cases, diagnostics, item lifecycle | Implemented, 31 tests |
 | `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`trace`/`residual`/`doctor` | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-197 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+198 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -375,7 +375,11 @@ Four things this view refuses to say:
   Counting that as absence would make every long-lived item appear to flicker.
 - **The size is one measurement, not a series.** An item's text does not change
   while it sits in context; only the calibration scale moves, so a per-turn size
-  column would show movement the item does not have.
+  column would show movement the item does not have. It is measured at the last
+  turn holding the item, while `ct largest` defaults to the session's *peak*
+  turn — so the same item reads as 12.3% of 73,138 there and 2.6% of 339,687
+  here. Same token count, different denominator, and each line names the turn it
+  used.
 
 For Codex the fold only clears at a compaction, so a departure without one is a
 defect in ContextTrace rather than a fact about the session — and the view says
@@ -383,11 +387,14 @@ exactly that instead of inventing a branch Codex's linear log cannot have. A
 sweep of 240 items across 40 local sessions produced no such case.
 
 Building this found one: the Codex system prompt was being dropped at every
-compaction, because reconstruction cleared the whole item list. `base_instructions`
-is not part of the item list a compaction replaces — `replacement_history`
-carries user and developer messages only, and Codex sends its system prompt as
-the request's own field — so it survives, and post-compaction turns were
-understating it and inflating their unattributed remainder by its size.
+compaction, because reconstruction cleared the whole item list.
+`base_instructions` is not part of the item list a compaction replaces — Codex
+sends its system prompt as the request's own field. Measured across every
+compaction in the local Codex corpus (47 events in 15 sessions, 593
+`replacement_history` entries: 450 user messages, 96 developer messages, 47
+opaque `compaction` blobs), **no entry carries the system role**. So it survives
+the fold, and post-compaction turns had been understating their accounted
+content and inflating their unattributed remainder by its size.
 
 `ct residual` tracks the context the agent never wrote down, turn by turn. Since
 nothing in the log records a tool being registered or an MCP server connecting,

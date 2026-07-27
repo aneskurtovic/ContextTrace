@@ -401,10 +401,13 @@ impl ContextSnapshot {
 
     /// One named item's row, if this turn held it.
     ///
-    /// Its share is of the turn's total, exactly as in the ranked view -- so the
-    /// figure `ct trace` prints for an item is the figure `ct largest` printed
-    /// for the same item at the same turn. Two views disagreeing by a few
-    /// hundred tokens would read as a bug in the tool, and would be one.
+    /// Its share is of the turn's total, exactly as in the ranked view, so the
+    /// two agree **at a given turn**. They routinely pick different ones -- the
+    /// ranked view defaults to the session's peak turn, while a lifecycle view
+    /// sizes at the last turn holding the item -- and the same item is then a
+    /// different share of two different totals. That is why every caller prints
+    /// the turn it sized at: identical token counts against unequal
+    /// denominators are only confusing when the denominator is left implicit.
     pub fn contributor(&self, id: &ContextItemId) -> Option<Contributor> {
         let item = self.items.iter().find(|i| &i.id == id)?;
         Some(Contributor {

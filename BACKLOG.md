@@ -170,8 +170,12 @@ turn, not inferred from `first_seen_turn`. Those answer different questions —
 one is when a line was written, the other is when it entered a request — and
 where they disagree the view prints both rather than reconciling them. The sweep
 runs on the character probe because membership does not depend on the estimator;
-size comes from one properly calibrated snapshot, so the figure agrees with the
-row the user just read in `ct largest`.
+size comes from one properly calibrated snapshot, computed exactly as the ranked
+view computes it. The two agree *at a given turn* and routinely pick different
+ones — `ct largest` defaults to the session's peak, this sizes at the last turn
+holding the item — so the same item reads as 12.3% of 73,138 there and 2.6% of
+339,687 here. Same token count, different denominator, and both lines name the
+turn they used.
 
 **Three refusals encoded as a sum type, not as prose.** A departure is a
 `Compaction`, a `BranchDiverged` or an `Unexplained`, because they are not
@@ -200,8 +204,10 @@ and the label alone is often a long path and never unique.
 **Why:** found by the first real `ct trace` run, which reported *"Codex system
 prompt — left after turn 79, the compaction at turn 80 removed it"*. It did not:
 `base_instructions` is not part of the item list a compaction replaces. Codex
-sends it as the request's own instructions field, and `replacement_history` in
-the corpus carries user and developer messages only.
+sends it as the request's own instructions field, and across every compaction in
+the local corpus — 47 events in 15 sessions, 593 `replacement_history` entries,
+450 user messages, 96 developer messages, 47 opaque `compaction` blobs — no
+entry carries the system role.
 **Done when:** reconstruction retains the system-prompt item across a compaction
 and drops the conversation, with a fixture asserting both halves. ✔
 
