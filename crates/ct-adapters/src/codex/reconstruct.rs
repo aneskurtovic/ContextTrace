@@ -57,8 +57,14 @@ pub fn reconstruct(
         }
 
         if let EventKind::Compacted(facts) = &event.kind {
-            // Everything before this point stopped being in context.
-            live.clear();
+            // Everything before this point stopped being in context -- except
+            // the system prompt, which was never part of the list being
+            // replaced. Codex sends it as the request's own instructions field,
+            // and `replacement_history` in the local corpus contains user and
+            // developer messages only. Clearing it made `ct trace` report the
+            // system prompt as evicted by a compaction, and inflated the
+            // unattributed remainder of every post-compaction turn by its size.
+            live.retain(|item| item.source == ContextSource::AgentSystemPrompt);
             preceding_compaction = Some(CompactionEvent {
                 turn: event.turn,
                 facts: facts.clone(),
@@ -344,6 +350,43 @@ mod tests {
         assert_eq!(r.items[0].category, ContextCategory::Summaries);
         assert!(r.preceding_compaction.is_some());
         assert!(r.preceding_compaction.unwrap().facts.replacement_recorded);
+    }
+
+    #[test]
+    fn the_system_prompt_survives_a_compaction() {
+        // It is not part of the item list a compaction replaces: Codex sends it
+        // as the request's own instructions field, and `replacement_history`
+        // holds user and developer messages only. Dropping it made `ct trace`
+        // report the system prompt as evicted, and quietly moved its tokens
+        // into the unattributed remainder of every later turn.
+        let events = vec![
+            event(
+                1,
+                EventKind::ContextInjection {
+                    mechanism: "base_instructions".into(),
+                    label: "Codex system prompt".into(),
+                    char_len: 8_000,
+                },
+                Some(TurnNumber::FIRST),
+            ),
+            message(2, MessageRole::User, 10_000),
+            event(
+                3,
+                EventKind::Compacted(CompactionFacts {
+                    replacement_recorded: true,
+                    ..Default::default()
+                }),
+                Some(TurnNumber::FIRST),
+            ),
+        ];
+        let s = session(events, 3, 2000);
+        let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
+
+        assert_eq!(r.items[0].source, ContextSource::AgentSystemPrompt);
+        assert!(
+            !r.items.iter().any(|i| i.category == ContextCategory::UserMessages),
+            "the conversation itself must still be replaced"
+        );
     }
 
     #[test]
