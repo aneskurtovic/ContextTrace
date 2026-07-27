@@ -1,11 +1,5 @@
 //! Anti-corruption layer for Claude Code.
 //!
-//! **Status: not yet implemented.** This module is a placeholder so the
-//! workspace builds; it does not implement
-//! [`AgentAdapter`](ct_domain::ports::AgentAdapter) yet. The notes below record
-//! what the format investigation established, so the implementation does not
-//! have to rediscover it.
-//!
 //! # The foreign model
 //!
 //! Claude Code writes `~/.claude/projects/<slugified-cwd>/<session-uuid>.jsonl`.
@@ -60,5 +54,169 @@
 //! cache_creation_input_tokens + cache_read_input_tokens` -- and
 //! [`TokenCalibrator`](ct_domain::services::TokenCalibrator) reconciles the two.
 
-/// Reads Claude Code sessions. Not yet implemented.
-pub struct ClaudeCodeAdapter;
+mod parse;
+mod reconstruct;
+
+use crate::home_dir;
+use crate::walk::{find_files, has_extension};
+use ct_domain::ports::{AgentAdapter, PortError, PortResult, ReconstructedContext, TokenEstimator};
+use ct_domain::{AgentKind, AgentSession, SessionDescriptor, SessionId, TurnNumber};
+use std::path::{Path, PathBuf};
+
+/// Reads Claude Code sessions.
+pub struct ClaudeCodeAdapter {
+    /// The `.claude` directory. Honours `CLAUDE_CONFIG_DIR`.
+    home: Option<PathBuf>,
+}
+
+impl ClaudeCodeAdapter {
+    pub fn new() -> Self {
+        let home = std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .or_else(|| home_dir().map(|h| h.join(".claude")));
+        Self { home }
+    }
+
+    /// Point the adapter at an explicit directory, for fixture tests that must
+    /// not depend on what happens to be installed on the machine.
+    pub fn with_home(home: impl Into<PathBuf>) -> Self {
+        Self {
+            home: Some(home.into()),
+        }
+    }
+
+    fn projects_dir(&self) -> Option<PathBuf> {
+        self.home
+            .as_ref()
+            .map(|h| h.join("projects"))
+            .filter(|p| p.is_dir())
+    }
+}
+
+impl Default for ClaudeCodeAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AgentAdapter for ClaudeCodeAdapter {
+    fn agent(&self) -> AgentKind {
+        AgentKind::ClaudeCode
+    }
+
+    fn roots(&self) -> Vec<String> {
+        self.projects_dir()
+            .map(|p| vec![p.display().to_string()])
+            .unwrap_or_default()
+    }
+
+    fn discover(&self) -> PortResult<Vec<SessionDescriptor>> {
+        let Some(dir) = self.projects_dir() else {
+            return Ok(Vec::new());
+        };
+
+        let mut out = Vec::new();
+        for path in find_files(&dir, |p| has_extension(p, "jsonl")) {
+            // One unreadable file must not hide every other session.
+            if let Ok(descriptor) = describe(&path) {
+                out.push(descriptor);
+            }
+        }
+        out.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+        Ok(out)
+    }
+
+    fn load(&self, descriptor: &SessionDescriptor) -> PortResult<AgentSession> {
+        parse::load(Path::new(&descriptor.path), descriptor.id.clone())
+    }
+
+    fn reconstruct(
+        &self,
+        session: &AgentSession,
+        turn: TurnNumber,
+        estimator: &dyn TokenEstimator,
+    ) -> PortResult<ReconstructedContext> {
+        reconstruct::reconstruct(session, turn, estimator)
+    }
+}
+
+/// Describe a session without parsing its body.
+///
+/// The session id is the filename stem and the project comes from the recorded
+/// `cwd` (falling back to the directory name), so listing hundreds of sessions
+/// costs one `stat` plus one short read each rather than hundreds of megabytes.
+fn describe(path: &Path) -> PortResult<SessionDescriptor> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
+
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let header = parse::read_header(path)?;
+
+    let project = header.cwd.clone().or_else(|| {
+        path.parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(unslug)
+    });
+
+    Ok(SessionDescriptor {
+        id: SessionId::new(stem).map_err(|e| PortError::Malformed {
+            path: path.display().to_string(),
+            detail: e.to_string(),
+        })?,
+        agent: AgentKind::ClaudeCode,
+        path: path.display().to_string(),
+        size_bytes: metadata.len(),
+        project,
+        started_at: header.timestamp,
+        last_activity: metadata
+            .modified()
+            .ok()
+            .map(chrono::DateTime::<chrono::Utc>::from),
+    })
+}
+
+/// Best-effort reversal of Claude Code's directory slugification.
+///
+/// The scheme replaces path separators and colons with `-`, which is lossy:
+/// `C--Users-anesk-source-repos-my-project` could have come from either
+/// `my-project` or `my/project`. So this is a display fallback only, used when
+/// the session's own recorded `cwd` is unavailable, and never as an identifier.
+fn unslug(slug: &str) -> String {
+    match slug.split_once("--") {
+        Some((drive, rest)) if drive.len() == 1 => {
+            format!("{}:\\{}", drive.to_ascii_uppercase(), rest.replace('-', "\\"))
+        }
+        _ => slug.replace('-', "/"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unslugs_windows_project_directories() {
+        assert_eq!(
+            unslug("C--Users-anesk-source-repos-ContextTrace"),
+            "C:\\Users\\anesk\\source\\repos\\ContextTrace"
+        );
+    }
+
+    #[test]
+    fn unslugs_posix_style_directories() {
+        assert_eq!(unslug("home-anes-code"), "home/anes/code");
+    }
+
+    #[test]
+    fn missing_claude_home_yields_no_roots_rather_than_an_error() {
+        let adapter = ClaudeCodeAdapter::with_home("Z:/definitely/not/here");
+        assert!(adapter.roots().is_empty());
+        assert!(adapter.discover().unwrap().is_empty());
+    }
+}

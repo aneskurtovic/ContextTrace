@@ -308,6 +308,46 @@ impl ContextSnapshot {
         (window > 0).then(|| self.total.tokens() as f32 / window as f32)
     }
 
+    /// How far heuristic estimates had to be moved to fit the observed total.
+    ///
+    /// `Some(0.78)` means the estimator guessed 28% high and everything was
+    /// scaled down to fit; `Some(1.0)` means it landed on the nose. `None` means
+    /// nothing needed calibrating.
+    ///
+    /// This matters for reading the rest of the snapshot honestly. When the
+    /// factor is well below 1.0 the estimates *saturated* the observed total,
+    /// which drives [`ContextSnapshot::residual`] to zero -- and a zero residual
+    /// then means "our guesses filled the budget", **not** "there is no hidden
+    /// context". The agent's system prompt and tool schemas are still in that
+    /// total; they have simply been absorbed into the visible rows. Surfacing
+    /// the factor is what keeps that distinction visible instead of quietly
+    /// overstating every category.
+    pub fn calibration_scale(&self) -> Option<f32> {
+        let mut scaled = 0u64;
+        let mut raw = 0u64;
+        for item in &self.items {
+            if let TokenCount::Calibrated {
+                tokens,
+                raw_estimate,
+            } = item.tokens
+            {
+                scaled += tokens as u64;
+                raw += raw_estimate as u64;
+            }
+        }
+        (raw > 0).then(|| scaled as f32 / raw as f32)
+    }
+
+    /// True when the residual is large enough to be worth interpreting as
+    /// unlogged context rather than as arithmetic rounding.
+    ///
+    /// Below this, describing it as "the system prompt and tool schemas" would
+    /// be an overclaim.
+    pub fn residual_is_meaningful(&self) -> bool {
+        let total = self.total.tokens();
+        total > 0 && (self.residual as f32 / total as f32) >= 0.005
+    }
+
     /// Composition by category, largest first, including the residual as an
     /// explicit [`ContextCategory::Unattributed`] row when non-zero.
     pub fn by_category(&self) -> Vec<CategoryBreakdown> {

@@ -194,6 +194,32 @@ impl AgentSession {
         self.turns.iter().filter_map(|t| t.prompt_tokens()).max()
     }
 
+    /// Number of events this version of ContextTrace could not classify.
+    pub fn unrecognised_total(&self) -> u32 {
+        self.unrecognised
+            .iter()
+            .map(|(_, count)| *count)
+            .fold(0u32, |a, b| a.saturating_add(b))
+    }
+
+    /// Fraction of events successfully mapped to domain concepts, 0.0 to 1.0.
+    ///
+    /// The early-warning signal for upstream format changes. A score of 1.0
+    /// means every line was understood; a drop means the agent started emitting
+    /// something new, and context reconstruction may be incomplete. Reporting
+    /// this is what turns "the agent changed its log format" from a silent
+    /// wrong answer into a visible number.
+    ///
+    /// An empty session scores 1.0: nothing was misunderstood.
+    pub fn fidelity(&self) -> f32 {
+        let total = self.events.len();
+        if total == 0 {
+            return 1.0;
+        }
+        let unrecognised = self.unrecognised_total().min(total as u32);
+        1.0 - (unrecognised as f32 / total as f32)
+    }
+
     /// Every compaction in the session, in order.
     pub fn compactions(&self) -> Vec<(usize, &Event)> {
         self.events
@@ -255,6 +281,49 @@ mod tests {
         let s = session_with_turns(&[10, 20]);
         assert_eq!(s.turn(TurnNumber::FIRST).unwrap().prompt_tokens(), Some(10));
         assert!(s.turn(TurnNumber::new(9).unwrap()).is_none());
+    }
+
+    #[test]
+    fn fidelity_reports_the_share_of_understood_events() {
+        let events = vec![];
+        let mut s = AgentSession::new(
+            SessionId::new("s").unwrap(),
+            AgentKind::ClaudeCode,
+            SessionMetadata::default(),
+            events,
+            vec![],
+            vec![],
+        );
+        assert_eq!(s.fidelity(), 1.0, "an empty session misunderstood nothing");
+
+        // 10 events, 2 of which are unrecognised.
+        let ten = (0..10)
+            .map(|i| Event {
+                id: crate::model::identity::EventId::Ordinal(i),
+                sequence: i,
+                timestamp: None,
+                kind: EventKind::SessionStarted,
+                source: crate::model::provenance::SourceRef::new(
+                    crate::model::identity::FileId(0),
+                    0,
+                    0,
+                    i + 1,
+                ),
+                raw_type: "x".into(),
+                turn: None,
+                links: Default::default(),
+            })
+            .collect();
+        s = AgentSession::new(
+            SessionId::new("s").unwrap(),
+            AgentKind::ClaudeCode,
+            SessionMetadata::default(),
+            ten,
+            vec![],
+            vec![("brand_new_type".into(), 2)],
+        );
+        assert_eq!(s.unrecognised_total(), 2);
+        assert!((s.fidelity() - 0.8).abs() < 1e-6, "got {}", s.fidelity());
     }
 
     #[test]

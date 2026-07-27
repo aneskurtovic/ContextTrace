@@ -150,8 +150,11 @@ fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> Event {
         }),
         "response_item" => translate_response_item(payload, inner.as_deref()),
         "event_msg" => translate_event_msg(payload, inner.as_deref(), metadata),
-        "world_state" => EventKind::SessionEvent {
-            subtype: "world_state".into(),
+        // Session-lifecycle records that are written to the log but never sent
+        // to the model. Classified rather than left unrecognised so the
+        // fidelity score stays a signal about *context* reconstruction.
+        "world_state" | "inter_agent_communication_metadata" => EventKind::SessionEvent {
+            subtype: raw_outer.clone(),
         },
         _ => EventKind::Unrecognised,
     };

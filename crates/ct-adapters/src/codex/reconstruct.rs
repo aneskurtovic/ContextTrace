@@ -17,6 +17,7 @@ use ct_domain::{
     AgentSession, CompactionEvent, Confidence, ContextCategory, ContextItem, ContextItemId,
     ContextSource, Event, MessageRole, Provenance, TokenCount, TurnNumber,
 };
+use std::collections::HashMap;
 
 pub fn reconstruct(
     session: &AgentSession,
@@ -31,6 +32,11 @@ pub fn reconstruct(
         .anchor_index
         .unwrap_or_else(|| session.events().len().saturating_sub(1));
 
+    // A function_call_output carries only the call_id it answers, so without
+    // this join the largest contributor reads as an opaque id rather than the
+    // command that produced it.
+    let mut tool_names: HashMap<&str, &str> = HashMap::new();
+
     // The live item list, rebuilt by replaying events in order.
     let mut live: Vec<ContextItem> = Vec::new();
     let mut preceding_compaction: Option<CompactionEvent> = None;
@@ -38,6 +44,15 @@ pub fn reconstruct(
     for (index, event) in session.events().iter().enumerate() {
         if index > anchor {
             break;
+        }
+
+        if let EventKind::ToolCall {
+            tool,
+            call_id: Some(id),
+            ..
+        } = &event.kind
+        {
+            tool_names.insert(id.as_str(), tool.as_str());
         }
 
         if let EventKind::Compacted(facts) = &event.kind {
@@ -56,7 +71,7 @@ pub fn reconstruct(
             continue;
         }
 
-        if let Some(item) = to_item(event, estimator) {
+        if let Some(item) = to_item(event, estimator, &tool_names) {
             live.push(item);
         }
     }
@@ -79,9 +94,13 @@ pub fn reconstruct(
 }
 
 /// Translate one context-occupying event into a context item.
-fn to_item(event: &Event, estimator: &dyn TokenEstimator) -> Option<ContextItem> {
+fn to_item(
+    event: &Event,
+    estimator: &dyn TokenEstimator,
+    tool_names: &HashMap<&str, &str>,
+) -> Option<ContextItem> {
     let char_len = event.char_len().unwrap_or(0);
-    let (category, source, label) = classify(event)?;
+    let (category, source, label) = classify(event, tool_names)?;
 
     Some(ContextItem {
         id: ContextItemId::new(format!("codex:{}", event.source.line_no)),
@@ -97,7 +116,10 @@ fn to_item(event: &Event, estimator: &dyn TokenEstimator) -> Option<ContextItem>
     })
 }
 
-fn classify(event: &Event) -> Option<(ContextCategory, ContextSource, String)> {
+fn classify(
+    event: &Event,
+    tool_names: &HashMap<&str, &str>,
+) -> Option<(ContextCategory, ContextSource, String)> {
     Some(match &event.kind {
         EventKind::Message { role, preview, .. } => match role {
             MessageRole::Developer | MessageRole::System => (
@@ -131,6 +153,12 @@ fn classify(event: &Event) -> Option<(ContextCategory, ContextSource, String)> {
         EventKind::ToolResult { tool, call_id, .. } => {
             let name = tool
                 .clone()
+                .or_else(|| {
+                    call_id
+                        .as_deref()
+                        .and_then(|id| tool_names.get(id))
+                        .map(|n| n.to_string())
+                })
                 .or_else(|| call_id.clone())
                 .unwrap_or_else(|| "tool".into());
             (

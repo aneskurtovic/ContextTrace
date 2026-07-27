@@ -16,9 +16,11 @@ It is not a chat-history viewer. The workflow it exists for is:
 
 Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 
-> **Status: early construction.** The domain core and the Codex adapter are
-> implemented and tested. The Claude Code adapter, application layer and CLI are
-> in progress. See [Current state](#current-state).
+> **Status: milestone 1 complete.** Both adapters, the reconstruction engine and
+> the CLI work end to end against real sessions. Verified on a local corpus of
+> 774 sessions: the 100 largest (up to 99 MB) parse with zero failures and 100%
+> event-recognition fidelity, and reported context totals match the raw JSONL
+> exactly. See [Current state](#current-state).
 
 ---
 
@@ -153,26 +155,44 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 | Component | Status |
 |---|---|
-| `ct-domain` — model, ports, calibration | Implemented, 29 tests |
+| `ct-domain` — model, ports, calibration | Implemented, 30 tests |
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL | Documented, not implemented |
-| `ct-application` — use cases | Not started |
-| `ct-cli` — `sessions`/`inspect`/`context`/`largest`/`doctor` | Not started |
+| `ct-adapters` — Claude Code ACL (parse + parent-chain walk) | Implemented, 64 tests |
+| `ct-application` — use cases and diagnostics | Implemented, 13 tests |
+| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`doctor` | Implemented |
+| Standalone JSONL fixture files | Not started (shapes covered by inline unit tests) |
+| `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-Planned CLI surface, once the core is proven:
+114 tests passing.
+
+### Working CLI surface
 
 ```
-ct sessions
-ct inspect <id>
-ct context <id> --turn 42
-ct largest <id> --turn 42
-ct diff    <id> --turn 20..42
+ct roots                          # which local directories are read
+ct sessions [--agent] [--project] [--since] [--limit]
+ct inspect <id> [--raw] [--limit]
+ct context <id> [--turn N]        # defaults to the session's largest turn
+ct largest <id> [--turn N] [--limit]
 ct doctor  <id>
 ```
 
-`--json` on every command from the start, so ContextTrace is pipeable into other
-tooling before any desktop UI exists.
+`--json` on every command, so ContextTrace is pipeable into other tooling before
+any desktop UI exists. Domain types serialise as tagged sum types
+(`{"kind":"calibrated",…}`), so downstream scripts never regex strings.
+
+### A note on reading the numbers
+
+Percentages are shares of an **exactly known** total, so they are trustworthy.
+Individual Claude Code figures are calibrated estimates, and `ct context` prints
+the scale factor that was applied.
+
+When the estimator runs high, the scaled figures consume the whole budget and no
+residual remains. That does **not** mean there is no hidden context — the system
+prompt and tool schemas are still inside the total, with their share absorbed
+into the visible categories. The CLI says so explicitly rather than letting a
+zero residual imply a complete inventory. Improving the estimator so a genuine
+residual emerges is the main known accuracy gap.
 
 ---
 
