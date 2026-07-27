@@ -61,6 +61,12 @@ clap = { version = "4", default-features = false, features = [
     "error-context",
 ] }
 
+[workspace.lints.clippy]
+# Descending sorts are written `b.cmp(&a)` throughout, which reads as what it is.
+# The suggested `sort_by_key(|x| Reverse(...))` is not clearer, and does not
+# compile unchanged where the key borrows from the element.
+unnecessary_sort_by = "allow"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

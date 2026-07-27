@@ -53,9 +53,16 @@ pub type PortResult<T> = Result<T, PortError>;
 
 /// What an adapter reconstructed for one turn, before the domain balances it.
 ///
-/// Items carry whatever counts the adapter could honestly produce -- exact for
-/// Codex where a real tokenizer applies, estimated for Claude Code where none
-/// exists. The adapter does *not* decide the headline total or the residual.
+/// Items carry whatever counts the adapter could honestly produce. Today that
+/// is `Estimated` for both agents: adapters size items from the character count
+/// recorded at parse time, via [`TokenEstimator::estimate_from_chars`], because
+/// counting exactly would mean re-reading and re-parsing every line of a session
+/// that can reach 55 MB. Codex *could* be exact -- `tiktoken` applies to
+/// GPT-family models and [`TokenEstimator::count_text`] implements it -- but
+/// nothing calls that path, and the docs must say what the code does rather than
+/// what the design allows.
+///
+/// The adapter does *not* decide the headline total or the residual.
 #[derive(Debug, Clone)]
 pub struct ReconstructedContext {
     pub items: Vec<ContextItem>,

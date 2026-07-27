@@ -28,6 +28,17 @@ pub enum Confidence {
 }
 
 impl Confidence {
+    pub const ALL: [Confidence; 3] = [
+        Confidence::Observed,
+        Confidence::Derived,
+        Confidence::Estimated,
+    ];
+
+    pub fn parse(s: &str) -> Option<Confidence> {
+        let norm = s.trim().to_ascii_lowercase();
+        Confidence::ALL.into_iter().find(|c| c.label() == norm)
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Confidence::Observed => "observed",

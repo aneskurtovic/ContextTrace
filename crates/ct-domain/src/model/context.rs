@@ -6,17 +6,19 @@
 //! whichever adapter produced it remembered to reconcile its numbers.
 
 use super::event::CompactionFacts;
+use super::filter::{FilteredView, ItemFilter};
 use super::identity::{ContextItemId, SessionId, TurnNumber};
 use super::provenance::{Confidence, Provenance, SourceRef};
 use super::session::AgentKind;
 use super::tokens::TokenCount;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::fmt;
 
 /// What kind of thing a context item is. Drives the composition breakdown.
+// Kebab-case on the wire so the JSON name and the `--category` argument are the
+// same word. One vocabulary; nothing to translate between the two surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum ContextCategory {
     /// The agent's own base/system prompt.
     SystemInstructions,
@@ -45,6 +47,36 @@ pub enum ContextCategory {
 }
 
 impl ContextCategory {
+    pub const ALL: [ContextCategory; 14] = [
+        ContextCategory::SystemInstructions,
+        ContextCategory::DeveloperInstructions,
+        ContextCategory::RepositoryInstructions,
+        ContextCategory::ToolDefinitions,
+        ContextCategory::UserMessages,
+        ContextCategory::AssistantMessages,
+        ContextCategory::Reasoning,
+        ContextCategory::ToolCalls,
+        ContextCategory::ToolOutputs,
+        ContextCategory::FileContents,
+        ContextCategory::Summaries,
+        ContextCategory::CurrentPrompt,
+        ContextCategory::Unattributed,
+        ContextCategory::Other,
+    ];
+
+    /// The machine-facing name: what a user types, and what `--json` emits.
+    ///
+    /// Derived from the label rather than written out twice, so a category
+    /// cannot be renamed in one place and left stale in the other.
+    pub fn slug(&self) -> String {
+        self.label().to_ascii_lowercase().replace(' ', "-")
+    }
+
+    pub fn parse(s: &str) -> Option<ContextCategory> {
+        let norm = s.trim().to_ascii_lowercase().replace('_', "-");
+        ContextCategory::ALL.into_iter().find(|c| c.slug() == norm)
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             ContextCategory::SystemInstructions => "System instructions",
@@ -348,41 +380,23 @@ impl ContextSnapshot {
         total > 0 && (self.residual as f32 / total as f32) >= 0.005
     }
 
+    /// Narrow this snapshot to the items matching `filter`.
+    ///
+    /// The returned view keeps a borrow of the whole snapshot, so its
+    /// percentages remain shares of the turn rather than of the subset. See
+    /// [`filter`](crate::model::filter) for why that is enforced structurally
+    /// rather than by convention.
+    pub fn filtered<'a>(&'a self, filter: &'a ItemFilter) -> FilteredView<'a> {
+        FilteredView::new(self, filter)
+    }
+
     /// Composition by category, largest first, including the residual as an
     /// explicit [`ContextCategory::Unattributed`] row when non-zero.
+    ///
+    /// The unfiltered case of [`ContextSnapshot::filtered`], not a parallel
+    /// implementation -- so the two can never disagree about the denominator.
     pub fn by_category(&self) -> Vec<CategoryBreakdown> {
-        let total = self.total.tokens().max(1) as f32;
-        let mut acc: BTreeMap<ContextCategory, (u32, usize, Confidence)> = BTreeMap::new();
-
-        for item in &self.items {
-            let entry = acc
-                .entry(item.category)
-                .or_insert((0, 0, Confidence::Observed));
-            entry.0 = entry.0.saturating_add(item.tokens.tokens());
-            entry.1 += 1;
-            entry.2 = entry.2.weakest(item.confidence());
-        }
-
-        if self.residual > 0 {
-            acc.insert(
-                ContextCategory::Unattributed,
-                (self.residual, 1, Confidence::Derived),
-            );
-        }
-
-        let mut rows: Vec<CategoryBreakdown> = acc
-            .into_iter()
-            .map(|(category, (tokens, item_count, confidence))| CategoryBreakdown {
-                category,
-                tokens,
-                share: tokens as f32 / total,
-                item_count,
-                confidence,
-            })
-            .collect();
-
-        rows.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(a.category.cmp(&b.category)));
-        rows
+        self.filtered(&ItemFilter::ALL).by_category()
     }
 
     /// The `limit` biggest individual context consumers.
@@ -390,22 +404,7 @@ impl ContextSnapshot {
     /// The workflow this exists for: a turn ballooned, and you want the 38k-token
     /// garbage tool result responsible, by name, in one glance.
     pub fn largest_contributors(&self, limit: usize) -> Vec<Contributor> {
-        let total = self.total.tokens().max(1) as f32;
-        let mut items: Vec<&ContextItem> = self.items.iter().collect();
-        items.sort_by(|a, b| b.tokens.tokens().cmp(&a.tokens.tokens()));
-        items
-            .into_iter()
-            .take(limit)
-            .map(|i| Contributor {
-                id: i.id.clone(),
-                label: i.label.clone(),
-                category: i.category,
-                source: i.source.clone(),
-                tokens: i.tokens.tokens(),
-                share: i.tokens.tokens() as f32 / total,
-                confidence: i.confidence(),
-            })
-            .collect()
+        self.filtered(&ItemFilter::ALL).largest_contributors(limit)
     }
 }
 

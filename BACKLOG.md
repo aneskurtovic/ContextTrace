@@ -149,6 +149,63 @@ being asked about, in both directions, with fixture coverage. ✔
 
 ## Next
 
+### CT-034 · Name a tool output by its target, not just its tool
+`status: next` · `tier: A` · `size: M` · `source: review`
+
+**Why:** CT-017 made the 38k-token tool result findable and then showed it as
+`Tool output: Read` — twice, at 14,805 and 7,822 tokens, with nothing to say
+which file each one was. The filter answers "where did this come from" at the
+level of the *mechanism*; the workflow needs it at the level of the *thing*.
+`EventKind::ToolCall` records the tool name and call id but not the argument
+that identifies the target, so the information is discarded at parse time and
+cannot be recovered downstream.
+**Done when:** a tool call and its result are labelled with what they acted on —
+the path for a read, the command for a shell call — for both agents, taken from
+the call's own arguments and never invented where they are absent.
+
+### CT-035 · Say that Codex per-item counts are estimated, because they are
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Reason it exists:** the plan, the `TokenEstimator` port docs and CT-006 all
+say Codex items are counted exactly by `tiktoken`. They are not.
+`TiktokenEstimator::count_text` — the only exact path — is never called by
+either adapter. Both size items from the `char_len` recorded at parse time and
+so go through `estimate_from_chars`, which returns `Estimated` by construction.
+The *reason* is sound and deliberate: exact counting means re-reading and
+re-parsing every line of a 55 MB session, which is what `SourceRef` and the
+lazy-content design exist to avoid. The claim is what is wrong, not the code.
+**Done when:** the docs describe the trade-off actually made, and either exact
+counting is offered as an opt-in for Codex or its absence is stated plainly.
+Leaving a stronger claim in the docs than the code delivers is the one failure
+mode this project cannot afford.
+
+---
+
+## Done (continued)
+
+### CT-017 · Filter context views by provenance and size
+`status: done` · `tier: A` · `size: S` · `source: IDEAS.md §2`
+**Why:** named in the brief as essential to the core workflow — finding the
+38k-token garbage tool result.
+**Done when:** `ct context`/`ct largest` accept `--source`, `--category`,
+`--confidence` and `--min-tokens`, and the filtered rows still state what share
+of the whole they represent. ✔
+
+**The design decision worth keeping.** Filtering creates one obvious way to
+lie: recompute the percentages against the subset, so four tool outputs
+"account for 100% of the context". `FilteredView` borrows the snapshot rather
+than owning the matched items, so `total()` is only reachable through the
+aggregate and there is no subset sum to divide by. The unfiltered views are the
+`ItemFilter::ALL` case of the same code path, so the two cannot disagree about
+the denominator. The residual is excluded from any filtered view unless named
+by category: it has no source and no line in any file, so a query *by
+provenance* has nothing to match it against.
+
+`--confidence` matches nothing on every real session today, because per-item
+sizes are `Estimated` for both agents. That is not a broken flag — see CT-035 —
+so the empty case prints the categories, sources and confidences the turn
+actually contains rather than an unexplained blank.
+
 ### CT-016 · `ct residual` — track unlogged context across turns
 `status: done` · `tier: A` · `size: M` · `source: IDEAS.md §2`
 
@@ -180,14 +237,6 @@ which this view cannot distinguish from the CT-031 over-count.
 ---
 
 ## Todo
-
-### CT-017 · Filter context views by provenance and size
-`status: next` · `tier: A` · `size: S` · `source: IDEAS.md §2`
-**Why:** named in the brief as essential to the core workflow — finding the
-38k-token garbage tool result.
-**Done when:** `ct context`/`ct largest` accept `--source`, `--category`,
-`--confidence` and `--min-tokens`, and the filtered rows still state what share
-of the whole they represent.
 
 ### CT-018 · `ct trace` — follow one context item's lifecycle
 `status: todo` · `tier: A` · `size: M` · `source: IDEAS.md §2`

@@ -6,7 +6,7 @@ use ct_application::{ContextTrace, Diagnostics, ResidualPoint, ResolvedSession};
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::RawEventSource;
 use ct_domain::services::DerivedRatio;
-use ct_domain::{AgentSession, ContextSnapshot, SessionDescriptor};
+use ct_domain::{AgentSession, FilteredView, SessionDescriptor};
 
 pub fn roots(app: &ContextTrace) {
     println!("ContextTrace reads these local directories (read-only):\n");
@@ -34,12 +34,11 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
     }
 
     println!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  PROJECT",
         pad("ID", 10),
         pad("AGENT", 12),
         pad("LAST ACTIVITY", 18),
-        rpad("SIZE", 9),
-        "PROJECT"
+        rpad("SIZE", 9)
     );
 
     for d in list {
@@ -184,15 +183,17 @@ fn describe_kind(event: &ct_domain::Event) -> String {
 }
 
 pub fn context(
-    snapshot: &ContextSnapshot,
+    view: &FilteredView<'_>,
     estimator: &str,
     derived: Option<DerivedRatio>,
     json: bool,
 ) {
     if json {
-        print_json(snapshot);
+        print_json(&view.composition_report());
         return;
     }
+
+    let snapshot = view.snapshot();
 
     println!(
         "Context at turn {} - {}",
@@ -221,9 +222,14 @@ pub fn context(
             compaction.facts.trigger.as_deref().unwrap_or("unknown trigger")
         );
     }
+    coverage(view);
     println!();
 
-    let rows = snapshot.by_category();
+    let rows = view.by_category();
+    if rows.is_empty() {
+        nothing_matched(view);
+        return;
+    }
     let widest = rows
         .iter()
         .map(|r| r.category.label().chars().count())
@@ -239,6 +245,19 @@ pub fn context(
             bar(row.share, 20),
             confidence_tag(row.confidence)
         );
+    }
+
+    // The narrative below describes the whole turn -- the unlogged remainder,
+    // the fitted ratio, the calibration factor. Printed under a filter it would
+    // read as commentary on the rows above, which it is not: those rows are a
+    // slice, and the residual is deliberately not in them.
+    if view.filter().is_active() {
+        println!(
+            "\n  These rows are part of turn {}, not all of it. Run without filters to\n  \
+             see the full composition, the unlogged remainder and how it was measured.",
+            snapshot.turn()
+        );
+        return;
     }
 
     // Only call the residual "unlogged context" when it is big enough to
@@ -309,27 +328,25 @@ pub fn context(
     );
 }
 
-pub fn largest(
-    snapshot: &ContextSnapshot,
-    derived: Option<DerivedRatio>,
-    limit: usize,
-    json: bool,
-) {
-    let top = snapshot.largest_contributors(limit);
-
+pub fn largest(view: &FilteredView<'_>, derived: Option<DerivedRatio>, limit: usize, json: bool) {
     if json {
-        print_json(&top);
+        print_json(&view.contributor_report(limit));
         return;
     }
 
+    let snapshot = view.snapshot();
+    let top = view.largest_contributors(limit);
+
     println!(
-        "Largest context contributors at turn {} (total {})\n",
+        "Largest context contributors at turn {} (total {})",
         snapshot.turn(),
         token_count(snapshot.total())
     );
+    coverage(view);
+    println!();
 
     if top.is_empty() {
-        println!("No attributable context items at this turn.");
+        nothing_matched(view);
         return;
     }
 
@@ -354,15 +371,25 @@ pub fn largest(
     // overhead is `None` and this row would be a caption invented for arithmetic
     // left over from a broken measurement -- which is precisely the overclaim
     // `ct context` suppresses, so it must be suppressed here too.
+    if view.filter().is_active() {
+        println!(
+            "\nShares are of the turn's full {} tokens, so these rows deliberately do not\n\
+             add up to 100%. {} of {} items matched.",
+            thousands(snapshot.total().tokens()),
+            view.matched_items(),
+            view.total_items()
+        );
+        return;
+    }
+
     if snapshot.residual_is_meaningful() && may_name_the_residual(derived) {
         println!(
-            "\n{}  {}  {}",
+            "\n{}  {}  unattributed (system prompt + tool schemas)",
             rpad(&thousands(snapshot.residual()), 9),
             rpad(
                 &percent(snapshot.residual() as f32 / snapshot.total().tokens().max(1) as f32),
                 6
-            ),
-            "unattributed (system prompt + tool schemas)"
+            )
         );
     } else if let Some(ratio) = derived {
         if ratio.unlogged_overhead.is_none() {
@@ -372,6 +399,72 @@ pub fn largest(
                  proportions of the observed total, not a complete inventory."
             );
         }
+    }
+}
+
+/// State the filter and how much of the turn survived it.
+///
+/// **The line that keeps a filtered view honest.** Four tool outputs shown alone
+/// look like the whole context; saying they are 31% of it, against a total the
+/// agent itself reported, is the difference between a finding and a distortion.
+fn coverage(view: &FilteredView<'_>) {
+    if !view.filter().is_active() {
+        return;
+    }
+    println!("Filter     {}", view.filter());
+    println!(
+        "           {} of {} items, {} of {} tokens - {} of this turn{}",
+        view.matched_items(),
+        view.total_items(),
+        thousands(view.matched_tokens()),
+        thousands(view.total().tokens()),
+        percent(view.share_of_total()),
+        if view.residual_included() {
+            ""
+        } else {
+            ", excluding the unattributed remainder"
+        }
+    );
+}
+
+/// Explain an empty result by saying what the turn actually contains.
+///
+/// A filter matching nothing is indistinguishable from a broken flag unless the
+/// tool says which values would have worked. That matters more than usual here:
+/// per-item sizes are `estimated` for both agents today, so `--confidence
+/// observed` correctly matches nothing on every real session.
+fn nothing_matched(view: &FilteredView<'_>) {
+    println!("Nothing in this turn matches that filter.\n");
+
+    println!("Categories present:");
+    for (category, tokens) in view.available_categories() {
+        println!(
+            "  {}  {}",
+            pad(&category.slug(), 24),
+            rpad(&thousands(tokens), 9)
+        );
+    }
+
+    println!("\nSources present:");
+    for (kind, tokens) in view.available_sources() {
+        println!(
+            "  {}  {}",
+            pad(kind.slug(), 24),
+            rpad(&thousands(tokens), 9)
+        );
+    }
+
+    let confidences: Vec<&str> = view
+        .available_confidences()
+        .into_iter()
+        .map(|c| c.label())
+        .collect();
+    println!("\nConfidence levels present: {}", confidences.join(", "));
+    if !confidences.contains(&"observed") {
+        println!(
+            "  No item is `observed`: per-item sizes are estimates for both agents, and\n  \
+             only the turn total is a figure the agent itself reported."
+        );
     }
 }
 
@@ -397,12 +490,11 @@ pub fn residual(
         ratio.chars_per_token, ratio.pairs_used
     );
     println!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  SHARE",
         rpad("TURN", 6),
         rpad("PROMPT", 10),
         rpad("ACCOUNTED", 10),
-        rpad("UNLOGGED", 10),
-        "SHARE"
+        rpad("UNLOGGED", 10)
     );
 
     for point in series {

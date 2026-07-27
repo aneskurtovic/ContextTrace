@@ -144,11 +144,21 @@ is.
 
 ### The asymmetry that shapes everything
 
-Codex is GPT-family, so `tiktoken` can count exactly. Anthropic ships no local
-tokenizer, so Claude Code items can only be estimated — while the per-turn total
-is observed. Calibration reconciles the two: estimates are scaled to fit the
-known total, and whatever cannot be attributed becomes an explicit residual row
-rather than being smeared across the visible categories.
+Codex is GPT-family, so `tiktoken` *could* count its items exactly. Anthropic
+ships no local tokenizer, so Claude Code items can only be estimated — while the
+per-turn total is observed. Calibration reconciles the two: estimates are scaled
+to fit the known total, and whatever cannot be attributed becomes an explicit
+residual row rather than being smeared across the visible categories.
+
+**In practice neither agent's items are counted exactly today, including
+Codex's.** Both adapters record a character count while parsing and size items
+from that, because counting exactly means re-reading and re-parsing every line
+of a session that can reach 55 MB — the cost the whole lazy-content design
+exists to avoid. So every per-item figure is tagged `estimated`, and
+`--confidence observed` correctly matches nothing. The trade-off is deliberate;
+what would not be acceptable is claiming otherwise, which earlier drafts of this
+file did. Whether to offer exact Codex counting as an opt-in is
+[BACKLOG.md](BACKLOG.md) CT-035.
 
 ### The ratio is measured, not assumed
 
@@ -239,16 +249,16 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 | Component | Status |
 |---|---|
-| `ct-domain` — model, ports, calibration | Implemented, 30 tests |
+| `ct-domain` — model, ports, calibration, filtering | Implemented, 49 tests |
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL (parse + parent-chain walk) | Implemented, 64 tests |
-| `ct-application` — use cases and diagnostics | Implemented, 13 tests |
-| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`doctor` | Implemented |
+| `ct-adapters` — Claude Code ACL (parse + parent-chain walk) | Implemented, 73 tests |
+| `ct-application` — use cases and diagnostics | Implemented, 19 tests |
+| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`residual`/`doctor` | Implemented, 15 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-154 tests passing. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+169 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -266,11 +276,54 @@ an event type from the future.
 ct roots                          # which local directories are read
 ct sessions [--agent] [--project] [--since] [--limit]
 ct inspect <id> [--raw] [--limit]
-ct context <id> [--turn N]        # defaults to the session's largest turn
-ct largest <id> [--turn N] [--limit]
+ct context <id> [--turn N] [filters]   # defaults to the session's largest turn
+ct largest <id> [--turn N] [--limit] [filters]
 ct residual <id> [--from N] [--to N]
 ct doctor  <id>
+
+filters: --source <kind[:text]>  --category <name>
+         --confidence <level>    --min-tokens <n>
 ```
+
+### Filtering without lying about the whole
+
+Both context views narrow by provenance and size, which is how you get from "a
+turn ballooned" to the specific tool result responsible:
+
+```
+$ ct largest 60c7495d --category tool-outputs --min-tokens 2000
+
+Largest context contributors at turn 59 (total 135,668 [observed])
+Filter     category=tool-outputs, min-tokens=2000
+           4 of 228 items, 27,462 of 135,668 tokens — 20.2% of this turn,
+           excluding the unattributed remainder
+
+   14,805   10.9%  Tool outputs   Tool output: Read
+    7,822    5.8%  Tool outputs   Tool output: Read
+    ...
+Shares are of the turn's full 135,668 tokens, so these rows deliberately do not
+add up to 100%. 4 of 228 items matched.
+```
+
+`--source` matches the origin and, optionally, what it names: `tool`,
+`tool:Bash`, `file:schema.ts`, `harness:skill_listing`. `--confidence` is a
+floor rather than an exact match, so `derived` admits observed items too.
+
+Filtering is where a tool of this kind most easily starts lying, by recomputing
+percentages against the subset so four rows "account for 100% of the context".
+They do not — and the other 79% is exactly what the person filtering needs to
+keep in view. The filtered view therefore borrows the snapshot rather than
+owning the matched items, so the denominator is only reachable through the whole
+and there is no subset sum available to divide by. The unfiltered views are the
+same code path with an empty filter.
+
+The unattributed remainder is excluded from any filtered view unless asked for
+by name (`--category unattributed`): it has no source and no line in any file,
+so a query *by provenance* has nothing to match it against.
+
+A filter that matches nothing prints the categories, sources and confidence
+levels the turn actually contains, because an unexplained blank is
+indistinguishable from a broken flag.
 
 `ct residual` tracks the context the agent never wrote down, turn by turn. Since
 nothing in the log records a tool being registered or an MCP server connecting,

@@ -13,7 +13,9 @@ use ct_adapters::{ClaudeCodeAdapter, CodexAdapter, HeuristicEstimator, TiktokenE
 use ct_application::{AgentBinding, ContextTrace, SessionFilter};
 use ct_domain::ports::TokenEstimator;
 use ct_domain::services::DerivedRatio;
-use ct_domain::{AgentKind, TurnNumber};
+use ct_domain::{
+    AgentKind, Confidence, ContextCategory, FilterParseError, ItemFilter, SourcePattern, TurnNumber,
+};
 
 #[derive(Parser)]
 #[command(
@@ -68,6 +70,8 @@ enum Command {
         /// Which turn (1-based). Defaults to the largest turn in the session.
         #[arg(long)]
         turn: Option<u32>,
+        #[command(flatten)]
+        filter: FilterArgs,
         #[arg(long)]
         json: bool,
     },
@@ -79,6 +83,8 @@ enum Command {
         turn: Option<u32>,
         #[arg(long, default_value_t = 15)]
         limit: usize,
+        #[command(flatten)]
+        filter: FilterArgs,
         #[arg(long)]
         json: bool,
     },
@@ -109,6 +115,75 @@ enum Command {
 
     /// Show which local directories ContextTrace reads
     Roots,
+}
+
+/// Narrowing options shared by the two context views.
+///
+/// Flattened into both commands rather than duplicated, because the whole point
+/// is that `ct context --category tool-outputs` and `ct largest --category
+/// tool-outputs` select the same rows. Two copies of these arguments would be
+/// two chances for them to drift apart.
+#[derive(clap::Args, Clone, Debug)]
+struct FilterArgs {
+    /// Only items with this provenance: `tool`, `tool:Bash`, `file:schema.ts`,
+    /// `harness:skill_listing`, `user`, `model`, `system-prompt`
+    #[arg(long)]
+    source: Option<String>,
+
+    /// Only this category, e.g. `tool-outputs`, `file-contents`, `reasoning`
+    #[arg(long)]
+    category: Option<String>,
+
+    /// Only items at least this trustworthy: `observed`, `derived`, `estimated`
+    #[arg(long)]
+    confidence: Option<String>,
+
+    /// Only items of at least this many tokens
+    #[arg(long)]
+    min_tokens: Option<u32>,
+}
+
+impl FilterArgs {
+    fn build(&self) -> Result<ItemFilter, Box<dyn std::error::Error>> {
+        Ok(ItemFilter {
+            source: self.source.as_deref().map(SourcePattern::parse).transpose()?,
+            category: self
+                .category
+                .as_deref()
+                .map(|c| {
+                    ContextCategory::parse(c).ok_or_else(|| FilterParseError {
+                        field: "category",
+                        value: c.to_string(),
+                        allowed: Vec::new(),
+                    })
+                })
+                .transpose()
+                // `ContextCategory::slug` allocates, so the allowed list cannot
+                // be built from `&'static str` the way the others are. Rendered
+                // here instead of widening the error type for one case.
+                .map_err(|e| {
+                    let allowed: Vec<String> =
+                        ContextCategory::ALL.iter().map(|c| c.slug()).collect();
+                    format!(
+                        "unknown --category '{}'; expected one of: {}",
+                        e.value,
+                        allowed.join(", ")
+                    )
+                })?,
+            min_confidence: self
+                .confidence
+                .as_deref()
+                .map(|c| {
+                    Confidence::parse(c).ok_or_else(|| FilterParseError {
+                        field: "confidence",
+                        value: c.to_string(),
+                        allowed: Confidence::ALL.iter().map(|c| c.label()).collect(),
+                    })
+                })
+                .transpose()?,
+            min_tokens: self.min_tokens,
+        })
+    }
 }
 
 fn main() {
@@ -188,25 +263,38 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             render::inspect(&session, &resolved, limit, raw, json)?;
         }
 
-        Command::Context { id, turn, json } => {
+        Command::Context {
+            id,
+            turn,
+            filter,
+            json,
+        } => {
+            let filter = filter.build()?;
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn)?;
-            render::context(&snapshot, &calibrated.name(&app, resolved.binding), calibrated.ratio, json);
+            render::context(
+                &snapshot.filtered(&filter),
+                &calibrated.name(&app, resolved.binding),
+                calibrated.ratio,
+                json,
+            );
         }
 
         Command::Largest {
             id,
             turn,
             limit,
+            filter,
             json,
         } => {
+            let filter = filter.build()?;
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn)?;
-            render::largest(&snapshot, calibrated.ratio, limit, json);
+            render::largest(&snapshot.filtered(&filter), calibrated.ratio, limit, json);
         }
 
         Command::Residual {
@@ -306,6 +394,70 @@ fn session_estimator(
     SessionCalibration {
         estimator: ratio.map(|r| HeuristicEstimator::with_ratio(r.chars_per_token)),
         ratio,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+    use ct_domain::SourceKind;
+
+    fn filter_args(argv: &[&str]) -> FilterArgs {
+        match Cli::try_parse_from(argv).expect("must parse").command {
+            Command::Context { filter, .. } | Command::Largest { filter, .. } => filter,
+            _ => panic!("expected a filtered command"),
+        }
+    }
+
+    #[test]
+    fn the_definition_is_internally_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn both_context_views_accept_the_same_filters() {
+        // The reason these arguments are one flattened struct: `ct context` and
+        // `ct largest` must select the same rows, and two copies of four
+        // arguments is two chances to drift.
+        for command in ["context", "largest"] {
+            let args = filter_args(&["ct", command, "abc", "--category", "tool-outputs"]);
+            let filter = args.build().expect("must build");
+            assert_eq!(filter.category, Some(ContextCategory::ToolOutputs));
+        }
+    }
+
+    #[test]
+    fn a_source_argument_carries_its_payload_through() {
+        let filter = filter_args(&["ct", "largest", "abc", "--source", "tool:Bash"])
+            .build()
+            .expect("must build");
+        let pattern = filter.source.expect("a source pattern");
+        assert_eq!(pattern.kind, SourceKind::Tool);
+        assert_eq!(pattern.detail.as_deref(), Some("Bash"));
+    }
+
+    #[test]
+    fn a_misspelled_value_lists_the_ones_that_work() {
+        // A filter that silently matches nothing is indistinguishable from a
+        // broken tool, so a value that names nothing has to fail loudly and say
+        // what would have worked.
+        let err = filter_args(&["ct", "context", "abc", "--category", "tool-output"])
+            .build()
+            .expect_err("must reject a near-miss")
+            .to_string();
+        assert!(err.contains("tool-outputs"), "should suggest the real name: {err}");
+
+        let err = filter_args(&["ct", "context", "abc", "--source", "toool"])
+            .build()
+            .expect_err("must reject an unknown source")
+            .to_string();
+        assert!(err.contains("compaction-summary"), "should list the kinds: {err}");
+    }
+
+    #[test]
+    fn no_filter_arguments_means_no_filtering() {
+        assert!(!filter_args(&["ct", "context", "abc"]).build().unwrap().is_active());
     }
 }
 
