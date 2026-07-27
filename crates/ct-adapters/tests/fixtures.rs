@@ -226,7 +226,7 @@ fn a_tool_output_is_named_after_the_call_it_answers() {
         context
             .items
             .iter()
-            .any(|i| i.label == "Tool output: Read server/app.py"),
+            .any(|i| i.label == "Read server/app.py"),
         "an opaque toolu_ id defeats the whole 'find the giant tool result' workflow"
     );
 }

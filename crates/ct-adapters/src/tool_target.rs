@@ -41,9 +41,14 @@ const TARGET_KEYS: [&str; 10] = [
     "prompt",
 ];
 
-/// How much of a target to keep. Long enough for a nested path or a real shell
-/// command, short enough to leave the token count the widest thing on the row.
-const MAX_CHARS: usize = 64;
+/// How much of a target to keep in the parsed event.
+///
+/// A **storage** bound, not a display one: a heredoc pasted into a shell call
+/// runs to kilobytes, and events hold lengths rather than payloads by design.
+/// Deliberately far wider than any column, so that shortening for a terminal is
+/// the presentation layer's business and a row never shows two ellipses -- one
+/// from here and one from the renderer.
+const MAX_CHARS: usize = 160;
 
 /// Describe what a tool call targeted, or `None` when its arguments do not say.
 pub fn describe(input: &Value) -> Option<String> {
@@ -78,14 +83,17 @@ pub type CallIndex<'a> = std::collections::HashMap<&'a str, (&'a str, Option<&'a
 
 /// Compose a context-item label from a tool and its target.
 ///
-/// Shared so that `Tool call:` and `Tool output:` rows are named the same way
-/// in both adapters. Falls back to the bare tool name rather than to a
-/// placeholder: "Tool output: TodoWrite" is honest, "Tool output: TodoWrite
-/// (unknown)" is noise.
-pub fn label(prefix: &str, tool: &str, target: Option<&str>) -> String {
+/// Shared so both adapters name their rows the same way. No `Tool output:`
+/// prefix: every view showing a label shows the item's category beside it, so a
+/// prefix would spend a third of the column restating "Tool outputs" — and the
+/// call-versus-result distinction it used to carry is what the category *is*.
+///
+/// Falls back to the bare tool name rather than a placeholder: `TodoWrite` is
+/// honest, `TodoWrite (unknown)` is noise.
+pub fn label(tool: &str, target: Option<&str>) -> String {
     match target {
-        Some(t) => format!("{prefix}: {tool} {t}"),
-        None => format!("{prefix}: {tool}"),
+        Some(t) => format!("{tool} {t}"),
+        None => tool.to_string(),
     }
 }
 

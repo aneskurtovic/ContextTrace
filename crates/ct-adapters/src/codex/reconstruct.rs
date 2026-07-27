@@ -149,7 +149,7 @@ fn classify(
         EventKind::ToolCall { tool, target, .. } => (
             ContextCategory::ToolCalls,
             ContextSource::ToolExecution { tool: tool.clone() },
-            tool_target::label("Tool call", tool, target.as_deref()),
+            tool_target::label(tool, target.as_deref()),
         ),
         EventKind::ToolResult { tool, call_id, .. } => {
             let matched = call_id.as_deref().and_then(|id| tool_names.get(id));
@@ -161,7 +161,7 @@ fn classify(
             (
                 ContextCategory::ToolOutputs,
                 ContextSource::ToolExecution { tool: name.clone() },
-                tool_target::label("Tool output", &name, matched.and_then(|(_, t)| *t)),
+                tool_target::label(&name, matched.and_then(|(_, t)| *t)),
             )
         }
         EventKind::ContextInjection {

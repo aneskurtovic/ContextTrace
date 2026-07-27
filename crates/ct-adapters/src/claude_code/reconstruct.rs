@@ -239,7 +239,7 @@ fn classify(
         EventKind::ToolCall { tool, target, .. } => (
             ContextCategory::ToolCalls,
             ContextSource::ToolExecution { tool: tool.clone() },
-            tool_target::label("Tool call", tool, target.as_deref()),
+            tool_target::label(tool, target.as_deref()),
         ),
         EventKind::ToolResult { tool, call_id, .. } => {
             // A result records only the id of the call it answers, so both the
@@ -259,7 +259,7 @@ fn classify(
                 // tool:Read` matches, and a filter over paths is `--source
                 // file:` territory rather than this.
                 ContextSource::ToolExecution { tool: name.clone() },
-                tool_target::label("Tool output", &name, target),
+                tool_target::label(&name, target),
             )
         }
         EventKind::ContextInjection {
@@ -570,7 +570,7 @@ mod tests {
             .find(|i| i.category == ContextCategory::ToolOutputs)
             .expect("the tool output must be present");
         assert_eq!(
-            output.label, "Tool output: Bash npm test",
+            output.label, "Bash npm test",
             "an opaque toolu_ id here defeats the whole 'find the giant tool result' workflow"
         );
         // The source stays the bare tool name, because that is what
@@ -618,7 +618,7 @@ mod tests {
             .iter()
             .find(|i| i.category == ContextCategory::ToolOutputs)
             .expect("the tool output must be present");
-        assert_eq!(output.label, "Tool output: TodoWrite");
+        assert_eq!(output.label, "TodoWrite");
     }
 
     #[test]
@@ -636,7 +636,7 @@ mod tests {
         )];
         let s = session(events, 0, 1000);
         let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_code()).unwrap();
-        assert_eq!(r.items[0].label, "Tool output: toolu_orphan");
+        assert_eq!(r.items[0].label, "toolu_orphan");
     }
 
     #[test]

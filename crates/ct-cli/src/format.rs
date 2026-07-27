@@ -107,7 +107,11 @@ pub fn rpad(s: &str, width: usize) -> String {
 pub fn confidence_tag(c: Confidence) -> &'static str {
     match c {
         Confidence::Observed => "[observed]",
-        Confidence::Derived => "[exact]",
+        // Not "[exact]". This tag was chosen when the only `Derived` figures
+        // were tokenizer counts, but the unattributed residual is `Derived`
+        // too -- and it is a fitted remainder. Printing "exact" beside "context
+        // the agent did not log" claims precisely what that row cannot have.
+        Confidence::Derived => "[derived]",
         Confidence::Estimated => "[estimated]",
     }
 }
