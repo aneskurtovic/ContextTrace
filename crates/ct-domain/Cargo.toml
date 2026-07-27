@@ -1,0 +1,16 @@
+[package]
+name = "ct-domain"
+description = "ContextTrace domain: entities, value objects, aggregates, domain services and ports. No I/O, no agent formats."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Deliberately minimal. serde is here so domain types can cross the CLI --json
+# and Tauri IPC boundaries without a parallel DTO hierarchy; chrono for
+# timestamps. Nothing that touches the filesystem, the network, or an agent
+# vendor's schema belongs in this crate.
+[dependencies]
+serde.workspace = true
+chrono.workspace = true

@@ -1,0 +1,14 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Local-only real-session corpus used by the smoke test. Real agent sessions
+# contain source code, file paths, prompts and potentially secrets -- they are
+# NEVER committed. Committed fixtures are hand-authored synthetic JSONL only.
+/corpus/
+/tests/corpus/
+
+# Tauri (milestone 3)
+/crates/ct-ui/target
+/crates/ct-ui/dist
+node_modules/

@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ct-domain",
+    "crates/ct-application",
+    "crates/ct-adapters",
+    "crates/ct-cli",
+]
+
+# Ports and adapters (hexagonal), with the dependency rule enforced by Cargo.
+#
+#                        ct-cli  (driving adapter + COMPOSITION ROOT)
+#                       /   |   \
+#                      /    |    \
+#        ct-application     |     ct-adapters   (driven adapters: Codex ACL,
+#                 |         |    /               Claude Code ACL, tokenizers, fs)
+#                 |         |   /
+#                  \        |  /
+#                    ct-domain   (entities, value objects, aggregates,
+#                                 domain services, and the PORT traits)
+#
+# The arrows all point inward. ct-domain depends on nothing but serde/chrono.
+# ct-application depends only on ct-domain. ct-adapters depends only on
+# ct-domain -- it implements the ports, and the domain never learns it exists.
+# Only ct-cli knows about concrete implementations, and its only job at the
+# boundary is to construct them and inject them into use cases.
+#
+# The practical payoff: a new agent (Cursor, Gemini CLI, OpenCode) is a new
+# module in ct-adapters implementing AgentAdapter, plus one line in the
+# composition root. No domain change, no application change, no UI change.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/aneskurtovic/ContextTrace"
+
+[workspace.dependencies]
+ct-domain = { path = "crates/ct-domain" }
+ct-application = { path = "crates/ct-application" }
+ct-adapters = { path = "crates/ct-adapters" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# `clock` is deliberately disabled. ContextTrace reads timestamps out of session
+# logs and never asks the operating system what time it is, so the OS timezone
+# machinery (and the mingw `dlltool` it drags in on windows-gnu) is dead weight.
+chrono = { version = "0.4", default-features = false, features = ["serde", "std", "alloc"] }
+thiserror = "2"
+anyhow = "1"
+# Default features are off to drop `anstream`/`windows-sys` (terminal colour
+# autodetection), which we do not need and which does not build on the
+# windows-gnu toolchain without mingw's dlltool on PATH. Keeps the dependency
+# tree small enough to audit, which matters for a tool that reads session logs.
+clap = { version = "4", default-features = false, features = [
+    "std",
+    "derive",
+    "help",
+    "usage",
+    "error-context",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,19 @@
+[package]
+name = "ct-adapters"
+description = "ContextTrace driven adapters: Codex and Claude Code anti-corruption layers, tokenizers, filesystem raw-event source."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Note this crate does NOT depend on ct-application. Adapters implement ports
+# declared in ct-domain; they are consumed by the application through those
+# traits and never call into it. That is the dependency inversion.
+[dependencies]
+ct-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tiktoken-rs = "0.9"

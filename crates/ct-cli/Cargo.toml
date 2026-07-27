@@ -1,0 +1,22 @@
+[package]
+name = "ct-cli"
+description = "ContextTrace command line interface: driving adapter and composition root."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "ct"
+path = "src/main.rs"
+
+[dependencies]
+ct-domain.workspace = true
+ct-application.workspace = true
+ct-adapters.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+clap.workspace = true
