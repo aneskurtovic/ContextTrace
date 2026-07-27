@@ -399,6 +399,25 @@ impl ContextSnapshot {
         self.filtered(&ItemFilter::ALL).by_category()
     }
 
+    /// One named item's row, if this turn held it.
+    ///
+    /// Its share is of the turn's total, exactly as in the ranked view -- so the
+    /// figure `ct trace` prints for an item is the figure `ct largest` printed
+    /// for the same item at the same turn. Two views disagreeing by a few
+    /// hundred tokens would read as a bug in the tool, and would be one.
+    pub fn contributor(&self, id: &ContextItemId) -> Option<Contributor> {
+        let item = self.items.iter().find(|i| &i.id == id)?;
+        Some(Contributor {
+            id: item.id.clone(),
+            label: item.label.clone(),
+            category: item.category,
+            source: item.source.clone(),
+            tokens: item.tokens.tokens(),
+            share: item.tokens.tokens() as f32 / self.total.tokens().max(1) as f32,
+            confidence: item.confidence(),
+        })
+    }
+
     /// The `limit` biggest individual context consumers.
     ///
     /// The workflow this exists for: a turn ballooned, and you want the 38k-token
@@ -500,6 +519,29 @@ mod tests {
         assert_eq!(top[0].label, "npm test output");
         assert_eq!(top[1].label, "schema.ts");
         assert!((top[0].share - 0.52).abs() < 1e-6);
+    }
+
+    #[test]
+    fn one_item_looked_up_by_id_reports_its_share_of_the_whole_turn() {
+        // `ct trace` prints this figure for an item the user just read in
+        // `ct largest`. Computing it against anything but the turn's total
+        // would make the two views disagree about the same item.
+        let snap = assemble(
+            vec![
+                item("npm test output", ContextCategory::ToolOutputs, 520),
+                item("schema.ts", ContextCategory::FileContents, 300),
+            ],
+            1000,
+            180,
+        )
+        .unwrap();
+
+        let row = snap
+            .contributor(&ContextItemId::new("schema.ts"))
+            .expect("an item present in the turn must be found by id");
+        assert_eq!(row.tokens, 300);
+        assert!((row.share - 0.3).abs() < 1e-6, "share was {}", row.share);
+        assert!(snap.contributor(&ContextItemId::new("absent")).is_none());
     }
 
     #[test]

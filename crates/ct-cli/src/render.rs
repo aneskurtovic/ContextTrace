@@ -5,11 +5,15 @@ use crate::format::{
     token_count,
 };
 use ct_adapters::FileRawEventSource;
-use ct_application::{ContextTrace, Diagnostics, ResidualPoint, ResolvedSession};
+use ct_application::{
+    ContextTrace, Departure, Diagnostics, ItemLifecycle, ResidualPoint, ResolvedSession,
+};
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::RawEventSource;
 use ct_domain::services::DerivedRatio;
-use ct_domain::{AgentSession, FilteredView, SessionDescriptor};
+use ct_domain::{
+    AgentKind, AgentSession, Contributor, FilteredView, SessionDescriptor, TokenCount,
+};
 
 pub fn roots(app: &ContextTrace) {
     println!("ContextTrace reads these local directories (read-only):\n");
@@ -268,11 +272,21 @@ pub fn context(
     // saying otherwise would be the exact kind of confident overclaim this tool
     // exists to prevent.
     if snapshot.residual_is_meaningful() {
-        println!(
-            "\n  The unattributed {} tokens are context the agent did not log -- in\n  \
-             practice its system prompt and tool JSON schemas.",
-            thousands(snapshot.residual())
-        );
+        if system_prompt_is_itemised(snapshot) {
+            println!(
+                "\n  The unattributed {} tokens are context the agent did not log -- in\n  \
+                 practice its tool JSON schemas, plus whatever the per-item estimates\n  \
+                 missed. This agent logs its system prompt, so that part is a row above\n  \
+                 rather than part of this remainder.",
+                thousands(snapshot.residual())
+            );
+        } else {
+            println!(
+                "\n  The unattributed {} tokens are context the agent did not log -- in\n  \
+                 practice its system prompt and tool JSON schemas.",
+                thousands(snapshot.residual())
+            );
+        }
     }
 
     if let Some(ratio) = derived {
@@ -316,10 +330,15 @@ pub fn context(
             println!(
                 "  The estimator ran {:.0}% high, so the scaled figures consumed the whole\n  \
                  budget and no residual remains. That does NOT mean there is no hidden\n  \
-                 context -- the system prompt and tool schemas are still in the total, and\n  \
-                 their share has been absorbed into the categories above. Treat the\n  \
-                 breakdown as proportions, not as an inventory.",
-                (1.0 / scale - 1.0) * 100.0
+                 context -- {} still in the total, and their\n  \
+                 share has been absorbed into the categories above. Treat the breakdown\n  \
+                 as proportions, not as an inventory.",
+                (1.0 / scale - 1.0) * 100.0,
+                if system_prompt_is_itemised(snapshot) {
+                    "the tool schemas are"
+                } else {
+                    "the system prompt and tool schemas are"
+                }
             );
         }
     }
@@ -361,9 +380,14 @@ pub fn largest(view: &FilteredView<'_>, derived: Option<DerivedRatio>, limit: us
             pad(item.category.label(), 22),
             ellipsize_middle(&item.label, 62)
         );
+        // The id is here because it is the argument to `ct trace`. Without it
+        // the natural next step -- "how long has that 14k-token file been
+        // sitting there?" -- has nothing to name the item with but a label that
+        // is often a long path and is not unique.
         println!(
-            "{}  from {} {}",
+            "{}  {}  from {} {}",
             " ".repeat(17),
+            item.id,
             item.source,
             confidence_tag(item.confidence)
         );
@@ -387,12 +411,17 @@ pub fn largest(view: &FilteredView<'_>, derived: Option<DerivedRatio>, limit: us
 
     if snapshot.residual_is_meaningful() && may_name_the_residual(derived) {
         println!(
-            "\n{}  {}  unattributed (system prompt + tool schemas)",
+            "\n{}  {}  unattributed ({})",
             rpad(&thousands(snapshot.residual()), 9),
             rpad(
                 &percent(snapshot.residual() as f32 / snapshot.total().tokens().max(1) as f32),
                 6
-            )
+            ),
+            if system_prompt_is_itemised(snapshot) {
+                "tool schemas + estimation error"
+            } else {
+                "system prompt + tool schemas"
+            }
         );
     } else if let Some(ratio) = derived {
         if ratio.unlogged_overhead.is_none() {
@@ -469,6 +498,223 @@ fn nothing_matched(view: &FilteredView<'_>) {
              only the turn total is a figure the agent itself reported."
         );
     }
+}
+
+/// One item's size, taken from a single calibrated turn.
+pub struct ItemSize {
+    pub turn: u32,
+    pub contributor: Contributor,
+    pub turn_total: TokenCount,
+}
+
+/// One item's history: where it entered, how long it stayed, what removed it.
+///
+/// # Why there is one size and not a series
+///
+/// An item's text does not change while it sits in context -- the same log line
+/// is replayed into every prompt that holds it. What *does* move between turns
+/// is the calibration scale, so a per-turn size column would show the item
+/// growing and shrinking when nothing about it changed. One figure, from one
+/// turn, named as being from that turn.
+pub fn trace(life: &ItemLifecycle, size: Option<&ItemSize>, agent: AgentKind, json: bool) {
+    if json {
+        print_json(&TraceReport {
+            life,
+            size: size.map(|s| SizeReport {
+                turn: s.turn,
+                turn_total: s.turn_total.tokens(),
+                item: &s.contributor,
+            }),
+        });
+        return;
+    }
+
+    println!("Item      {}", life.id);
+    println!("          {}", ellipsize_middle(&life.label, 68));
+    println!("Category  {}, from {}", life.category.label(), life.source);
+
+    match life.first_present() {
+        Some(turn) => println!("\nEntered   turn {turn}"),
+        None => {
+            println!("\nThis item never appears in a reconstructed turn.");
+            return;
+        }
+    }
+
+    let spans: Vec<String> = life
+        .runs
+        .iter()
+        .map(|r| {
+            if r.from == r.to {
+                r.from.to_string()
+            } else {
+                format!("{}-{}", r.from, r.to)
+            }
+        })
+        .collect();
+    println!(
+        "Present   turn{} {}  ({} of {} turns scanned)",
+        if life.turns_present() == 1 { "" } else { "s" },
+        spans.join(", "),
+        life.turns_present(),
+        life.scanned_turns
+    );
+
+    if let Some(size) = size {
+        println!(
+            "Size      {} tokens at turn {} - {} of that turn's {} {}",
+            thousands(size.contributor.tokens),
+            size.turn,
+            percent(size.contributor.share),
+            thousands(size.turn_total.tokens()),
+            confidence_tag(size.contributor.confidence)
+        );
+    }
+
+    match (&life.departure, life.still_present) {
+        (_, true) => println!(
+            "Status    still in context at turn {}, the last turn on this thread",
+            life.last_scanned_turn.unwrap_or_default()
+        ),
+        (Some(Departure::Compaction { turn, reclaimed }), _) => println!(
+            "Left      after turn {} - the compaction{} removed it{}",
+            life.last_present().unwrap_or_default(),
+            turn.map(|t| format!(" at turn {t}")).unwrap_or_default(),
+            reclaimed
+                .map(|r| format!(", reclaiming {} tokens", thousands(r)))
+                .unwrap_or_default(),
+        ),
+        (Some(Departure::BranchDiverged { turn }), _) => println!(
+            "Left      after turn {} - not evicted; turn {turn} is on another branch",
+            life.last_present().unwrap_or_default()
+        ),
+        (Some(Departure::Unexplained { turn }), _) => println!(
+            "Left      after turn {} - gone by turn {turn}, cause not established",
+            life.last_present().unwrap_or_default()
+        ),
+        (None, false) => println!(
+            "Left      after turn {} - the next turn could not be reconstructed, so\n\
+             {:10}nothing can be said about why",
+            life.last_present().unwrap_or_default(),
+            ""
+        ),
+    }
+
+    trace_notes(life, size, agent);
+}
+
+/// The caveats that keep the four lines above from being read as more than they
+/// are. Printed only when they apply.
+fn trace_notes(life: &ItemLifecycle, size: Option<&ItemSize>, agent: AgentKind) {
+    if let Some(Departure::BranchDiverged { turn }) = life.departure {
+        println!(
+            "\n  No compaction removed this. Claude Code's log is a DAG, and turn {turn}\n  \
+             descends from a different branch -- the conversation was rewound or a\n  \
+             message edited, so the later turns continue from a history this item was\n  \
+             never part of. It was not evicted from a prompt; it was never in theirs."
+        );
+    }
+
+    if let Some(Departure::Unexplained { turn }) = life.departure {
+        if agent == AgentKind::Codex {
+            println!(
+                "\n  This should not be possible. Codex reconstruction replays the API item\n  \
+                 list forward and only clears it at a compaction, so an item vanishing at\n  \
+                 turn {turn} without one is a defect in ContextTrace rather than something\n  \
+                 that happened in the session. Please report it."
+            );
+        }
+    }
+
+    if !life.unknown_turns.is_empty() {
+        let listed: Vec<String> = life
+            .unknown_turns
+            .iter()
+            .take(8)
+            .map(|t| t.to_string())
+            .collect();
+        println!(
+            "\n  Turn(s) {}{} could not be reconstructed. Presence there is unknown, not\n  \
+             absent, so the runs above stop at them rather than reading across them.",
+            listed.join(", "),
+            if life.unknown_turns.len() > listed.len() {
+                format!(" and {} more", life.unknown_turns.len() - listed.len())
+            } else {
+                String::new()
+            }
+        );
+    }
+
+    if life.other_thread_turns > 0 {
+        println!(
+            "\n  {} turn(s) belong to the other thread and were excluded. A subagent runs\n  \
+             against its own context window, so its turns say nothing about whether a\n  \
+             main-thread item was present -- counting them would make every long-lived\n  \
+             item appear to flicker in and out.",
+            life.other_thread_turns
+        );
+    }
+
+    if life.first_seen_disagrees() {
+        println!(
+            "\n  The log records this item's line as written during turn {}, but the first\n  \
+             prompt observed to contain it is turn {}. Both are true: one is when the\n  \
+             line appeared, the other is when it entered a request. This view reports\n  \
+             the second.",
+            life.recorded_first_seen.unwrap_or_default(),
+            life.first_present().unwrap_or_default()
+        );
+    }
+
+    if size.is_some() {
+        println!(
+            "\n  The size is measured once, at that turn. An item's text does not change\n  \
+             while it sits in context; only the calibration scale moves, so a per-turn\n  \
+             size column would show movement the item does not have."
+        );
+    }
+}
+
+/// Print the items a reference matched, so the user can pick one.
+pub fn trace_candidates(candidates: &[ct_application::lifecycle::Candidate], json: bool) {
+    if json {
+        print_json(candidates);
+        return;
+    }
+
+    println!("That reference matches {} items:\n", candidates.len());
+    println!("{}  {}  LABEL", pad("ID", 16), pad("TURNS", 16));
+    for candidate in candidates.iter().take(20) {
+        let span = match (candidate.first_present, candidate.last_present) {
+            (Some(a), Some(b)) if a == b => format!("{a}"),
+            (Some(a), Some(b)) => format!("{a}-{b} ({})", candidate.turns_present),
+            _ => "-".into(),
+        };
+        println!(
+            "{}  {}  {}",
+            pad(candidate.id.as_str(), 16),
+            pad(&span, 16),
+            ellipsize_middle(&candidate.label, 60)
+        );
+    }
+    if candidates.len() > 20 {
+        println!("... and {} more", candidates.len() - 20);
+    }
+    println!();
+}
+
+#[derive(serde::Serialize)]
+struct TraceReport<'a> {
+    #[serde(flatten)]
+    life: &'a ItemLifecycle,
+    size: Option<SizeReport<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct SizeReport<'a> {
+    turn: u32,
+    turn_total: u32,
+    item: &'a Contributor,
 }
 
 pub fn residual(
@@ -665,16 +911,31 @@ pub fn doctor(
     }
 }
 
-/// Whether the leftover tokens may be *called* the system prompt and tool
-/// schemas.
+/// Whether the leftover tokens may be *called* anything at all.
 ///
 /// Only when the session's unlogged overhead was actually measurable. Where
 /// reconstruction over-counted, the leftover is arithmetic from a broken
 /// measurement, and captioning it would be exactly the overclaim this tool
-/// exists to prevent. Where no ratio was derived at all -- Codex, whose items are
-/// counted exactly -- the residual is trustworthy and may be named.
+/// exists to prevent. Where no ratio was derived at all -- Codex, for which no
+/// per-session ratio is fitted -- there is no over-count measurement to fail, so
+/// the remainder stands as what it is: the part of the observed total nothing
+/// visible accounts for.
 fn may_name_the_residual(derived: Option<DerivedRatio>) -> bool {
     derived.is_none_or(|r| r.unlogged_overhead.is_some())
+}
+
+/// Whether this agent logged its own system prompt as a visible item.
+///
+/// Codex records `base_instructions`, so for its sessions the system prompt is a
+/// row in the breakdown -- and captioning the remainder "system prompt + tool
+/// schemas" would name something the same screen has already listed, while
+/// hiding that what is actually left is the tool schemas and the estimator's
+/// error. Claude Code logs no system prompt, so there the caption is right.
+fn system_prompt_is_itemised(snapshot: &ct_domain::ContextSnapshot) -> bool {
+    snapshot
+        .items()
+        .iter()
+        .any(|i| i.source == ct_domain::ContextSource::AgentSystemPrompt)
 }
 
 fn print_json<T: serde::Serialize + ?Sized>(value: &T) {

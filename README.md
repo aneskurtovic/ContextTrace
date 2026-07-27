@@ -249,16 +249,16 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 | Component | Status |
 |---|---|
-| `ct-domain` — model, ports, calibration, filtering | Implemented, 49 tests |
+| `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 86 tests |
-| `ct-application` — use cases and diagnostics | Implemented, 19 tests |
-| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`residual`/`doctor` | Implemented, 17 tests |
+| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 87 tests |
+| `ct-application` — use cases, diagnostics, item lifecycle | Implemented, 30 tests |
+| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`trace`/`residual`/`doctor` | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-184 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+197 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -278,6 +278,7 @@ ct sessions [--agent] [--project] [--since] [--limit]
 ct inspect <id> [--raw] [--limit]
 ct context <id> [--turn N] [filters]   # defaults to the session's largest turn
 ct largest <id> [--turn N] [--limit] [filters]
+ct trace   <id> --item <id-or-label>   # one item's lifecycle across the session
 ct residual <id> [--from N] [--to N]
 ct doctor  <id>
 
@@ -334,6 +335,59 @@ named correctly anyway; where nothing matches, the bare tool name stands, becaus
 a wrong filename is worse than no filename. There is no `Tool output:` prefix —
 the category column beside it already says that, and a label restating its own
 column spends a fifth of the width saying nothing.
+
+### One item's lifecycle, and the difference between gone and evicted
+
+`ct context` sees a single turn, so it cannot say how long something has been
+sitting in the window. `ct trace` reconstructs every turn and reports where an
+item actually appears:
+
+```
+$ ct trace 257a927b --item claude:35
+
+Item      claude:35
+          Read C:\Users\anesk\source\repos\L…oids\client\e2e\game-a11y.spec.ts
+Category  Tool outputs, from tool: Read
+
+Entered   turn 4
+Present   turns 4-210  (207 of 360 turns scanned)
+Size      8,996 tokens at turn 210 — 2.6% of that turn's 339,687 [estimated]
+Left      after turn 210 — the compaction at turn 211 removed it, reclaiming
+          326,941 tokens
+```
+
+The item reference is an id (shown by `ct largest`) or any part of a label;
+labels are not unique, so an ambiguous one lists the candidates with their ids
+rather than guessing.
+
+Four things this view refuses to say:
+
+- **Absent is not unknown.** A turn whose reconstruction fails tells us nothing
+  about the item, so it ends a run rather than being read across or counted as a
+  departure.
+- **Gone is not evicted.** Claude Code's log is a DAG. When an item disappears
+  with no compaction, the later turns descend from a different branch — the
+  conversation was rewound or a message edited — and the item was never in their
+  prompts to be evicted from. That case is named as a branch change, and it is
+  common: it happens in 47 of 86 recent local sessions.
+- **A subagent's turns are not this thread's turns.** A subagent has its own
+  context window, so main-thread items are legitimately missing from its turns.
+  Counting that as absence would make every long-lived item appear to flicker.
+- **The size is one measurement, not a series.** An item's text does not change
+  while it sits in context; only the calibration scale moves, so a per-turn size
+  column would show movement the item does not have.
+
+For Codex the fold only clears at a compaction, so a departure without one is a
+defect in ContextTrace rather than a fact about the session — and the view says
+exactly that instead of inventing a branch Codex's linear log cannot have. A
+sweep of 240 items across 40 local sessions produced no such case.
+
+Building this found one: the Codex system prompt was being dropped at every
+compaction, because reconstruction cleared the whole item list. `base_instructions`
+is not part of the item list a compaction replaces — `replacement_history`
+carries user and developer messages only, and Codex sends its system prompt as
+the request's own field — so it survives, and post-compaction turns were
+understating it and inflating their unattributed remainder by its size.
 
 `ct residual` tracks the context the agent never wrote down, turn by turn. Since
 nothing in the log records a tool being registered or an MCP server connecting,

@@ -8,6 +8,7 @@
 //! that does not exist yet.
 
 pub mod diagnostics;
+pub mod lifecycle;
 
 use ct_domain::ports::{AgentAdapter, PortError, TokenEstimator};
 use ct_domain::services::ratio::{self, DerivedRatio, TurnSample};
@@ -18,6 +19,7 @@ use ct_domain::{
 use std::fmt;
 
 pub use diagnostics::{Diagnostics, ResidualSpike};
+pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 
 /// An agent adapter paired with the token estimator appropriate to its models.

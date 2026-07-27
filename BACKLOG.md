@@ -149,16 +149,67 @@ being asked about, in both directions, with fixture coverage. ✔
 
 ## Next
 
-### CT-018 · `ct trace` — follow one context item's lifecycle
-`status: next` · `tier: A` · `size: M` · `source: IDEAS.md §2`
-**Why:** answers "when did this enter context, and when did it leave" — the
-question `ct context` cannot, because it only sees one turn.
-**Done when:** `ct trace <id> --item <ref>` reports the turn an item entered,
-the turns it persisted through, and the compaction that evicted it.
+### CT-035 · Offer exact Codex counting, or state plainly that it is absent
+`status: next` · `tier: A` · `size: S` · `source: review`
+Promoted on CT-018's completion; the entry is under **Todo** below, where its
+reasoning already sits.
 
 ---
 
 ## Done (continued)
+
+### CT-018 · `ct trace` — follow one context item's lifecycle
+`status: done` · `tier: A` · `size: M` · `source: IDEAS.md §2`
+**Why:** answers "when did this enter context, and when did it leave" — the
+question `ct context` cannot, because it only sees one turn.
+**Done when:** `ct trace <id> --item <ref>` reports the turn an item entered,
+the turns it persisted through, and the compaction that evicted it. ✔
+
+**The design decision worth keeping.** Presence is swept by reconstructing every
+turn, not inferred from `first_seen_turn`. Those answer different questions —
+one is when a line was written, the other is when it entered a request — and
+where they disagree the view prints both rather than reconciling them. The sweep
+runs on the character probe because membership does not depend on the estimator;
+size comes from one properly calibrated snapshot, so the figure agrees with the
+row the user just read in `ct largest`.
+
+**Three refusals encoded as a sum type, not as prose.** A departure is a
+`Compaction`, a `BranchDiverged` or an `Unexplained`, because they are not
+degrees of one claim: one is read from the log, one is inferred from the shape of
+the DAG, and one is an admission. *Gone is not evicted* — when a Claude Code item
+disappears with no compaction the later turns descend from another branch, and
+the item was never in their prompts to be evicted from (47 of 86 recent local
+sessions contain such a fork). *Absent is not unknown* — an unreadable turn ends
+a run rather than being read across or blamed for a departure. *A subagent's
+turns are not this thread's turns* — its own context window means main-thread
+items are legitimately missing there, and counting that as absence would make
+every long-lived item flicker.
+
+For Codex the replay fold only clears at a compaction, so `Unexplained` is
+unreachable unless ContextTrace itself is wrong — the view says exactly that
+instead of inventing a branch a linear log cannot have. A sweep of 240 items
+across 40 local sessions produced 192 still-present, 48 removed by compaction,
+and no unexplained case.
+
+The item id now appears in `ct largest`, because it is this command's argument
+and the label alone is often a long path and never unique.
+
+### CT-036 · Keep the Codex system prompt across a compaction
+`status: done` · `tier: A` · `size: S` · `source: CT-018`
+
+**Why:** found by the first real `ct trace` run, which reported *"Codex system
+prompt — left after turn 79, the compaction at turn 80 removed it"*. It did not:
+`base_instructions` is not part of the item list a compaction replaces. Codex
+sends it as the request's own instructions field, and `replacement_history` in
+the corpus carries user and developer messages only.
+**Done when:** reconstruction retains the system-prompt item across a compaction
+and drops the conversation, with a fixture asserting both halves. ✔
+
+The blast radius was wider than one label: every post-compaction Codex turn was
+understating its accounted content and inflating its unattributed remainder by
+the size of the system prompt — 4,336 tokens on the session that surfaced it.
+A view built to answer "when did this leave" is a good detector for
+reconstruction wrongly dropping things.
 
 ### CT-034 · Name a tool output by its target, not just its tool
 `status: done` · `tier: A` · `size: M` · `source: review`
@@ -242,7 +293,7 @@ which this view cannot distinguish from the CT-031 over-count.
 ## Todo
 
 ### CT-035 · Offer exact Codex counting, or state plainly that it is absent
-`status: todo` · `tier: A` · `size: S` · `source: review`
+`status: next` · `tier: A` · `size: S` · `source: review`
 
 **The docs half landed with CT-017**; what remains is the opt-in.
 

@@ -10,7 +10,7 @@ mod render;
 
 use clap::{Parser, Subcommand};
 use ct_adapters::{ClaudeCodeAdapter, CodexAdapter, HeuristicEstimator, TiktokenEstimator};
-use ct_application::{AgentBinding, ContextTrace, SessionFilter};
+use ct_application::{AgentBinding, ContextTrace, ResolveError, SessionFilter};
 use ct_domain::ports::TokenEstimator;
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
@@ -85,6 +85,20 @@ enum Command {
         limit: usize,
         #[command(flatten)]
         filter: FilterArgs,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Follow one context item: when it entered, how long it stayed, what removed it
+    ///
+    /// `ct context` sees one turn, so it cannot say how long something has been
+    /// sitting in the window. This reconstructs every turn and reports where the
+    /// item actually appears.
+    Trace {
+        id: String,
+        /// The item: an id like `claude:4821`, or any part of its label
+        #[arg(long)]
+        item: String,
         #[arg(long)]
         json: bool,
     },
@@ -297,6 +311,47 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             render::largest(&snapshot.filtered(&filter), calibrated.ratio, limit, json);
         }
 
+        Command::Trace { id, item, json } => {
+            let (session, resolved) = app.load(&id)?;
+            let sweep = app.sweep_lifecycles(&session, resolved.binding);
+
+            let record = match sweep.resolve(&item) {
+                Ok(record) => record,
+                // Not a typo to correct but a choice to make: labels are not
+                // unique, so the list of candidates *is* the answer, and it
+                // carries the ids needed to pick one.
+                Err(ResolveError::Ambiguous { needle, candidates }) => {
+                    render::trace_candidates(&candidates, json);
+                    return Err(format!(
+                        "'{needle}' matches {} items; re-run with one of the ids above",
+                        candidates.len()
+                    )
+                    .into());
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            let life = sweep.lifecycle_of(record);
+            // Sized once, at the last turn that held it, through the same
+            // calibrated path `ct largest` uses -- see `render::trace` for why
+            // a per-turn size series would be misleading rather than richer.
+            let calibrated = session_estimator(&app, &session, resolved.binding);
+            let size = life
+                .last_present()
+                .and_then(|t| TurnNumber::new(t).ok())
+                .and_then(|turn| {
+                    let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn).ok()?;
+                    let contributor = snapshot.contributor(&life.id)?;
+                    Some(render::ItemSize {
+                        turn: turn.get(),
+                        contributor,
+                        turn_total: snapshot.total(),
+                    })
+                });
+
+            render::trace(&life, size.as_ref(), session.agent(), json);
+        }
+
         Command::Residual {
             id,
             from,
@@ -310,8 +365,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     "cannot measure unlogged context for this session: {}",
                     match session.agent() {
                         AgentKind::Codex =>
-                            "Codex items are counted exactly, so there is no fitted \
-                             remainder to track",
+                            "no characters-per-token ratio is fitted for Codex sessions, \
+                             and this view is built on one",
                         _ => "not enough turn-to-turn growth to derive a ratio",
                     }
                 )
