@@ -248,7 +248,9 @@ cheaper audit of the "nothing leaves this machine" claim.
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-144 tests passing.
+154 tests passing. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
+scheduled until it is pulled in there with a `CT-nnn` id.
 
 Committed fixtures are hand-authored synthetic sessions, never captured, each
 encoding one way the real formats mislead a reader: a rewound branch that must
@@ -266,8 +268,16 @@ ct sessions [--agent] [--project] [--since] [--limit]
 ct inspect <id> [--raw] [--limit]
 ct context <id> [--turn N]        # defaults to the session's largest turn
 ct largest <id> [--turn N] [--limit]
+ct residual <id> [--from N] [--to N]
 ct doctor  <id>
 ```
+
+`ct residual` tracks the context the agent never wrote down, turn by turn. Since
+nothing in the log records a tool being registered or an MCP server connecting,
+a sustained step in that remainder is the only evidence such a change happened.
+It compares the median of the five turns either side rather than adjacent turns,
+because the remainder drifts — see [BACKLOG.md](BACKLOG.md) CT-016 for why that
+distinction had to be built in.
 
 `--json` on every command, so ContextTrace is pipeable into other tooling before
 any desktop UI exists. Domain types serialise as tagged sum types

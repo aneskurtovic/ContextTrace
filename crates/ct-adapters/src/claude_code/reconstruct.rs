@@ -52,7 +52,15 @@ pub fn reconstruct(
         .ok_or_else(|| PortError::Unsupported(format!("turn {turn} has no anchor event")))?;
 
     let by_uuid = index_by_uuid(session);
-    let (chain, compaction) = walk_ancestors(session, anchor, &by_uuid);
+    // A subagent runs against its own context window. Reconstructing the main
+    // thread must exclude its transcript, and reconstructing the subagent must
+    // exclude the main thread's -- so the walk keeps only events on the same
+    // side as the turn being asked about.
+    let want_sidechain = session
+        .event(anchor)
+        .map(|e| e.links.is_sidechain)
+        .unwrap_or(false);
+    let (chain, compaction) = walk_ancestors(session, anchor, &by_uuid, want_sidechain);
 
     let events: Vec<&Event> = chain
         .into_iter()
@@ -98,10 +106,16 @@ fn index_by_uuid(session: &AgentSession) -> HashMap<&str, usize> {
 
 /// Walk from `anchor` back to the root, returning indices in chronological
 /// order plus any compaction that terminated the walk.
+///
+/// `want_sidechain` selects which thread's events count as context. Events from
+/// the other side are stepped over rather than stopped at: a subagent's
+/// transcript sitting between two main-thread messages does not sever the main
+/// thread's history, it simply was not part of its prompt.
 fn walk_ancestors(
     session: &AgentSession,
     anchor: usize,
     by_uuid: &HashMap<&str, usize>,
+    want_sidechain: bool,
 ) -> (Vec<usize>, Option<CompactionEvent>) {
     let mut chain = Vec::new();
     let mut compaction = None;
@@ -128,7 +142,9 @@ fn walk_ancestors(
             break;
         }
 
-        chain.push(index);
+        if event.links.is_sidechain == want_sidechain {
+            chain.push(index);
+        }
 
         cursor = event
             .links
@@ -442,6 +458,58 @@ mod tests {
         let compaction = r.preceding_compaction.expect("compaction must be reported");
         assert_eq!(compaction.facts.tokens_before, Some(165_223));
         assert_eq!(compaction.reduction(), Some(147_681));
+    }
+
+    #[test]
+    fn a_subagent_transcript_never_enters_the_main_thread_context() {
+        // A subagent runs against its own context window. Folding its transcript
+        // into the main thread inflates every figure for the main thread, and
+        // nothing in the corpus would catch it: no session on this machine uses
+        // subagents, so only a fixture can hold the line.
+        let mut sub = ev(2, "sub", Some("a"), msg(MessageRole::Assistant, 500_000));
+        sub.links.is_sidechain = true;
+
+        let events = vec![
+            ev(1, "a", None, msg(MessageRole::User, 100)),
+            sub,
+            ev(3, "c", Some("sub"), msg(MessageRole::Assistant, 200)),
+        ];
+        let s = session(events, 2, 5_000);
+        let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
+
+        assert_eq!(
+            r.items.len(),
+            2,
+            "the subagent's 500,000 characters are not in the main thread's prompt"
+        );
+        assert!(
+            r.items.iter().all(|i| i.tokens.tokens() < 1_000),
+            "subagent content leaked into the main thread"
+        );
+    }
+
+    #[test]
+    fn a_subagent_turn_sees_its_own_thread_and_not_the_main_one() {
+        // The exclusion has to run both ways, or asking about the subagent's own
+        // turn would return an empty context.
+        let mut sub_a = ev(2, "sa", Some("a"), msg(MessageRole::User, 300));
+        sub_a.links.is_sidechain = true;
+        let mut sub_b = ev(3, "sb", Some("sa"), msg(MessageRole::Assistant, 400));
+        sub_b.links.is_sidechain = true;
+
+        let events = vec![
+            ev(1, "a", None, msg(MessageRole::User, 900_000)),
+            sub_a,
+            sub_b,
+        ];
+        let s = session(events, 2, 1_000);
+        let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
+
+        assert_eq!(r.items.len(), 2, "the subagent's own two events are its context");
+        assert!(
+            r.items.iter().all(|i| i.tokens.tokens() < 1_000),
+            "the main thread's 900,000 characters are not in the subagent's prompt"
+        );
     }
 
     #[test]

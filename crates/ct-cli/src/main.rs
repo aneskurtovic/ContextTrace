@@ -83,6 +83,23 @@ enum Command {
         json: bool,
     },
 
+    /// Track the context the agent never logged, turn by turn
+    ///
+    /// The system prompt and tool schemas do not change while a session runs, so
+    /// a step change here means the harness altered them: a tool was registered,
+    /// an MCP server connected, a skill loaded.
+    Residual {
+        id: String,
+        /// First turn to report (1-based)
+        #[arg(long)]
+        from: Option<u32>,
+        /// Last turn to report (1-based)
+        #[arg(long)]
+        to: Option<u32>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Report parse fidelity, context spikes and compactions for a session
     Doctor {
         id: String,
@@ -190,6 +207,40 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn)?;
             render::largest(&snapshot, calibrated.ratio, limit, json);
+        }
+
+        Command::Residual {
+            id,
+            from,
+            to,
+            json,
+        } => {
+            let (session, resolved) = app.load(&id)?;
+            let calibrated = session_estimator(&app, &session, resolved.binding);
+            let Some(ratio) = calibrated.ratio else {
+                return Err(format!(
+                    "cannot measure unlogged context for this session: {}",
+                    match session.agent() {
+                        AgentKind::Codex =>
+                            "Codex items are counted exactly, so there is no fitted \
+                             remainder to track",
+                        _ => "not enough turn-to-turn growth to derive a ratio",
+                    }
+                )
+                .into());
+            };
+            let series: Vec<_> = app
+                .residual_series(&session, resolved.binding, ratio)
+                .into_iter()
+                .filter(|p| from.is_none_or(|f| p.turn >= f))
+                .filter(|p| to.is_none_or(|t| p.turn <= t))
+                .collect();
+            let compaction_turns: Vec<u32> = session
+                .compactions()
+                .iter()
+                .filter_map(|(_, e)| e.turn.map(|t| t.get()))
+                .collect();
+            render::residual(&series, ratio, &compaction_turns, json);
         }
 
         Command::Doctor { id, json } => {

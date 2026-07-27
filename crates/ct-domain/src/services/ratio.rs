@@ -74,6 +74,37 @@ pub struct DerivedRatio {
     pub dispersion: f32,
 }
 
+impl DerivedRatio {
+    /// Tokens present in one turn's prompt that its logged content cannot
+    /// account for.
+    ///
+    /// Unlike [`DerivedRatio::unlogged_overhead`], which is the session's
+    /// typical constant, this is the figure *at a given turn*. Watching it
+    /// across turns is how an invisible context change becomes visible: the
+    /// system prompt and tool schemas are stable, so a step change in this
+    /// number means the harness altered them mid-session -- a tool was
+    /// registered, an MCP server connected, a skill loaded.
+    ///
+    /// `None` where the turn's logged content already exceeds its prompt, since
+    /// no honest remainder can be read out of a negative.
+    pub fn unlogged_at(&self, chars: u64, tokens: u32) -> Option<u32> {
+        if self.chars_per_token <= 0.0 {
+            return None;
+        }
+        let accounted = chars as f32 / self.chars_per_token;
+        let remainder = tokens as f32 - accounted;
+        (remainder > 0.0).then_some(remainder as u32)
+    }
+
+    /// Tokens of the turn's prompt that its logged content does account for.
+    pub fn accounted_at(&self, chars: u64) -> u32 {
+        if self.chars_per_token <= 0.0 {
+            return 0;
+        }
+        (chars as f32 / self.chars_per_token) as u32
+    }
+}
+
 /// Growth below this is too small to divide by without amplifying noise.
 const MIN_CHAR_GROWTH: u64 = 500;
 const MIN_TOKEN_GROWTH: u32 = 50;
@@ -252,6 +283,28 @@ mod tests {
             })
             .collect();
         assert!(derive(&flat).is_none());
+    }
+
+    #[test]
+    fn a_per_turn_remainder_tracks_the_hidden_constant() {
+        let d = derive(&synthetic(3.5, 40_000, 30)).unwrap();
+        // A turn with 35,000 characters of logged content and 50,000 prompt
+        // tokens leaves roughly 40,000 unaccounted for.
+        let unlogged = d.unlogged_at(35_000, 50_000).unwrap();
+        assert!(
+            unlogged.abs_diff(40_000) < 500,
+            "got {unlogged}, expected about 40,000"
+        );
+    }
+
+    #[test]
+    fn a_turn_whose_content_exceeds_its_prompt_reports_no_remainder() {
+        let d = derive(&synthetic(3.5, 10_000, 30)).unwrap();
+        assert_eq!(
+            d.unlogged_at(1_000_000, 5_000),
+            None,
+            "a negative remainder is unknown, not zero"
+        );
     }
 
     #[test]

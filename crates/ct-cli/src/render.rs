@@ -2,7 +2,7 @@
 
 use crate::format::{bar, bytes, confidence_tag, ellipsize, pad, percent, rpad, thousands, token_count};
 use ct_adapters::FileRawEventSource;
-use ct_application::{ContextTrace, Diagnostics, ResolvedSession};
+use ct_application::{ContextTrace, Diagnostics, ResidualPoint, ResolvedSession};
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::RawEventSource;
 use ct_domain::services::DerivedRatio;
@@ -372,6 +372,116 @@ pub fn largest(
                  proportions of the observed total, not a complete inventory."
             );
         }
+    }
+}
+
+pub fn residual(
+    series: &[ResidualPoint],
+    ratio: DerivedRatio,
+    compaction_turns: &[u32],
+    json: bool,
+) {
+    if json {
+        print_json(series);
+        return;
+    }
+
+    if series.is_empty() {
+        println!("No turns with recorded usage in that range.");
+        return;
+    }
+
+    println!(
+        "Unlogged context per turn - {:.2} characters per token, measured from this\n\
+         session across {} turn pairs\n",
+        ratio.chars_per_token, ratio.pairs_used
+    );
+    println!(
+        "{}  {}  {}  {}  {}",
+        rpad("TURN", 6),
+        rpad("PROMPT", 10),
+        rpad("ACCOUNTED", 10),
+        rpad("UNLOGGED", 10),
+        "SHARE"
+    );
+
+    for point in series {
+        let (unlogged, share) = match point.unlogged {
+            Some(u) => (
+                thousands(u),
+                percent(u as f32 / point.prompt_tokens.max(1) as f32),
+            ),
+            // Over-counted: the remainder is unknown, and printing a zero here
+            // would assert an inventory the reconstruction cannot support.
+            None => ("-".to_string(), "over-counted".to_string()),
+        };
+        println!(
+            "{}  {}  {}  {}  {}",
+            rpad(&point.turn.to_string(), 6),
+            rpad(&thousands(point.prompt_tokens), 10),
+            rpad(&thousands(point.accounted), 10),
+            rpad(&unlogged, 10),
+            share
+        );
+    }
+
+    let steps = ct_application::residual_steps(series);
+
+    println!(
+        "\n  This column drifts: one fitted ratio cannot describe a session that starts\n  \
+         as prose and ends dominated by tool output, and whatever the ratio gets wrong\n  \
+         lands here. Read the trend, not the turn-to-turn wiggle."
+    );
+
+    if steps.is_empty() {
+        println!(
+            "\nNo sustained change in the unlogged remainder."
+        );
+        return;
+    }
+
+    println!("\nSustained changes in unlogged context:");
+    let mut any_unexplained = false;
+    for step in &steps {
+        let growth = step.growth();
+        // A compaction rewrites the whole prompt, so a step next to one has an
+        // obvious cause already in the log. Attributing it to an unrecorded
+        // harness change would be inventing a second explanation for something
+        // the session already accounts for.
+        let near_compaction = compaction_turns
+            .iter()
+            .any(|t| t.abs_diff(step.turn) <= 5);
+        if !near_compaction {
+            any_unexplained = true;
+        }
+        println!(
+            "  turn {}  {}{} tokens  ({} -> {}){}",
+            step.turn,
+            if growth > 0 { "+" } else { "-" },
+            thousands(growth.unsigned_abs() as u32),
+            thousands(step.from),
+            thousands(step.to),
+            if near_compaction {
+                "   [a compaction occurred here, which explains it]"
+            } else {
+                ""
+            }
+        );
+    }
+
+    println!(
+        "\n  These compare the median of the five turns either side, so they survive the\n  \
+         drift above: a change that holds is one the harness made, while fit wobble\n  \
+         reverts. Treat a step as evidence that something changed, not as its size."
+    );
+    if any_unexplained {
+        println!(
+            "\n  A rise means the prompt gained content the log does not record -- a tool\n  \
+             registered, an MCP server connected, a skill loaded. A fall means the\n  \
+             reconstruction began accounting for more of the prompt than before, which\n  \
+             is either hidden content going away or the over-counting described in\n  \
+             `ct context`. This view cannot tell those two apart."
+        );
     }
 }
 

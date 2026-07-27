@@ -1,5 +1,11 @@
 # IDEAS.md — Living Backlog (Updated)
 
+> **This file is an idea pool, not a plan.** Nothing here is scheduled until it
+> is pulled into [`BACKLOG.md`](BACKLOG.md) and given a `CT-nnn` id. Items that
+> have been pulled in carry a `[→ CT-nnn]` marker — follow it to `BACKLOG.md`
+> for status, rationale and the condition that closes it. Unmarked items are
+> unscheduled: interesting, but not committed to.
+
 This document serves as a "living backlog" of features and conceptual improvements for ContextTrace. These ideas are categorized by their functional area and prioritized by their impact on the "Why did the agent do that?" workflow.
 
 ---
@@ -13,23 +19,23 @@ This document serves as a "living backlog" of features and conceptual improvemen
   → Integrate SARIF linting so any confidence‑laundering violation (Observed combined with Estimated presented as Observed) is emitted as a SARIF result that can be surfaced directly in the heatmap UI and in CI.  
   → **New:** *Confidence decay* – when an observed item is later transformed (e.g., compacted), its confidence should be marked as `observed_at_then` with a timestamp, not just `observed`. Show a full provenance chain visually.
 
-- **Calibration Drill-Down:** A detailed view for Claude Code turns showing the math: *“Base estimate: 162,400 tokens. Known total: 146,820. Scale factor applied: 0.904.”* Allow users to see what the estimator thought before it was forced to match the API reality.  
+- **Calibration Drill-Down:** A detailed view for Claude Code turns showing the math: *“Base estimate: 162,400 tokens. Known total: 146,820. Scale factor applied: 0.904.”* Allow users to see what the estimator thought before it was forced to match the API reality.  `[→ CT-014]`
   → *Expanded:* Surface the per-category scale factors when they diverge significantly (e.g., tool outputs scaled by 0.7 while conversation scaled by 0.95). This can reveal systematic bias in the tokenizer approximation and guide future estimator improvements.  
   → **New:** `ct calibration-plot <id> --format svg` – outputs a terminal‑friendly plot (or SVG) showing how scale factors drift across turns. Large swings indicate systematic estimation errors in certain session phases.  
   → **New:** Calibration confidence intervals – since many estimators are statistical, show a range (e.g., *"Base estimate: 162,400 ± 3,200 tokens"*) and derive a confidence interval for the final calibrated figure.  
   → **New:** Calibration explosion alert – if the scale factor exceeds 2.0 or falls below 0.5, flag the turn as *high‑risk*; this often points to a tokenizer bug, a new model version, or an unexpected encoding.
 
-- **Residual Forensics:** Since Claude Code turns always feature an explicit "Unattributed" residual (system prompt + tool schemas), provide a `ct residual <id> --turn-range 1..50` command. If the residual spikes by 5k tokens unexpectedly, it means the agent dynamically registered a new tool or the system prompt mutated.  
+- **Residual Forensics:** Since Claude Code turns always feature an explicit "Unattributed" residual (system prompt + tool schemas), provide a `ct residual <id> --turn-range 1..50` command. If the residual spikes by 5k tokens unexpectedly, it means the agent dynamically registered a new tool or the system prompt mutated.  `[→ CT-016]`
   → *Expanded:* Automatically annotate residual spikes with the nearest preceding events that could explain them (new tool registration, `CLAUDE.md` change, model switch). Emit a structured `residual_delta` event that scripts can watch.  
   → **New:** *Residual decomposition* – break the residual into finer components: system prompt overhead, tool schema formatting (XML/JSON wrappers), protocol cruft, and agent‑specific template strings. This helps pinpoint the true source.  
   → **New:** *Residual blaming* – produce a ranked list of likely culprits for a residual spike, correlated with nearby events (tool registrations, `AGENTS.md` updates, file changes).  
   → **New:** *Residual regression tests* – store the baseline residual distribution (mean, median, standard deviation) for a given project/model, and alert when a new session deviates beyond a configurable threshold.
 
-- **Compaction Diff Engine (Codex):** Because Codex compacted payloads contain `replacement_history`, ContextTrace can definitively show what was actually discarded. A view that explicitly lists: *“These 4 files and 2 tool outputs were removed from context to save 80k tokens.”*  
+- **Compaction Diff Engine (Codex):** Because Codex compacted payloads contain `replacement_history`, ContextTrace can definitively show what was actually discarded. A view that explicitly lists: *“These 4 files and 2 tool outputs were removed from context to save 80k tokens.”*  `[→ CT-027]`
   → *Expanded:* Rank discarded items by *regret score* = tokens saved × how many subsequent turns referenced the same content (via fuzzy match or embedding). High‑regret discards become the most valuable debugging signals.  
   → **New:** *Compaction effectiveness* – show the ratio of tokens removed vs. tokens that were actually needed later (using future references). This can be used to suggest better compaction strategies.
 
-- **Confidence Laundering Alerts:** A strict lint in the app layer: if a use case ever attempts to mathematically combine an Observed value with an Estimated value and present the result as Observed, the application panics or logs a critical domain violation.  
+- **Confidence Laundering Alerts:** A strict lint in the app layer: if a use case ever attempts to mathematically combine an Observed value with an Estimated value and present the result as Observed, the application panics or logs a critical domain violation.  `[→ CT-002]`
   → *Expanded:* Make the lint produce a machine‑readable SARIF report so it can be run in CI against any new use‑case code. Also expose a `ct domain-lint` command for library consumers. Surface the same SARIF results inside the Confidence Heatmaps UI.  
   → **New:** *Confidence laundering as a health metric* – track how often laundering would have occurred (if not caught) across all use‑cases; report it as part of `ct doctor` fidelity score.
 
@@ -39,23 +45,23 @@ This document serves as a "living backlog" of features and conceptual improvemen
 
 **Goal:** Make the CLI a first‑class citizen for developers who want to pipe context data into `jq`, `duckdb`, or custom scripts.
 
-- **Strictly Typed --json Output:** Every CLI command must output JSON schemas that are perfectly stable. Use sum types for states (e.g., `"status": "observed" | "calibrated" | "residual"`) so downstream scripts don't have to regex strings.  
+- **Strictly Typed --json Output:** Every CLI command must output JSON schemas that are perfectly stable. Use sum types for states (e.g., `"status": "observed" | "calibrated" | "residual"`) so downstream scripts don't have to regex strings.  `[→ CT-008]`
   → *Expanded:* Ship JSON Schema files alongside the binary (`ct schema sessions`, `ct schema context`) and generate TypeScript / Python / Go bindings from them so typed clients stay in sync automatically.  
   → **New:** Support `--json-pretty` for human‑readable debugging.
 
-- **Context Item Tracing (`ct trace`):** `ct trace <id> --item <hash-or-uuid>` follows a specific tool output or file snippet across its entire lifecycle. Turn 1: Injected (2,400 tokens). Turn 5: Still present. Turn 12: Evicted via compaction.  
+- **Context Item Tracing (`ct trace`):** `ct trace <id> --item <hash-or-uuid>` follows a specific tool output or file snippet across its entire lifecycle. Turn 1: Injected (2,400 tokens). Turn 5: Still present. Turn 12: Evicted via compaction.  `[→ CT-018]`
   → *Expanded:* Support fuzzy matching (`--item-content "error: cannot find symbol"`) and content‑hash prefixes so users don't need the exact UUID. Add a `--lifecycle` mode that emits a compact timeline suitable for mermaid or PlantUML.  
   → **New:** `ct trace` with `--turn-range` to focus on a specific window.
 
-- **Filtering by Provenance:** `ct context <id> --turn 42 --filter "source=tool_output" --filter "confidence=estimated"`. Essential for finding the *"38k‑token garbage tool result"* mentioned in the core workflow.  
+- **Filtering by Provenance:** `ct context <id> --turn 42 --filter "source=tool_output" --filter "confidence=estimated"`. Essential for finding the *"38k‑token garbage tool result"* mentioned in the core workflow.  `[→ CT-017]`
   → *Expanded:* Allow compound filters with boolean logic and size predicates: `--filter "source=tool_output AND tokens>10000 AND confidence!=observed"`. Pipe‑friendly and powerful for hunting context bloat.  
   → **New:** Pre‑defined filter presets (e.g., `--filter-preset giant-tools`, `--filter-preset low-confidence`).
 
-- **DuckDB Export:** `ct export <id> --format duckdb`. Outputs a local `.duckdb` file where turns, items, token counts, and provenance are tables. Allows analysts to write SQL: `SELECT sum(tokens) FROM context_items WHERE turn > 20 AND type = 'tool_output';`  
+- **DuckDB Export:** `ct export <id> --format duckdb`. Outputs a local `.duckdb` file where turns, items, token counts, and provenance are tables. Allows analysts to write SQL: `SELECT sum(tokens) FROM context_items WHERE turn > 20 AND type = 'tool_output';`  `[→ CT-032]`
   → *Expanded:* Also support `--format parquet` and `--format ndjson` for lighter‑weight pipelines. Pre‑create useful views (`v_context_bloat`, `v_compaction_events`, `v_residual_spikes`) so analysts don't have to reinvent the joins.  
   → **New:** `ct export` with `--include-metadata` to also write session metadata (model, start/end time, total cost) into the export.
 
-- **Format Delta Reporting (`ct doctor`):** Extend the local corpus smoke test into a CLI command. `ct doctor --dir ./claude-sessions` outputs a histogram of unknown event types, warning the user: *"Claude Code updated yesterday. 3 unrecognized event types detected in your recent logs. Context reconstruction may be incomplete."*  
+- **Format Delta Reporting (`ct doctor`):** Extend the local corpus smoke test into a CLI command. `ct doctor --dir ./claude-sessions` outputs a histogram of unknown event types, warning the user: *"Claude Code updated yesterday. 3 unrecognized event types detected in your recent logs. Context reconstruction may be incomplete."*  `[→ CT-019]`
   → *Expanded:* Add `--baseline <path-to-previous-doctor-report>` so CI can fail a PR that introduces a regression in recognition rate. Also emit a machine‑readable fidelity score that can be tracked over time.  
   → **New:** `ct doctor` with `--watch` – continuously monitor a directory for new logs and report fidelity changes in real‑time.
 
@@ -87,7 +93,7 @@ This document serves as a "living backlog" of features and conceptual improvemen
 
 **Goal:** Provide actionable feedback on why an agent session is failing or getting expensive, without ever modifying the source agent logs.
 
-- **Waste Detection (Low-Entropy Context):** Identify large blocks of context containing very little information (e.g., massive `node_modules` paths, repeated build logs, minified vendor files) using simple heuristics like gzip compression ratios.  
+- **Waste Detection (Low-Entropy Context):** Identify large blocks of context containing very little information (e.g., massive `node_modules` paths, repeated build logs, minified vendor files) using simple heuristics like gzip compression ratios.  `[→ CT-024]`
   → *Expanded:* Rank waste by *"tokens × (1 − compression ratio)"* and surface the top offenders with a one‑line recommendation (*"Consider adding node_modules to the agent's ignore list"* or *"This build log was injected 7 times"*).  
   → **New:** *Waste over time* – show a plot of wasted tokens per turn to identify when bloat was introduced.
 
@@ -95,15 +101,15 @@ This document serves as a "living backlog" of features and conceptual improvemen
   → *Expanded:* Show a unified diff of the instruction files and highlight sections that were added/removed. Also detect when the agent was using a stale system prompt that no longer matches the repo's current `CLAUDE.md` / `AGENTS.md`.  
   → **New:** *Drift impact analysis* – correlate instruction drift with changes in agent behaviour (e.g., tool selection, verbosity) to quantify the effect.
 
-- **Duplicate Context Alert:** Find instances where the exact same file content or tool output was injected into the context multiple times (a common bug in agent retry loops).  
+- **Duplicate Context Alert:** Find instances where the exact same file content or tool output was injected into the context multiple times (a common bug in agent retry loops).  `[→ CT-023]`
   → *Expanded:* Detect near‑duplicates (normalised whitespace, stripped line numbers) as well as exact matches. Report the cumulative token cost of the duplicates.  
   → **New:** *Duplicate patterns* – categorise duplicates by source (file, tool, system) and suggest upstream fixes (e.g., caching tool outputs globally).
 
-- **Privacy/Secret Leak Scanning:** Proactively scan the reconstructed context snapshots for regex matches of potential secrets (API keys, SSH keys, `.env` vars) that were accidentally sent to the cloud.  
+- **Privacy/Secret Leak Scanning:** Proactively scan the reconstructed context snapshots for regex matches of potential secrets (API keys, SSH keys, `.env` vars) that were accidentally sent to the cloud.  `[→ CT-025]`
   → *Expanded:* Ship a curated set of high‑precision patterns (OpenAI, Anthropic, AWS, GitHub, etc.) and allow users to add custom patterns via a local config file. Never upload the matches — only report *"secret of type X found at turn Y, item Z"*.  
   → **New:** *Secret leak timeline* – show when each secret was first introduced and how many turns it remained in context.
 
-- **Cost Projection:** Calculate the *"Real‑World Cost"* of a session based on hardcoded provider pricing tables (OpenAI/Anthropic). Break it down by category: *"Tool outputs cost you $2.40; Conversation history cost $0.80."*  
+- **Cost Projection:** Calculate the *"Real‑World Cost"* of a session based on hardcoded provider pricing tables (OpenAI/Anthropic). Break it down by category: *"Tool outputs cost you $2.40; Conversation history cost $0.80."*  `[→ CT-026]`
   → *Expanded:* Support user‑supplied pricing overrides and multi‑model sessions. Also project *"what‑if"* costs: *"If tool outputs had been truncated at 4k tokens, this session would have cost $1.10 instead of $3.20."*  
   → **New:** *Cost forecasting* – given a partially completed session, estimate the total cost based on current trends.
 
@@ -113,7 +119,7 @@ This document serves as a "living backlog" of features and conceptual improvemen
 
 **Goal:** Ensure ContextTrace degrades gracefully when agent formats change upstream.
 
-- **Adapter Fidelity Score:** When parsing a session, report what percentage of the raw JSONL bytes were successfully mapped to domain entities vs. skipped as unknowns. A score of 100% means perfect reconstruction; 85% means something new was added to the agent.  
+- **Adapter Fidelity Score:** When parsing a session, report what percentage of the raw JSONL bytes were successfully mapped to domain entities vs. skipped as unknowns. A score of 100% means perfect reconstruction; 85% means something new was added to the agent.  `[→ CT-010]`
   → *Expanded:* Break the score down by event type and emit a *"fidelity report"* that can be tracked in CI. A sudden drop should open a GitHub issue automatically (optional, local webhook).  
   → **New:** *Fidelity over time* – store fidelity scores per session and show a trend graph to detect gradual format rot.
 
@@ -169,10 +175,10 @@ This document serves as a "living backlog" of features and conceptual improvemen
 
 **Goal:** Make ContextTrace a natural part of a developer's daily agent loop rather than a separate forensic tool.
 
-- **Session Diff (`ct diff`):** Compare two sessions (or two ranges of turns) and highlight structural differences in context composition, tool usage patterns, and residual growth. Useful when *"the agent worked yesterday but fails today on the same task."*  
+- **Session Diff (`ct diff`):** Compare two sessions (or two ranges of turns) and highlight structural differences in context composition, tool usage patterns, and residual growth. Useful when *"the agent worked yesterday but fails today on the same task."*  `[→ CT-021]`
   → *Expanded:* Add `--mode summary` for a high‑level overview, and `--mode detailed` for a turn‑by‑turn comparison.
 
-- **Replay-to-Prompt:** Given a turn, reconstruct the exact prompt the model received and offer to re‑send it to a different model (or the same model with different temperature) via the user's existing API keys. Purely local orchestration; never stores keys.  
+- **Replay-to-Prompt:** Given a turn, reconstruct the exact prompt the model received and offer to re‑send it to a different model (or the same model with different temperature) via the user's existing API keys. Purely local orchestration; never stores keys.  `[→ CT-033]`
   → *Expanded:* Support exporting the prompt as a single file for use with other tools.
 
 - **Agent Behavior Fingerprints:** Derive a compact signature of an agent's tool‑calling and compaction habits across many sessions. Surface anomalies: *"This session used 3× more web‑search tool calls than the median for this project."*  
@@ -208,7 +214,7 @@ This document serves as a "living backlog" of features and conceptual improvemen
 - **Failure Mode Clustering:** Cluster sessions by the shape of their context just before the agent went off the rails (sudden residual spike, giant tool output, instruction drift). Surface recurring anti‑patterns.  
   → *Expanded:* Use dimensionality reduction (PCA/t‑SNE) on contextual features to produce a 2D map of session failure clusters.
 
-- **Session Family Trees:** Since Claude Code sessions are DAGs of events, reconstruct the full conversation tree, not just the linear sequence. Show branches (e.g., where the agent tried multiple approaches in parallel) and let the user explore each branch independently.
+- **Session Family Trees:** Since Claude Code sessions are DAGs of events, reconstruct the full conversation tree, not just the linear sequence. Show branches (e.g., where the agent tried multiple approaches in parallel) and let the user explore each branch independently.  `[→ CT-028]`
 
 - **Context Evolution Hotspots:** Identify turns where the context composition changed the most (largest delta in token distribution). These are often the moments where the agent pivoted strategy or made a significant decision.
 

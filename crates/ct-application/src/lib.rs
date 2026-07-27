@@ -18,6 +18,7 @@ use ct_domain::{
 use std::fmt;
 
 pub use diagnostics::{Diagnostics, ResidualSpike};
+pub use ct_domain::services::DerivedRatio as SessionRatio;
 
 /// An agent adapter paired with the token estimator appropriate to its models.
 ///
@@ -242,6 +243,43 @@ impl ContextTrace {
             .map_err(|e| AppError::Calibration(e.to_string()))
     }
 
+    /// Per-turn history of what the log could and could not account for.
+    ///
+    /// The unlogged remainder is stable by nature -- an agent's system prompt
+    /// and tool schemas do not change while a session runs -- so a step change
+    /// in it means the harness altered them mid-session. Nothing in the log
+    /// records that happening, which is why watching the remainder is the only
+    /// way to see it.
+    ///
+    /// Reconstructs each turn once through a character probe, so the cost is one
+    /// pass over the session rather than one per turn per view.
+    pub fn residual_series(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        ratio: DerivedRatio,
+    ) -> Vec<ResidualPoint> {
+        let probe = CharProbe;
+        let adapter = &self.bindings[binding].adapter;
+
+        session
+            .turns()
+            .iter()
+            .filter_map(|turn| {
+                let tokens = turn.prompt_tokens()?;
+                let context = adapter.reconstruct(session, turn.number, &probe).ok()?;
+                let chars: u64 = context.items.iter().map(|i| i.tokens.tokens() as u64).sum();
+                Some(ResidualPoint {
+                    turn: turn.number.get(),
+                    prompt_tokens: tokens,
+                    accounted: ratio.accounted_at(chars),
+                    unlogged: ratio.unlogged_at(chars, tokens),
+                    items: context.items.len(),
+                })
+            })
+            .collect()
+    }
+
     /// Measure this session's characters-per-token from its own usage figures.
     ///
     /// Reconstructs every turn with an estimator that returns character counts
@@ -294,6 +332,114 @@ impl ContextTrace {
 
     pub fn session_id_of<'a>(&self, session: &'a AgentSession) -> &'a SessionId {
         session.id()
+    }
+}
+
+/// One turn's account of its own prompt.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct ResidualPoint {
+    pub turn: u32,
+    /// The agent's observed prompt size.
+    pub prompt_tokens: u32,
+    /// Tokens the reconstructed content accounts for.
+    pub accounted: u32,
+    /// Tokens the log cannot account for: the system prompt and tool schemas.
+    ///
+    /// `None` where reconstruction over-counted, which is reported as unknown
+    /// rather than zero -- a zero here would assert a complete inventory.
+    pub unlogged: Option<u32>,
+    pub items: usize,
+}
+
+/// A change in the unlogged remainder large enough to mean the harness altered
+/// the prompt's hidden part.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct ResidualStep {
+    pub turn: u32,
+    pub from: u32,
+    pub to: u32,
+}
+
+impl ResidualStep {
+    pub fn growth(&self) -> i64 {
+        self.to as i64 - self.from as i64
+    }
+}
+
+/// Smallest sustained change in the unlogged remainder worth reporting.
+pub const RESIDUAL_STEP_THRESHOLD: i64 = 5_000;
+
+/// Turns either side of a candidate step used to establish its levels.
+const STEP_WINDOW: usize = 5;
+
+/// Find *sustained* changes in the unlogged remainder.
+///
+/// # Why comparing consecutive turns does not work
+///
+/// The remainder is not the clean constant it ought to be: it drifts upward over
+/// a session, because one fitted ratio cannot describe a content mix that starts
+/// as prose and becomes dominated by tool output. Whatever the ratio gets wrong
+/// lands here. Differencing adjacent turns therefore measures that drift, and on
+/// a real session it flags nearly every turn -- which is no signal at all.
+///
+/// What separates a real change from drift is **persistence**. A registered tool
+/// stays registered and an MCP server stays connected, so the remainder steps to
+/// a new level and holds. Fit wobble reverts within a turn or two.
+///
+/// So a step is reported only when the median of the [`STEP_WINDOW`] turns
+/// before differs from the median of the [`STEP_WINDOW`] turns after by at least
+/// [`RESIDUAL_STEP_THRESHOLD`]. Medians because a single anomalous turn should
+/// not create or mask a step.
+///
+/// Turns whose remainder is unknown are excluded from the windows rather than
+/// skipped over silently; a window without enough known turns yields no step.
+pub fn residual_steps(series: &[ResidualPoint]) -> Vec<ResidualStep> {
+    let known: Vec<(u32, u32)> = series
+        .iter()
+        .filter_map(|p| p.unlogged.map(|u| (p.turn, u)))
+        .collect();
+
+    if known.len() < STEP_WINDOW * 2 {
+        return Vec::new();
+    }
+
+    let mut steps: Vec<ResidualStep> = Vec::new();
+    for index in STEP_WINDOW..=known.len() - STEP_WINDOW {
+        let before = median_of(&known[index - STEP_WINDOW..index]);
+        let after = median_of(&known[index..index + STEP_WINDOW]);
+        let growth = after as i64 - before as i64;
+        if growth.abs() < RESIDUAL_STEP_THRESHOLD {
+            continue;
+        }
+        let step = ResidualStep {
+            turn: known[index].0,
+            from: before,
+            to: after,
+        };
+        // One change produces a step at several neighbouring offsets. Keep the
+        // largest of each run rather than reporting the same event repeatedly.
+        match steps.last_mut() {
+            Some(last)
+                if step.turn.saturating_sub(last.turn) <= STEP_WINDOW as u32
+                    && last.growth().signum() == growth.signum() =>
+            {
+                if growth.abs() > last.growth().abs() {
+                    *last = step;
+                }
+            }
+            _ => steps.push(step),
+        }
+    }
+    steps
+}
+
+fn median_of(window: &[(u32, u32)]) -> u32 {
+    let mut values: Vec<u32> = window.iter().map(|(_, v)| *v).collect();
+    values.sort_unstable();
+    match values.len() {
+        0 => 0,
+        n if n % 2 == 1 => values[n / 2],
+        n => (values[n / 2 - 1] + values[n / 2]) / 2,
     }
 }
 
@@ -358,6 +504,93 @@ mod tests {
             started_at: None,
             last_activity: Some(Utc.with_ymd_and_hms(2026, 7, day, 0, 0, 0).unwrap()),
         }
+    }
+
+    fn point(turn: u32, unlogged: Option<u32>) -> ResidualPoint {
+        ResidualPoint {
+            turn,
+            prompt_tokens: 100_000,
+            accounted: 60_000,
+            unlogged,
+            items: 10,
+        }
+    }
+
+    /// A remainder that drifts upward the way a real session's does.
+    fn drifting(turns: u32, per_turn: u32) -> Vec<ResidualPoint> {
+        (1..=turns)
+            .map(|t| point(t, Some(30_000 + t * per_turn)))
+            .collect()
+    }
+
+    #[test]
+    fn ordinary_drift_is_not_reported_as_a_change() {
+        // The remainder climbs ~48,000 tokens across this session, because one
+        // fitted ratio cannot describe a changing content mix. Differencing
+        // adjacent turns flagged nearly every turn here, which is no signal.
+        let steps = residual_steps(&drifting(60, 800));
+        assert!(
+            steps.is_empty(),
+            "steady drift is the ratio misfitting, not the harness changing: {steps:?}"
+        );
+    }
+
+    #[test]
+    fn a_sustained_jump_is_reported() {
+        let mut series = drifting(40, 50);
+        for p in series.iter_mut().filter(|p| p.turn > 20) {
+            p.unlogged = p.unlogged.map(|u| u + 12_000);
+        }
+        let steps = residual_steps(&series);
+        assert_eq!(steps.len(), 1, "expected exactly one step, got {steps:?}");
+        assert!(
+            steps[0].turn.abs_diff(21) <= 5,
+            "step located at turn {}",
+            steps[0].turn
+        );
+        assert!(steps[0].growth() > 10_000);
+    }
+
+    #[test]
+    fn a_one_turn_spike_is_not_a_sustained_change() {
+        // A single anomalous turn must not create a step: a registered tool
+        // stays registered, so a real change holds its new level.
+        let mut series = drifting(40, 50);
+        series[20].unlogged = Some(200_000);
+        assert!(
+            residual_steps(&series).is_empty(),
+            "a lone outlier is not a sustained change"
+        );
+    }
+
+    #[test]
+    fn one_change_is_reported_once_not_at_every_offset() {
+        let mut series = drifting(40, 50);
+        for p in series.iter_mut().filter(|p| p.turn > 20) {
+            p.unlogged = p.unlogged.map(|u| u + 30_000);
+        }
+        assert_eq!(
+            residual_steps(&series).len(),
+            1,
+            "the same event must not be reported several times"
+        );
+    }
+
+    #[test]
+    fn turns_with_an_unknown_remainder_do_not_fabricate_a_step() {
+        // Over-counted turns have no measurable remainder. Treating them as
+        // zero would invent an enormous fall and then an enormous rise.
+        let mut series = drifting(40, 50);
+        for p in series.iter_mut().filter(|p| (18..=22).contains(&p.turn)) {
+            p.unlogged = None;
+        }
+        assert!(residual_steps(&series).is_empty());
+    }
+
+    #[test]
+    fn a_short_session_yields_no_steps_rather_than_noise() {
+        assert!(residual_steps(&drifting(6, 500)).is_empty());
+        assert!(residual_steps(&[]).is_empty());
     }
 
     #[test]
