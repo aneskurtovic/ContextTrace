@@ -188,7 +188,11 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
                 char_len,
             }
         }
-        Some("reasoning") => EventKind::Reasoning { char_len },
+        // Codex records reasoning summaries as text, so nothing is redacted.
+        Some("reasoning") => EventKind::Reasoning {
+            char_len,
+            redacted: false,
+        },
         Some("function_call") | Some("custom_tool_call") | Some("tool_search_call") => {
             EventKind::ToolCall {
                 tool: str_field(payload, "name").unwrap_or_else(|| "unknown".into()),
@@ -238,6 +242,9 @@ fn translate_event_msg(
                 output: u32_field(last, "output_tokens"),
                 reasoning: u32_field(last, "reasoning_output_tokens"),
                 context_window: window,
+                // `last_token_usage` is by definition one request, which is why
+                // this adapter reads it rather than `total_token_usage`.
+                api_calls: Some(1),
             })
         }
         Some(other) => EventKind::SessionEvent {

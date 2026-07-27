@@ -114,6 +114,13 @@ pub struct TokenUsage {
     pub reasoning: Option<u32>,
     /// The model's total context window, when the agent states it.
     pub context_window: Option<u32>,
+    /// How many API calls the agent lumped into this one logged response.
+    ///
+    /// Normally one. Claude Code sometimes makes several calls while producing a
+    /// single assistant message and records the *sum* of their cache figures --
+    /// see [`TokenUsage::prompt_tokens`]. Kept so diagnostics can say that a
+    /// turn's figures came from more than one request rather than hiding it.
+    pub api_calls: Option<u32>,
 }
 
 impl TokenUsage {
@@ -128,6 +135,20 @@ impl TokenUsage {
     /// `input_tokens` is the single easiest way to be badly wrong here: on a
     /// warm cache it can read `2` for a turn carrying 280,000 tokens of
     /// context, which is a real value observed in this machine's corpus.
+    ///
+    /// # These fields must describe one API call
+    ///
+    /// The sum is only a prompt size if the three figures came from a single
+    /// request. Claude Code sometimes emits an `iterations` array -- several API
+    /// calls made while producing one assistant message -- and its *top-level*
+    /// `cache_creation_input_tokens` and `cache_read_input_tokens` are the sums
+    /// across those calls. Adding them up then yields a number no context window
+    /// could hold: one corpus record reports 844,611 "prompt tokens" whose
+    /// largest actual call was 429,328.
+    ///
+    /// So adapters must populate these fields from one call and record how many
+    /// calls the log lumped together in [`TokenUsage::api_calls`]. The domain
+    /// cannot check this itself, which is exactly why it is written down here.
     ///
     /// Returns `None` only when the agent reported no input figures at all.
     pub fn prompt_tokens(&self) -> Option<u32> {

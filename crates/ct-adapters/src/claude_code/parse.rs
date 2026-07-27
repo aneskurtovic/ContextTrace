@@ -179,7 +179,10 @@ fn assistant_kind(v: &Value) -> EventKind {
         let has_thinking = blocks.iter().any(|b| block_type(b) == Some("thinking"));
         let has_text = blocks.iter().any(|b| block_type(b) == Some("text"));
         if has_thinking && !has_text {
-            return EventKind::Reasoning { char_len };
+            return EventKind::Reasoning {
+                char_len,
+                redacted: blocks.iter().any(is_redacted_thinking),
+            };
         }
     }
 
@@ -398,33 +401,139 @@ fn block_type(block: &Value) -> Option<&str> {
     block.get("type")?.as_str()
 }
 
-/// Characters across a message's content blocks.
+/// Signature characters per character of thinking text.
+///
+/// Extended-thinking blocks are written to the log with their text removed and
+/// only an opaque `signature` left behind -- 5,820 of 5,869 thinking blocks in
+/// the local corpus, some 27 million characters of signature in total. Counting
+/// those blocks as zero would silently drop the largest single category of
+/// unlogged context.
+///
+/// On the 38 blocks that *did* retain their text, signature length tracks text
+/// length closely: median 2.09 characters of signature per character of
+/// thinking, quartiles 1.76 and 2.42. That ratio is a measurement, not a guess
+/// about the encoding, and it is only ever used to produce an *estimate*.
+const SIGNATURE_CHARS_PER_THINKING_CHAR: f32 = 2.09;
+
+/// Character budget standing in for an image's ~1,600-token ceiling.
+///
+/// Anthropic's documented cost is about `(width * height) / 750` tokens after
+/// resizing to at most 1,568 pixels a side, which tops out near 1,600 tokens.
+/// These sessions run between two and four characters per token, so four
+/// thousand characters is a deliberately generous equivalent -- generous because
+/// over-stating a rare item is safer than hiding it.
+const IMAGE_MAX_EQUIVALENT_CHARS: usize = 4_000;
+
+/// Characters of *model-visible text* across a message's content blocks.
+///
+/// # Why this is not `to_string()` on the JSON
+///
+/// The model reads the text inside the blocks, not the JSON that transports it.
+/// Serialising a block counts key names, braces, and -- much worse -- escaping:
+/// every newline in a tool result becomes `\n`, and every Windows path
+/// separator becomes `\\`. In agent transcripts, which are mostly code and
+/// paths, that inflates the count substantially and it inflates it *unevenly*,
+/// so it distorts the proportions rather than cancelling out in calibration.
+///
+/// The exception is `tool_use.input`, which the model genuinely does see as
+/// serialised JSON, escapes included.
 pub(crate) fn content_chars(blocks: &[Value]) -> u32 {
-    let mut total: usize = 0;
-    for block in blocks {
-        for key in ["text", "thinking"] {
-            if let Some(s) = block.get(key).and_then(Value::as_str) {
-                total += s.chars().count();
-            }
-        }
-        // Tool call arguments and tool results are objects or strings.
-        for key in ["input", "content"] {
-            match block.get(key) {
-                Some(Value::String(s)) => total += s.chars().count(),
-                Some(other @ (Value::Object(_) | Value::Array(_))) => {
-                    total += other.to_string().chars().count()
-                }
-                _ => {}
-            }
-        }
-        // Inline images are sent as base64 and are large; count them.
-        if let Some(src) = block.get("source").and_then(|s| s.get("data")) {
-            if let Some(s) = src.as_str() {
-                total += s.chars().count();
-            }
-        }
-    }
+    let total: usize = blocks.iter().map(block_chars).sum();
     total.min(u32::MAX as usize) as u32
+}
+
+fn block_chars(block: &Value) -> usize {
+    match block_type(block) {
+        Some("thinking") => {
+            let text = block
+                .get("thinking")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !text.is_empty() {
+                return text.chars().count();
+            }
+            // Redacted: derive the size from what is left.
+            let signature = block
+                .get("signature")
+                .and_then(Value::as_str)
+                .map(|s| s.chars().count())
+                .unwrap_or(0);
+            (signature as f32 / SIGNATURE_CHARS_PER_THINKING_CHAR) as usize
+        }
+        Some("text") => block
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|s| s.chars().count())
+            .unwrap_or(0),
+        // Tool arguments really are sent as JSON.
+        Some("tool_use") => block
+            .get("input")
+            .map(|v| match v {
+                Value::String(s) => s.chars().count(),
+                other => other.to_string().chars().count(),
+            })
+            .unwrap_or(0),
+        Some("tool_result") => block.get("content").map(text_chars).unwrap_or(0),
+        // Inline images are sent as base64 and are large, but they do not cost
+        // tokens like text does: Anthropic resizes to at most 1,568x1568 and
+        // charges roughly (width x height) / 750, so a single image can never
+        // exceed about 1,600 tokens however many base64 characters it occupies.
+        // Passing the raw base64 length through a characters-per-token ratio
+        // would price one screenshot at tens of thousands of tokens.
+        Some("image") => block
+            .get("source")
+            .and_then(|s| s.get("data"))
+            .and_then(Value::as_str)
+            .map(|s| s.chars().count().min(IMAGE_MAX_EQUIVALENT_CHARS))
+            .unwrap_or(0),
+        // An unfamiliar block still contributes its text rather than nothing,
+        // so a new block type shows up as weight instead of vanishing.
+        _ => text_chars(block),
+    }
+}
+
+/// Keys that carry structure or identifiers rather than text the model reads.
+const NON_TEXT_KEYS: [&str; 7] = [
+    "type",
+    "signature",
+    "id",
+    "tool_use_id",
+    "cache_control",
+    "is_error",
+    "name",
+];
+
+/// Total length of the string leaves of a JSON value.
+fn text_chars(value: &Value) -> usize {
+    text_chars_at(value, 0)
+}
+
+fn text_chars_at(value: &Value, depth: u8) -> usize {
+    // Bounded because these documents are attacker-adjacent: they are whatever
+    // an agent happened to write, and recursion depth should not depend on it.
+    if depth > 12 {
+        return 0;
+    }
+    match value {
+        Value::String(s) => s.chars().count(),
+        Value::Array(items) => items.iter().map(|v| text_chars_at(v, depth + 1)).sum(),
+        Value::Object(map) => map
+            .iter()
+            .filter(|(k, _)| !NON_TEXT_KEYS.contains(&k.as_str()))
+            .map(|(_, v)| text_chars_at(v, depth + 1))
+            .sum(),
+        _ => 0,
+    }
+}
+
+/// Whether a content block's thinking text was redacted from the log.
+pub(crate) fn is_redacted_thinking(block: &Value) -> bool {
+    block_type(block) == Some("thinking")
+        && block
+            .get("thinking")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        && block.get("signature").is_some()
 }
 
 /// Size of an attachment's injected content.
@@ -442,24 +551,17 @@ fn attachment_chars(attachment: &Value) -> u32 {
         "addedLines",
         "addedBlocks",
     ] {
-        match attachment.get(key) {
-            Some(Value::String(s)) => {
-                total += s.chars().count();
-                counted = true;
-            }
-            Some(other @ (Value::Object(_) | Value::Array(_))) => {
-                total += other.to_string().chars().count();
-                counted = true;
-            }
-            _ => {}
+        if let Some(value) = attachment.get(key) {
+            total += text_chars(value);
+            counted = true;
         }
     }
 
-    // Nothing recognised: fall back to the serialised attachment so an unknown
+    // Nothing recognised: fall back to the attachment's own text so an unknown
     // injection type still contributes its approximate weight rather than
     // silently counting as zero.
     if !counted {
-        total = attachment.to_string().chars().count();
+        total = text_chars(attachment);
     }
 
     total.min(u32::MAX as usize) as u32
@@ -476,16 +578,56 @@ fn first_text(blocks: Option<&Vec<Value>>, max: usize) -> String {
 }
 
 /// Extract usage from an assistant line's `message.usage`.
+///
+/// # Why the top-level figures are not always a prompt size
+///
+/// One assistant message can be produced by several API calls, which the log
+/// records in an `iterations` array. When it does, the *top-level*
+/// `cache_creation_input_tokens` and `cache_read_input_tokens` are the sums
+/// across those calls -- verified on 466 of 474 multi-iteration records in the
+/// local corpus, where both fields matched the sum exactly.
+///
+/// Summing them therefore reports a prompt far larger than any that was sent:
+/// one record totals 844,611 tokens while its largest single call is 429,328.
+///
+/// The prompt we want is the biggest single request, because "what was in the
+/// model's context at this turn" is a property of one call. The last call is
+/// usually within a fraction of a percent of the largest, but the largest is the
+/// high-water mark the rest of the tool talks about.
 pub(crate) fn usage_from_message(v: &Value) -> Option<TokenUsage> {
     let usage = v.get("message")?.get("usage")?;
+
+    let mut chosen = usage;
+    let mut calls = 1u32;
+    if let Some(iterations) = usage.get("iterations").and_then(Value::as_array) {
+        if iterations.len() > 1 {
+            calls = iterations.len().min(u32::MAX as usize) as u32;
+            if let Some(largest) = iterations.iter().max_by_key(|it| prompt_sum(it)) {
+                chosen = largest;
+            }
+        }
+    }
+
     Some(TokenUsage {
-        input: u32_field(usage, "input_tokens"),
-        cache_creation: u32_field(usage, "cache_creation_input_tokens"),
-        cache_read: u32_field(usage, "cache_read_input_tokens"),
+        input: u32_field(chosen, "input_tokens"),
+        cache_creation: u32_field(chosen, "cache_creation_input_tokens"),
+        cache_read: u32_field(chosen, "cache_read_input_tokens"),
+        // Output is genuinely produced by every call, so the total is the sum
+        // the log already gives us -- unlike the input side, it is not a
+        // repeated prefix being counted several times.
         output: u32_field(usage, "output_tokens"),
         reasoning: None,
         context_window: None,
+        api_calls: Some(calls),
     })
+}
+
+/// Prompt size of one usage object, for picking the largest call.
+fn prompt_sum(v: &Value) -> u64 {
+    ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+        .iter()
+        .filter_map(|k| v.get(*k).and_then(Value::as_u64))
+        .sum()
 }
 
 #[cfg(test)]
@@ -643,6 +785,138 @@ mod tests {
         assert_eq!(meta.model, None);
         absorb_metadata(&json!({"message": {"model": "claude-opus-4-8"}}), &mut meta, None);
         assert_eq!(meta.model.as_deref(), Some("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn a_multi_call_response_reports_one_call_not_their_sum() {
+        // Modelled on a real record: three API calls behind one assistant
+        // message, whose top-level cache figures are the sum across all three.
+        let line = json!({
+            "type": "assistant",
+            "message": {"usage": {
+                "input_tokens": 4,
+                "cache_creation_input_tokens": 10_700,
+                "cache_read_input_tokens": 137_532,
+                "output_tokens": 2000,
+                "iterations": [
+                    {"input_tokens": 76_603, "cache_creation_input_tokens": 0,
+                     "cache_read_input_tokens": 0},
+                    {"input_tokens": 2, "cache_creation_input_tokens": 5_924,
+                     "cache_read_input_tokens": 65_804},
+                    {"input_tokens": 2, "cache_creation_input_tokens": 4_776,
+                     "cache_read_input_tokens": 71_728}
+                ]
+            }}
+        });
+        let usage = usage_from_message(&line).unwrap();
+        assert_eq!(
+            usage.prompt_tokens(),
+            Some(76_603),
+            "the top-level sum (148,236) is three prompts added together, not one prompt"
+        );
+        assert_eq!(usage.api_calls, Some(3), "the aggregation must stay visible");
+    }
+
+    #[test]
+    fn a_single_call_response_is_read_from_the_top_level() {
+        let line = json!({
+            "type": "assistant",
+            "message": {"usage": {
+                "input_tokens": 131,
+                "cache_creation_input_tokens": 2_011,
+                "cache_read_input_tokens": 913_787,
+                "iterations": [
+                    {"input_tokens": 131, "cache_creation_input_tokens": 2_011,
+                     "cache_read_input_tokens": 913_787}
+                ]
+            }}
+        });
+        let usage = usage_from_message(&line).unwrap();
+        assert_eq!(usage.prompt_tokens(), Some(915_929));
+        assert_eq!(usage.api_calls, Some(1));
+    }
+
+    #[test]
+    fn json_punctuation_and_escaping_are_not_counted_as_model_input() {
+        // The model reads the text inside the block. Serialising the block would
+        // additionally count the key names, the braces, and the backslashes that
+        // escaping adds to every newline and Windows path separator.
+        let text = "line one\nline two\nC:\\repo\\file.rs";
+        let blocks = vec![json!({
+            "type": "tool_result",
+            "tool_use_id": "toolu_0123456789abcdef",
+            "content": [{"type": "text", "text": text}]
+        })];
+        assert_eq!(
+            content_chars(&blocks),
+            text.chars().count() as u32,
+            "only the text itself is model input"
+        );
+    }
+
+    #[test]
+    fn tool_arguments_are_counted_as_the_json_the_model_actually_sees() {
+        let input = json!({"command": "ls -la", "description": "list"});
+        let blocks = vec![json!({
+            "type": "tool_use", "id": "toolu_1", "name": "Bash", "input": input
+        })];
+        let expected = json!({"command": "ls -la", "description": "list"})
+            .to_string()
+            .chars()
+            .count() as u32;
+        assert_eq!(content_chars(&blocks), expected);
+    }
+
+    #[test]
+    fn redacted_thinking_is_sized_from_its_signature_rather_than_counted_as_zero() {
+        // 99.2% of thinking blocks in the corpus look like this: no text, a
+        // large signature, and context that was genuinely occupied.
+        let signature: String = "s".repeat(20_900);
+        let blocks = vec![json!({
+            "type": "thinking", "thinking": "", "signature": signature
+        })];
+        let chars = content_chars(&blocks);
+        assert_eq!(
+            chars, 10_000,
+            "signature length divided by the measured 2.09 ratio"
+        );
+
+        let line = json!({"type": "assistant", "message": {"content": blocks}});
+        match assistant_kind(&line) {
+            EventKind::Reasoning { redacted, char_len } => {
+                assert!(redacted, "the derivation must be visible to diagnostics");
+                assert_eq!(char_len, 10_000);
+            }
+            other => panic!("expected reasoning, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn thinking_that_kept_its_text_is_measured_not_derived() {
+        let blocks = vec![json!({
+            "type": "thinking",
+            "thinking": "twelve chars",
+            "signature": "ignored-because-the-text-is-here"
+        })];
+        assert_eq!(content_chars(&blocks), 12);
+
+        let line = json!({"type": "assistant", "message": {"content": blocks}});
+        assert!(matches!(
+            assistant_kind(&line),
+            EventKind::Reasoning { redacted: false, .. }
+        ));
+    }
+
+    #[test]
+    fn an_unfamiliar_block_type_still_contributes_its_text() {
+        let blocks = vec![json!({
+            "type": "some_future_block", "body": "abcdefghij", "id": "not-text"
+        })];
+        assert_eq!(
+            content_chars(&blocks),
+            10,
+            "a new block type must not silently weigh nothing"
+        );
     }
 
     #[test]

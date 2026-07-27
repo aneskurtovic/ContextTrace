@@ -207,10 +207,16 @@ fn classify(
                 "System message".to_string(),
             ),
         },
-        EventKind::Reasoning { .. } => (
+        EventKind::Reasoning { redacted, .. } => (
             ContextCategory::Reasoning,
             ContextSource::ModelOutput,
-            "Thinking".to_string(),
+            if *redacted {
+                // Named so it is obvious in `ct largest` that this row's size is
+                // derived from a signature rather than measured from text.
+                "Thinking (redacted, size derived)".to_string()
+            } else {
+                "Thinking".to_string()
+            },
         ),
         EventKind::ToolCall { tool, .. } => (
             ContextCategory::ToolCalls,

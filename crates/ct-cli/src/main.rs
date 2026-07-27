@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 use ct_adapters::{ClaudeCodeAdapter, CodexAdapter, HeuristicEstimator, TiktokenEstimator};
 use ct_application::{AgentBinding, ContextTrace, SessionFilter};
 use ct_domain::ports::TokenEstimator;
+use ct_domain::services::DerivedRatio;
 use ct_domain::{AgentKind, TurnNumber};
 
 #[derive(Parser)]
@@ -173,8 +174,18 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Context { id, turn, json } => {
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
-            let snapshot = app.snapshot(&session, resolved.binding, turn)?;
-            render::context(&snapshot, app.estimator_name(resolved.binding), json);
+            let calibrated = session_estimator(&app, &session, resolved.binding);
+            let snapshot = match &calibrated {
+                Some((estimator, _)) => {
+                    app.snapshot_with(&session, resolved.binding, turn, estimator)?
+                }
+                None => app.snapshot(&session, resolved.binding, turn)?,
+            };
+            let name = match &calibrated {
+                Some((estimator, _)) => estimator.name().to_string(),
+                None => app.estimator_name(resolved.binding).to_string(),
+            };
+            render::context(&snapshot, &name, calibrated.as_ref().map(|(_, r)| *r), json);
         }
 
         Command::Largest {
@@ -185,7 +196,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
-            let snapshot = app.snapshot(&session, resolved.binding, turn)?;
+            let snapshot = match session_estimator(&app, &session, resolved.binding) {
+                Some((estimator, _)) => {
+                    app.snapshot_with(&session, resolved.binding, turn, &estimator)?
+                }
+                None => app.snapshot(&session, resolved.binding, turn)?,
+            };
             render::largest(&snapshot, limit, json);
         }
 
@@ -196,6 +212,29 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Build an estimator calibrated to this session, where that makes sense.
+///
+/// **A composition-root decision, deliberately.** Deriving a characters-per-
+/// token ratio is only meaningful where counts are heuristic. Codex runs
+/// GPT-family models, so `tiktoken` counts its items exactly and replacing that
+/// with a fitted ratio would trade a measurement for an estimate -- strictly
+/// worse. This function is the one place that knows which agent got which
+/// estimator, because this function is the one place that paired them.
+fn session_estimator(
+    app: &ContextTrace,
+    session: &ct_domain::AgentSession,
+    binding: usize,
+) -> Option<(HeuristicEstimator, DerivedRatio)> {
+    if session.agent() != AgentKind::ClaudeCode {
+        return None;
+    }
+    let derived = app.derive_ratio(session, binding)?;
+    Some((
+        HeuristicEstimator::with_ratio(derived.chars_per_token),
+        derived,
+    ))
 }
 
 /// Resolve `--turn`, defaulting to the session's largest turn.

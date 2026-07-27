@@ -10,9 +10,10 @@
 pub mod diagnostics;
 
 use ct_domain::ports::{AgentAdapter, PortError, TokenEstimator};
+use ct_domain::services::ratio::{self, DerivedRatio, TurnSample};
 use ct_domain::services::TokenCalibrator;
 use ct_domain::{
-    AgentKind, AgentSession, ContextSnapshot, SessionDescriptor, SessionId, TurnNumber,
+    AgentKind, AgentSession, ContextSnapshot, SessionDescriptor, SessionId, TokenCount, TurnNumber,
 };
 use std::fmt;
 
@@ -209,13 +210,67 @@ impl ContextTrace {
             });
         }
 
-        let binding = &self.bindings[binding];
-        let reconstructed = binding
+        let estimator = self.bindings[binding].estimator.as_ref();
+        self.snapshot_with(session, binding, turn, estimator)
+    }
+
+    /// As [`ContextTrace::snapshot`], but with an estimator chosen by the
+    /// caller.
+    ///
+    /// Exists so the composition root can substitute an estimator calibrated to
+    /// *this* session -- see [`ContextTrace::derive_ratio`]. The use case is
+    /// otherwise identical, and the domain still owns the balancing rule.
+    pub fn snapshot_with(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        turn: TurnNumber,
+        estimator: &dyn TokenEstimator,
+    ) -> Result<ContextSnapshot, AppError> {
+        if session.turn(turn).is_none() {
+            return Err(AppError::TurnOutOfRange {
+                requested: turn.get(),
+                available: session.turn_count(),
+            });
+        }
+
+        let reconstructed = self.bindings[binding]
             .adapter
-            .reconstruct(session, turn, binding.estimator.as_ref())?;
+            .reconstruct(session, turn, estimator)?;
 
         TokenCalibrator::calibrate(reconstructed, session.id().clone(), session.agent(), turn)
             .map_err(|e| AppError::Calibration(e.to_string()))
+    }
+
+    /// Measure this session's characters-per-token from its own usage figures.
+    ///
+    /// Reconstructs every turn with an estimator that returns character counts
+    /// unchanged, giving the domain the `(chars, tokens)` pairs it needs. The
+    /// probe is why this belongs in the application layer: it is one use case
+    /// composing the reconstruction port with a domain service, and neither half
+    /// has to know the other exists.
+    ///
+    /// Returns `None` when the session lacks enough growth to measure, which is
+    /// normal for short sessions and not an error.
+    pub fn derive_ratio(&self, session: &AgentSession, binding: usize) -> Option<DerivedRatio> {
+        let probe = CharProbe;
+        let adapter = &self.bindings[binding].adapter;
+
+        let samples: Vec<TurnSample> = session
+            .turns()
+            .iter()
+            .filter_map(|turn| {
+                let tokens = turn.prompt_tokens()?;
+                let context = adapter.reconstruct(session, turn.number, &probe).ok()?;
+                Some(TurnSample {
+                    chars: context.items.iter().map(|i| i.tokens.tokens() as u64).sum(),
+                    tokens,
+                    depth: context.items.len().min(u32::MAX as usize) as u32,
+                })
+            })
+            .collect();
+
+        ratio::derive(&samples)
     }
 
     /// The turn with the largest prompt -- usually where to start looking.
@@ -239,6 +294,28 @@ impl ContextTrace {
 
     pub fn session_id_of<'a>(&self, session: &'a AgentSession) -> &'a SessionId {
         session.id()
+    }
+}
+
+/// An estimator that reports characters as-is.
+///
+/// Not a token estimate and never presented as one -- it is a measuring
+/// instrument. Reconstructing a turn through it makes the reconstruction report
+/// how many *characters* it accounted for, which is the input the ratio service
+/// needs. Keeping it private prevents it leaking into anything user-facing.
+struct CharProbe;
+
+impl TokenEstimator for CharProbe {
+    fn count_text(&self, text: &str) -> TokenCount {
+        TokenCount::estimated(text.chars().count().min(u32::MAX as usize) as u32)
+    }
+
+    fn estimate_from_chars(&self, char_len: u32) -> TokenCount {
+        TokenCount::estimated(char_len)
+    }
+
+    fn name(&self) -> &str {
+        "characters"
     }
 }
 

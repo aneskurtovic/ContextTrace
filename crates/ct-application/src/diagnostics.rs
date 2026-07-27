@@ -50,6 +50,17 @@ pub struct Diagnostics {
     pub spikes: Vec<ResidualSpike>,
     /// Turns for which the agent reported no usage, so context size is unknown.
     pub turns_without_usage: usize,
+    /// Turns whose figures the agent produced from more than one API call.
+    ///
+    /// Worth reporting because the log's top-level cache fields for such a turn
+    /// are sums across those calls, and reading them as one prompt size is how
+    /// a turn comes to claim more tokens than a context window holds.
+    pub multi_call_turns: usize,
+    /// Reasoning events whose text the agent stripped from the log.
+    ///
+    /// Their size is derived from the leftover signature, so a session with many
+    /// of these is reconstructed less directly than its fidelity score suggests.
+    pub redacted_reasoning: usize,
 }
 
 impl Diagnostics {
@@ -106,6 +117,16 @@ pub fn diagnose(session: &AgentSession) -> Diagnostics {
             .turns()
             .iter()
             .filter(|t| t.prompt_tokens().is_none())
+            .count(),
+        multi_call_turns: session
+            .turns()
+            .iter()
+            .filter(|t| t.usage.api_calls.is_some_and(|n| n > 1))
+            .count(),
+        redacted_reasoning: session
+            .events()
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::Reasoning { redacted: true, .. }))
             .count(),
     }
 }

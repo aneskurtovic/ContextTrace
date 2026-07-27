@@ -89,6 +89,15 @@ pub enum EventKind {
     /// Model reasoning, where the agent records it.
     Reasoning {
         char_len: u32,
+        /// True when the agent wrote the block but stripped its text, leaving
+        /// only an opaque signature.
+        ///
+        /// This is the normal case for Claude Code extended thinking -- 99.2% of
+        /// thinking blocks in the local corpus -- and it matters because the
+        /// reasoning still occupied the model's context. `char_len` for a
+        /// redacted block is *derived from the signature's length*, so it is a
+        /// weaker figure than a measured one and diagnostics say so.
+        redacted: bool,
     },
     ToolCall {
         tool: String,
@@ -158,7 +167,7 @@ impl Event {
     pub fn char_len(&self) -> Option<u32> {
         match &self.kind {
             EventKind::Message { char_len, .. }
-            | EventKind::Reasoning { char_len }
+            | EventKind::Reasoning { char_len, .. }
             | EventKind::ToolCall { char_len, .. }
             | EventKind::ToolResult { char_len, .. }
             | EventKind::ContextInjection { char_len, .. } => Some(*char_len),

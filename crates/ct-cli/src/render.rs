@@ -5,6 +5,7 @@ use ct_adapters::FileRawEventSource;
 use ct_application::{ContextTrace, Diagnostics, ResolvedSession};
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::RawEventSource;
+use ct_domain::services::DerivedRatio;
 use ct_domain::{AgentSession, ContextSnapshot, SessionDescriptor};
 
 pub fn roots(app: &ContextTrace) {
@@ -144,7 +145,13 @@ fn describe_kind(event: &ct_domain::Event) -> String {
                 format!("{role}: {}", ellipsize(preview, 32))
             }
         }
-        EventKind::Reasoning { .. } => "reasoning".into(),
+        EventKind::Reasoning { redacted, .. } => {
+            if *redacted {
+                "reasoning (text redacted in log)".into()
+            } else {
+                "reasoning".into()
+            }
+        }
         EventKind::ToolCall { tool, .. } => format!("tool call: {}", ellipsize(tool, 30)),
         EventKind::ToolResult { tool, is_error, .. } => {
             let name = tool.as_deref().unwrap_or("tool");
@@ -176,7 +183,12 @@ fn describe_kind(event: &ct_domain::Event) -> String {
     }
 }
 
-pub fn context(snapshot: &ContextSnapshot, estimator: &str, json: bool) {
+pub fn context(
+    snapshot: &ContextSnapshot,
+    estimator: &str,
+    derived: Option<DerivedRatio>,
+    json: bool,
+) {
     if json {
         print_json(snapshot);
         return;
@@ -241,10 +253,41 @@ pub fn context(snapshot: &ContextSnapshot, estimator: &str, json: bool) {
         );
     }
 
+    if let Some(ratio) = derived {
+        println!(
+            "\n  Ratio      {:.2} characters per token, measured from this session's own\n  \
+             {:>10} usage across {} turn pairs (spread {:.1}x).",
+            ratio.chars_per_token, "", ratio.pairs_used, ratio.dispersion
+        );
+        match ratio.unlogged_overhead {
+            Some(overhead) => println!(
+                "  Unlogged   ~{} tokens the agent never wrote down -- its system prompt\n  \
+                 {:>10} and tool JSON schemas. Measured, not assumed.",
+                thousands(overhead),
+                ""
+            ),
+            // The measurement came out negative, which means reconstruction
+            // accounted for more content than the prompt held. Reporting "0
+            // hidden tokens" would turn a broken measurement into a confident
+            // and wrong inventory.
+            None => println!(
+                "  Unlogged   not measurable here: reconstruction accounted for more content\n  \
+                 {:>10} than the reported prompt held, so the hidden remainder cannot be\n  \
+                 {:>10} separated from the over-count. Treat the rows as proportions.",
+                "", ""
+            ),
+        }
+        if ratio.dispersion > 2.0 {
+            println!(
+                "  The per-turn ratios varied widely, so this session mixes content that\n  \
+                 tokenizes very differently. The ratio is a middle value, not a constant."
+            );
+        }
+    }
+
     if let Some(scale) = snapshot.calibration_scale() {
         println!(
-            "\n  Calibration: heuristic estimates scaled by {scale:.2} to meet the observed\n  \
-             total of {}.",
+            "\n  Calibration: estimates scaled by {scale:.2} to meet the observed total of {}.",
             thousands(snapshot.total().tokens())
         );
         if scale < 0.95 && !snapshot.residual_is_meaningful() {
@@ -340,6 +383,24 @@ pub fn doctor(
 
     if let (Some(peak), Some(turn)) = (diagnostics.peak_prompt_tokens, diagnostics.peak_turn) {
         println!("Peak       {} tokens at turn {turn}", thousands(peak));
+    }
+
+    if diagnostics.multi_call_turns > 0 {
+        println!(
+            "Multi-call {} turn(s) were produced by more than one API call. Their prompt\n           \
+             size is taken from the largest single call, because the log's top-level\n           \
+             cache figures are the sum across calls and would overstate the prompt.",
+            diagnostics.multi_call_turns
+        );
+    }
+
+    if diagnostics.redacted_reasoning > 0 {
+        println!(
+            "Redacted   {} reasoning event(s) had their text stripped from the log. The\n           \
+             reasoning still occupied context, so its size is derived from the leftover\n           \
+             signature rather than measured.",
+            diagnostics.redacted_reasoning
+        );
     }
 
     println!("Compaction {} event(s)", diagnostics.compactions);

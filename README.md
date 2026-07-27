@@ -18,9 +18,11 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 
 > **Status: milestone 1 complete.** Both adapters, the reconstruction engine and
 > the CLI work end to end against real sessions. Verified on a local corpus of
-> 774 sessions: the 100 largest (up to 99 MB) parse with zero failures and 100%
-> event-recognition fidelity, and reported context totals match the raw JSONL
-> exactly. See [Current state](#current-state).
+> 774 sessions: the 120 largest parse with zero failures and 100%
+> event-recognition fidelity, reported totals match the raw JSONL, and a
+> before/after mtime check confirms nothing is written. 83 of 98 Claude Code
+> sessions now report a *measured* figure for the context their agent never
+> logged. See [Current state](#current-state).
 
 ---
 
@@ -99,7 +101,7 @@ so discarded content is derivable by diffing rather than merely inferable.
 
 ### Claude Code
 
-`usage` on each assistant message gives the **exact** prompt size:
+`usage` on each assistant message gives the prompt size as
 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. Reading
 only `input_tokens` is the easiest way to be badly wrong — on a warm cache it
 reads `2` for a turn carrying 280,000 tokens.
@@ -109,23 +111,94 @@ One API response spans several lines sharing a `requestId`. `attachment` lines
 label injected context with its origin, making instruction provenance observed
 data rather than inference.
 
+**Three things in this format will silently corrupt a naive reading.** All three
+were found by measuring the corpus, not by reading documentation:
+
+*That sum is not always one prompt.* Some responses carry an `iterations` array —
+several API calls behind a single assistant message — and the top-level
+`cache_creation_input_tokens` and `cache_read_input_tokens` are the **sums across
+those calls**. This holds on 466 of 474 multi-iteration records. Adding them then
+yields a prompt no context window could hold: one record reports 844,611 tokens
+whose largest actual call was 429,328. ContextTrace reads the largest single call
+and `ct doctor` names the affected turns.
+
+*Thinking text is redacted.* 5,820 of 5,869 extended-thinking blocks (99.2%) are
+written with an empty `thinking` field and only an opaque `signature` — 27
+million characters of signature corpus-wide. That reasoning still occupied the
+model's context, so counting it as zero drops the largest single category of
+unlogged content. Where text *was* retained, signature length tracks it closely
+(median 2.09 characters of signature per character of thinking, quartiles 1.76
+and 2.42), so size is derived from that ratio and flagged as derived.
+
+*Not everything logged was sent.* A large tool result is persisted to disk and
+only a truncated form appears in `message.content`; the full `toolUseResult` was
+never in the prompt. Counting the wrong one inflates the biggest category there
+is.
+
 ### The asymmetry that shapes everything
 
 Codex is GPT-family, so `tiktoken` can count exactly. Anthropic ships no local
 tokenizer, so Claude Code items can only be estimated — while the per-turn total
-is exact. Calibration reconciles the two: estimates are scaled to fit the known
-total, and whatever cannot be attributed becomes an explicit residual row rather
-than being smeared across the visible categories.
+is observed. Calibration reconciles the two: estimates are scaled to fit the
+known total, and whatever cannot be attributed becomes an explicit residual row
+rather than being smeared across the visible categories.
+
+### The ratio is measured, not assumed
+
+A hardcoded characters-per-token constant is a guess, and it is wrong by
+different amounts in different sessions: across the corpus the true figure runs
+from **1.49 to 3.49**, because a session of English design discussion and a
+session of Windows paths and minified JSON do not tokenize alike.
+
+It would be easy to assume this does not matter, since calibration rescales
+everything to the observed total and a uniformly wrong ratio cancels out of the
+proportions. It does not cancel out of the **residual** — and the residual is the
+whole point, because it is the context the agent never logged.
+
+So ContextTrace derives the ratio from each session's own usage figures.
+Differencing consecutive turns cancels the unknown constant, leaving
+`Δtokens ≈ Δchars / ratio`; the median of those per-pair ratios resists the one
+anomalous turn. Only then is the constant recovered from the levels. That order
+matters: solving for the constant first makes the two chase each other.
+
+The payoff is that "what the agent never wrote down" becomes a measurement.
+Across the 98 sessions swept, **83 now report a figure** where previously none
+could:
 
 ```
-Context — 146,820 tokens  [observed, exact]
+Context at turn 104 — 419,905 tokens  [observed]
 
-  Tool outputs      61,240  41.7%  [calibrated]
-  Conversation      37,820  25.8%  [calibrated]
-  Instructions      19,110  13.0%  [calibrated]
-  Repo context      14,420   9.8%  [calibrated]
-  Unattributed      14,230   9.7%  [residual — system prompt + tool schemas]
+  Tool outputs             232,888  55.5%  [estimated]
+  File contents             77,734  18.5%  [estimated]
+  Reasoning                 26,399   6.3%  [estimated]
+  ...
+
+  Ratio      2.42 characters per token, measured from this session's own
+             usage across 118 turn pairs (spread 1.9x).
+  Unlogged   ~36,506 tokens the agent never wrote down — its system prompt
+             and tool JSON schemas. Measured, not assumed.
 ```
+
+That 36,506 is corroborated independently: at turn 1 of a session, where the
+cache is cold, the gap between logged content and reported prompt is ~40,000
+tokens.
+
+### When it does not work, it says so
+
+On 14 of 98 sessions the reconstruction accounts for **more** content than the
+prompt held, so the constant comes out negative. Claude Code drops old content
+from the context without recording that it did, and no marker for it exists
+anywhere in the log. Rather than invent semantics for undocumented behaviour, the
+tool reports the failure:
+
+```
+  Unlogged   not measurable here: reconstruction accounted for more content
+             than the reported prompt held, so the hidden remainder cannot be
+             separated from the over-count. Treat the rows as proportions.
+```
+
+Clamping that to "0 tokens hidden" would turn a broken measurement into a
+confident and wrong inventory.
 
 ---
 
@@ -161,10 +234,18 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-adapters` — Claude Code ACL (parse + parent-chain walk) | Implemented, 64 tests |
 | `ct-application` — use cases and diagnostics | Implemented, 13 tests |
 | `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`doctor` | Implemented |
-| Standalone JSONL fixture files | Not started (shapes covered by inline unit tests) |
+| Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-114 tests passing.
+141 tests passing.
+
+Committed fixtures are hand-authored synthetic sessions, never captured, each
+encoding one way the real formats mislead a reader: a rewound branch that must
+not appear in a reconstruction, a compaction boundary the walk must stop at, one
+response split across lines under a shared `requestId`, a turn whose cache
+figures are the sum of several API calls, a thinking block stripped to its
+signature, a tool result whose full output went to disk instead of the model, and
+an event type from the future.
 
 ### Working CLI surface
 
@@ -183,16 +264,23 @@ any desktop UI exists. Domain types serialise as tagged sum types
 
 ### A note on reading the numbers
 
-Percentages are shares of an **exactly known** total, so they are trustworthy.
+Percentages are shares of an **observed** total, so they are trustworthy.
 Individual Claude Code figures are calibrated estimates, and `ct context` prints
-the scale factor that was applied.
+both the derived ratio and the scale factor applied.
 
-When the estimator runs high, the scaled figures consume the whole budget and no
-residual remains. That does **not** mean there is no hidden context — the system
-prompt and tool schemas are still inside the total, with their share absorbed
-into the visible categories. The CLI says so explicitly rather than letting a
-zero residual imply a complete inventory. Improving the estimator so a genuine
-residual emerges is the main known accuracy gap.
+Two limitations are stated by the tool rather than hidden by it:
+
+- On sessions where reconstruction over-counts, the unlogged remainder cannot be
+  separated from the over-count, and `ct context` says so instead of printing a
+  zero residual that would imply a complete inventory.
+- `ct doctor` reports turns whose figures came from several API calls, and
+  reasoning events whose text the log stripped — both cases where a number is
+  weaker than its presentation might suggest.
+
+**The main known gap** is that Claude Code removes old content from the context
+without recording that it has done so. No marker for it exists in the log, so
+ContextTrace detects the discrepancy and reports it rather than modelling a
+behaviour it cannot observe.
 
 ---
 
@@ -204,3 +292,12 @@ asserting graceful degradation. Real session logs are never committed; they are
 used only as a local, gitignored corpus for a zero-panic smoke test that also
 reports a histogram of unrecognised event types — which is how a format change
 upstream surfaces as a count rather than a crash.
+
+That histogram has already paid for itself twice. It auto-detected five
+previously unseen event types (`relocated`, `file-history-delta`,
+`custom-title`, `frame-link`, `inter_agent_communication_metadata`) as counts
+rather than crashes. And the accuracy defects above — the multi-call sums, the
+redacted thinking, the JSON-escaping inflation — were all found by measuring the
+corpus against its own reported usage. None of them would have failed a unit
+test written from the format alone, which is the argument for keeping a
+real-data check in the loop.
