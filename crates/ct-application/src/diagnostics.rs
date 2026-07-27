@@ -379,6 +379,7 @@ mod tests {
                     tool: "Bash".into(),
                     call_id: Some("toolu_017".into()),
                     char_len: 40,
+                    target: None,
                 },
             ),
             event(

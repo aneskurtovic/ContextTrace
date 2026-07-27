@@ -103,6 +103,13 @@ pub enum EventKind {
         tool: String,
         call_id: Option<String>,
         char_len: u32,
+        /// What the call acted on: the path it read, the command it ran.
+        ///
+        /// Taken from the call's own arguments, and `None` whenever they do not
+        /// say. Without it a context breakdown reports which *tool* consumed
+        /// 14,805 tokens but not which *file*, which is one question short of
+        /// the one being asked.
+        target: Option<String>,
     },
     ToolResult {
         tool: Option<String>,

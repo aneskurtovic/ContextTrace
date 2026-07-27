@@ -16,7 +16,7 @@
 //! | Log shape | flat list of API items | DAG linked by `parentUuid` |
 //! | Reconstruction | replay the item list | walk the parent chain |
 //! | Per-turn total | `token_count.last_token_usage` | `usage` input + cache fields |
-//! | Per-item counts | exact (`tiktoken`) | estimated (no public tokenizer) |
+//! | Per-item counts | estimated from `char_len`; `tiktoken` available but unused (CT-035) | estimated (no public tokenizer) |
 //! | Compaction | `replacement_history` recorded verbatim | before/after token counts |
 //!
 //! Neither agent's vocabulary escapes its module. The domain sees only
@@ -34,6 +34,7 @@ pub mod codex;
 pub mod jsonl;
 pub mod raw_source;
 pub mod tokenizers;
+pub mod tool_target;
 pub mod walk;
 
 pub use claude_code::ClaudeCodeAdapter;

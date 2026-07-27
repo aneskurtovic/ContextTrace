@@ -1,6 +1,9 @@
 //! Presentation. The only layer allowed to know about terminals.
 
-use crate::format::{bar, bytes, confidence_tag, ellipsize, pad, percent, rpad, thousands, token_count};
+use crate::format::{
+    bar, bytes, confidence_tag, ellipsize, ellipsize_middle, pad, percent, rpad, thousands,
+    token_count,
+};
 use ct_adapters::FileRawEventSource;
 use ct_application::{ContextTrace, Diagnostics, ResidualPoint, ResolvedSession};
 use ct_domain::model::event::EventKind;
@@ -355,8 +358,8 @@ pub fn largest(view: &FilteredView<'_>, derived: Option<DerivedRatio>, limit: us
             "{}  {}  {}  {}",
             rpad(&thousands(item.tokens), 9),
             rpad(&percent(item.share), 6),
-            pad(item.category.label(), 24),
-            ellipsize(&item.label, 60)
+            pad(item.category.label(), 22),
+            ellipsize_middle(&item.label, 62)
         );
         println!(
             "{}  from {} {}",

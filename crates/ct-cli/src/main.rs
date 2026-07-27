@@ -397,6 +397,24 @@ fn session_estimator(
     }
 }
 
+/// Resolve `--turn`, defaulting to the session's largest turn.
+///
+/// Defaulting to the peak rather than to turn 1 is a deliberate ergonomic
+/// choice: someone reaching for this tool is almost always investigating a
+/// context problem, and the peak turn is where the problem lives.
+fn pick_turn(
+    app: &ContextTrace,
+    session: &ct_domain::AgentSession,
+    requested: Option<u32>,
+) -> Result<TurnNumber, Box<dyn std::error::Error>> {
+    match requested {
+        Some(n) => Ok(TurnNumber::new(n)?),
+        None => app
+            .peak_turn(session)
+            .ok_or_else(|| "this session has no turns with recorded token usage".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,23 +476,5 @@ mod tests {
     #[test]
     fn no_filter_arguments_means_no_filtering() {
         assert!(!filter_args(&["ct", "context", "abc"]).build().unwrap().is_active());
-    }
-}
-
-/// Resolve `--turn`, defaulting to the session's largest turn.
-///
-/// Defaulting to the peak rather than to turn 1 is a deliberate ergonomic
-/// choice: someone reaching for this tool is almost always investigating a
-/// context problem, and the peak turn is where the problem lives.
-fn pick_turn(
-    app: &ContextTrace,
-    session: &ct_domain::AgentSession,
-    requested: Option<u32>,
-) -> Result<TurnNumber, Box<dyn std::error::Error>> {
-    match requested {
-        Some(n) => Ok(TurnNumber::new(n)?),
-        None => app
-            .peak_turn(session)
-            .ok_or_else(|| "this session has no turns with recorded token usage".into()),
     }
 }

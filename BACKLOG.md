@@ -74,8 +74,8 @@ and groups assistant lines by `requestId`. ✔
 
 ### CT-006 · Token accounting and calibration
 `status: done` · `tier: A` · `size: M` · `source: plan`
-**Why:** Codex can be counted exactly; Claude Code cannot. The asymmetry has to
-survive into the output.
+**Why:** Codex *could* be counted exactly and Claude Code cannot, so the
+asymmetry has to survive into the output. (In the event neither is: see CT-035.)
 **Done when:** estimates are scaled to the observed total and the unattributed
 remainder is an explicit row, not smeared across categories. ✔
 
@@ -149,39 +149,42 @@ being asked about, in both directions, with fixture coverage. ✔
 
 ## Next
 
+### CT-018 · `ct trace` — follow one context item's lifecycle
+`status: next` · `tier: A` · `size: M` · `source: IDEAS.md §2`
+**Why:** answers "when did this enter context, and when did it leave" — the
+question `ct context` cannot, because it only sees one turn.
+**Done when:** `ct trace <id> --item <ref>` reports the turn an item entered,
+the turns it persisted through, and the compaction that evicted it.
+
+---
+
+## Done (continued)
+
 ### CT-034 · Name a tool output by its target, not just its tool
-`status: next` · `tier: A` · `size: M` · `source: review`
+`status: done` · `tier: A` · `size: M` · `source: review`
 
 **Why:** CT-017 made the 38k-token tool result findable and then showed it as
 `Tool output: Read` — twice, at 14,805 and 7,822 tokens, with nothing to say
 which file each one was. The filter answers "where did this come from" at the
 level of the *mechanism*; the workflow needs it at the level of the *thing*.
-`EventKind::ToolCall` records the tool name and call id but not the argument
-that identifies the target, so the information is discarded at parse time and
-cannot be recovered downstream.
 **Done when:** a tool call and its result are labelled with what they acted on —
 the path for a read, the command for a shell call — for both agents, taken from
-the call's own arguments and never invented where they are absent.
+the call's own arguments and never invented where they are absent. ✔
 
-### CT-035 · Say that Codex per-item counts are estimated, because they are
-`status: todo` · `tier: A` · `size: S` · `source: review`
+**The design decision worth keeping.** Encoding "Read takes `file_path`, Bash
+takes `command`, Grep takes `pattern`" would mean editing a file every time
+either agent ships a tool, and degrading silently for MCP tools nobody here has
+heard of. Instead an ordered list of argument names is tried, most specific
+first, and the first present wins — so an unknown tool taking a `path` or a
+`query` is named correctly without anything knowing it exists. Where no key
+matches, the label stays the bare tool name: a wrong filename is worse than no
+filename.
 
-**Reason it exists:** the plan, the `TokenEstimator` port docs and CT-006 all
-say Codex items are counted exactly by `tiktoken`. They are not.
-`TiktokenEstimator::count_text` — the only exact path — is never called by
-either adapter. Both size items from the `char_len` recorded at parse time and
-so go through `estimate_from_chars`, which returns `Estimated` by construction.
-The *reason* is sound and deliberate: exact counting means re-reading and
-re-parsing every line of a 55 MB session, which is what `SourceRef` and the
-lazy-content design exist to avoid. The claim is what is wrong, not the code.
-**Done when:** the docs describe the trade-off actually made, and either exact
-counting is offered as an opt-in for Codex or its absence is stated plainly.
-Leaving a stronger claim in the docs than the code delivers is the one failure
-mode this project cannot afford.
-
----
-
-## Done (continued)
+A second defect surfaced only once real paths were in the rows. Truncating
+`C:\Users\anesk\source\repos\VoxMux\BACKLOG.md` from the right yields a label
+naming a machine and a repository but not a file — the one thing being looked
+for. Long labels now lose their middle instead, which suits paths (informative
+tail) and commands (informative head) alike.
 
 ### CT-017 · Filter context views by provenance and size
 `status: done` · `tier: A` · `size: S` · `source: IDEAS.md §2`
@@ -238,12 +241,24 @@ which this view cannot distinguish from the CT-031 over-count.
 
 ## Todo
 
-### CT-018 · `ct trace` — follow one context item's lifecycle
-`status: todo` · `tier: A` · `size: M` · `source: IDEAS.md §2`
-**Why:** answers "when did this enter context, and when did it leave" — the
-question `ct context` cannot, because it only sees one turn.
-**Done when:** `ct trace <id> --item <ref>` reports the turn an item entered,
-the turns it persisted through, and the compaction that evicted it.
+### CT-035 · Offer exact Codex counting, or state plainly that it is absent
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**The docs half landed with CT-017**; what remains is the opt-in.
+
+**Reason it exists:** the plan, the `TokenEstimator` port docs and CT-006 all
+said Codex items are counted exactly by `tiktoken`. They are not.
+`TiktokenEstimator::count_text` — the only exact path — is never called by
+either adapter. Both size items from the `char_len` recorded at parse time and
+so go through `estimate_from_chars`, which returns `Estimated` by construction.
+The *reason* is sound and deliberate: exact counting means re-reading and
+re-parsing every line of a 55 MB session, which is what `SourceRef` and the
+lazy-content design exist to avoid. The claim is what is wrong, not the code.
+**Done when:** the docs describe the trade-off actually made, and either exact
+counting is offered as an opt-in for Codex or its absence is stated plainly.
+Leaving a stronger claim in the docs than the code delivers is the one failure
+mode this project cannot afford. ⟨README, `ports.rs` and the adapter table now
+say what the code does; the opt-in is what is left.⟩
 
 ### CT-019 · `ct doctor --dir` — format-drift reporting across many sessions
 `status: todo` · `tier: A` · `size: S` · `source: IDEAS.md §2`

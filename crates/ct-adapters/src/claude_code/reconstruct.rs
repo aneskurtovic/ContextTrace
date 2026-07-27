@@ -29,6 +29,7 @@ use ct_domain::{
     AgentSession, CompactionEvent, ContextCategory, ContextItem, ContextItemId, ContextSource,
     Event, MessageRole, Provenance, TokenCount, TurnNumber,
 };
+use crate::tool_target::{self, CallIndex};
 use std::collections::HashMap;
 
 /// Guard against a malformed or cyclic parent chain.
@@ -159,16 +160,17 @@ fn walk_ancestors(
     (chain, compaction)
 }
 
-/// Map each tool call's id to the tool's name, so results can be named.
-fn tool_names_by_call_id<'a>(events: &[&'a Event]) -> HashMap<&'a str, &'a str> {
+/// Map each tool call's id to its name and target, so results can be named.
+fn tool_names_by_call_id<'a>(events: &[&'a Event]) -> CallIndex<'a> {
     events
         .iter()
         .filter_map(|event| match &event.kind {
             EventKind::ToolCall {
                 tool,
                 call_id: Some(id),
+                target,
                 ..
-            } => Some((id.as_str(), tool.as_str())),
+            } => Some((id.as_str(), (tool.as_str(), target.as_deref()))),
             _ => None,
         })
         .collect()
@@ -177,7 +179,7 @@ fn tool_names_by_call_id<'a>(events: &[&'a Event]) -> HashMap<&'a str, &'a str> 
 fn to_item(
     event: &Event,
     estimator: &dyn TokenEstimator,
-    tool_names: &HashMap<&str, &str>,
+    tool_names: &CallIndex<'_>,
 ) -> Option<ContextItem> {
     let char_len = event.char_len().unwrap_or(0);
     let (category, source, label) = classify(event, tool_names)?;
@@ -201,7 +203,7 @@ fn to_item(
 
 fn classify(
     event: &Event,
-    tool_names: &HashMap<&str, &str>,
+    tool_names: &CallIndex<'_>,
 ) -> Option<(ContextCategory, ContextSource, String)> {
     Some(match &event.kind {
         EventKind::Message { role, preview, .. } => match role {
@@ -234,28 +236,30 @@ fn classify(
                 "Thinking".to_string()
             },
         ),
-        EventKind::ToolCall { tool, .. } => (
+        EventKind::ToolCall { tool, target, .. } => (
             ContextCategory::ToolCalls,
             ContextSource::ToolExecution { tool: tool.clone() },
-            format!("Tool call: {tool}"),
+            tool_target::label("Tool call", tool, target.as_deref()),
         ),
         EventKind::ToolResult { tool, call_id, .. } => {
-            // Prefer the name from the matching call; fall back to the raw id
-            // only when the call is not on this chain.
+            // A result records only the id of the call it answers, so both the
+            // tool's name and what it acted on have to be looked up. Falling
+            // back to the raw id keeps the row addressable when the matching
+            // call is not on this chain.
+            let matched = call_id.as_deref().and_then(|id| tool_names.get(id));
             let name = tool
                 .clone()
-                .or_else(|| {
-                    call_id
-                        .as_deref()
-                        .and_then(|id| tool_names.get(id))
-                        .map(|n| n.to_string())
-                })
+                .or_else(|| matched.map(|(n, _)| n.to_string()))
                 .or_else(|| call_id.clone())
                 .unwrap_or_else(|| "tool".into());
+            let target = matched.and_then(|(_, t)| *t);
             (
                 ContextCategory::ToolOutputs,
+                // The source stays the bare tool name: it is what `--source
+                // tool:Read` matches, and a filter over paths is `--source
+                // file:` territory rather than this.
                 ContextSource::ToolExecution { tool: name.clone() },
-                format!("Tool output: {name}"),
+                tool_target::label("Tool output", &name, target),
             )
         }
         EventKind::ContextInjection {
@@ -542,6 +546,7 @@ mod tests {
                     tool: "Bash".into(),
                     call_id: Some("toolu_01".into()),
                     char_len: 50,
+                    target: Some("npm test".into()),
                 },
             ),
             ev(
@@ -565,9 +570,55 @@ mod tests {
             .find(|i| i.category == ContextCategory::ToolOutputs)
             .expect("the tool output must be present");
         assert_eq!(
-            output.label, "Tool output: Bash",
+            output.label, "Tool output: Bash npm test",
             "an opaque toolu_ id here defeats the whole 'find the giant tool result' workflow"
         );
+        // The source stays the bare tool name, because that is what
+        // `--source tool:Bash` matches. The target belongs in the label.
+        assert_eq!(
+            output.source,
+            ContextSource::ToolExecution {
+                tool: "Bash".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_call_whose_arguments_name_nothing_keeps_the_bare_tool_name() {
+        // TodoWrite and friends carry no path, command or pattern. A label
+        // invented from some other argument would be worse than none.
+        let events = vec![
+            ev(
+                1,
+                "a",
+                None,
+                EventKind::ToolCall {
+                    tool: "TodoWrite".into(),
+                    call_id: Some("toolu_09".into()),
+                    char_len: 50,
+                    target: None,
+                },
+            ),
+            ev(
+                2,
+                "b",
+                Some("a"),
+                EventKind::ToolResult {
+                    tool: None,
+                    call_id: Some("toolu_09".into()),
+                    char_len: 120_000,
+                    is_error: false,
+                },
+            ),
+        ];
+        let s = session(events, 1, 40_000);
+        let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_code()).unwrap();
+        let output = r
+            .items
+            .iter()
+            .find(|i| i.category == ContextCategory::ToolOutputs)
+            .expect("the tool output must be present");
+        assert_eq!(output.label, "Tool output: TodoWrite");
     }
 
     #[test]

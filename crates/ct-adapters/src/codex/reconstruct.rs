@@ -17,7 +17,7 @@ use ct_domain::{
     AgentSession, CompactionEvent, Confidence, ContextCategory, ContextItem, ContextItemId,
     ContextSource, Event, MessageRole, Provenance, TokenCount, TurnNumber,
 };
-use std::collections::HashMap;
+use crate::tool_target::{self, CallIndex};
 
 pub fn reconstruct(
     session: &AgentSession,
@@ -35,7 +35,7 @@ pub fn reconstruct(
     // A function_call_output carries only the call_id it answers, so without
     // this join the largest contributor reads as an opaque id rather than the
     // command that produced it.
-    let mut tool_names: HashMap<&str, &str> = HashMap::new();
+    let mut tool_names: CallIndex<'_> = CallIndex::new();
 
     // The live item list, rebuilt by replaying events in order.
     let mut live: Vec<ContextItem> = Vec::new();
@@ -49,10 +49,11 @@ pub fn reconstruct(
         if let EventKind::ToolCall {
             tool,
             call_id: Some(id),
+            target,
             ..
         } = &event.kind
         {
-            tool_names.insert(id.as_str(), tool.as_str());
+            tool_names.insert(id.as_str(), (tool.as_str(), target.as_deref()));
         }
 
         if let EventKind::Compacted(facts) = &event.kind {
@@ -97,7 +98,7 @@ pub fn reconstruct(
 fn to_item(
     event: &Event,
     estimator: &dyn TokenEstimator,
-    tool_names: &HashMap<&str, &str>,
+    tool_names: &CallIndex<'_>,
 ) -> Option<ContextItem> {
     let char_len = event.char_len().unwrap_or(0);
     let (category, source, label) = classify(event, tool_names)?;
@@ -118,7 +119,7 @@ fn to_item(
 
 fn classify(
     event: &Event,
-    tool_names: &HashMap<&str, &str>,
+    tool_names: &CallIndex<'_>,
 ) -> Option<(ContextCategory, ContextSource, String)> {
     Some(match &event.kind {
         EventKind::Message { role, preview, .. } => match role {
@@ -145,26 +146,22 @@ fn classify(
             ContextSource::ModelOutput,
             "Reasoning".to_string(),
         ),
-        EventKind::ToolCall { tool, .. } => (
+        EventKind::ToolCall { tool, target, .. } => (
             ContextCategory::ToolCalls,
             ContextSource::ToolExecution { tool: tool.clone() },
-            format!("Tool call: {tool}"),
+            tool_target::label("Tool call", tool, target.as_deref()),
         ),
         EventKind::ToolResult { tool, call_id, .. } => {
+            let matched = call_id.as_deref().and_then(|id| tool_names.get(id));
             let name = tool
                 .clone()
-                .or_else(|| {
-                    call_id
-                        .as_deref()
-                        .and_then(|id| tool_names.get(id))
-                        .map(|n| n.to_string())
-                })
+                .or_else(|| matched.map(|(n, _)| n.to_string()))
                 .or_else(|| call_id.clone())
                 .unwrap_or_else(|| "tool".into());
             (
                 ContextCategory::ToolOutputs,
                 ContextSource::ToolExecution { tool: name.clone() },
-                format!("Tool output: {name}"),
+                tool_target::label("Tool output", &name, matched.and_then(|(_, t)| *t)),
             )
         }
         EventKind::ContextInjection {

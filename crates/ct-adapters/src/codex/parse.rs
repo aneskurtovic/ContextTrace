@@ -198,6 +198,16 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
                 tool: str_field(payload, "name").unwrap_or_else(|| "unknown".into()),
                 call_id: str_field(payload, "call_id"),
                 char_len,
+                // Codex encodes the arguments object as a string, so unlike
+                // Claude Code this needs decoding before it can be read.
+                target: str_field(payload, "arguments")
+                    .as_deref()
+                    .and_then(crate::tool_target::describe_encoded)
+                    .or_else(|| {
+                        str_field(payload, "input")
+                            .as_deref()
+                            .and_then(crate::tool_target::describe_encoded)
+                    }),
             }
         }
         Some("function_call_output") | Some("custom_tool_call_output")
@@ -468,6 +478,24 @@ mod tests {
                 matches!(ev, EventKind::ToolCall { ref tool, .. } if tool == "shell"),
                 "{kind} should map to a tool call, got {ev:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_shell_call_records_the_command_it_ran() {
+        // Codex encodes the arguments object as a string, so the target has to
+        // survive a second round of decoding that Claude Code does not need.
+        let payload = json!({
+            "type": "function_call",
+            "name": "shell",
+            "call_id": "c1",
+            "arguments": "{\"command\":[\"bash\",\"-lc\",\"cargo test\"]}"
+        });
+        match translate_response_item(&payload, Some("function_call")) {
+            EventKind::ToolCall { target, .. } => {
+                assert_eq!(target.as_deref(), Some("bash -lc cargo test"))
+            }
+            other => panic!("expected a tool call, got {other:?}"),
         }
     }
 

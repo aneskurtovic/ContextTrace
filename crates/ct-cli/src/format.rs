@@ -51,6 +51,34 @@ pub fn ellipsize(s: &str, max: usize) -> String {
     format!("{kept}\u{2026}")
 }
 
+/// Shorten by removing the middle, keeping both ends.
+///
+/// For anything path-shaped, cutting the tail throws away the only part that
+/// identifies it: `C:\Users\anesk\source\repos\VoxMux\BACKLO…` names a machine
+/// and a repository but not a file. Commands are the opposite -- their start
+/// carries the meaning -- so keeping both ends is the one rule that serves both.
+pub fn ellipsize_middle(s: &str, max: usize) -> String {
+    let clean: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = clean.trim();
+    let len = trimmed.chars().count();
+    if len <= max {
+        return trimmed.to_string();
+    }
+    // Below this there is no middle worth preserving; fall back to a plain cut.
+    if max < 8 {
+        return ellipsize(trimmed, max);
+    }
+    let budget = max - 1;
+    let head = budget.div_ceil(2);
+    let tail = budget - head;
+    let start: String = trimmed.chars().take(head).collect();
+    let end: String = trimmed.chars().skip(len - tail).collect();
+    format!("{start}\u{2026}{end}")
+}
+
 /// Pad to `width` display columns.
 pub fn pad(s: &str, width: usize) -> String {
     let len = s.chars().count();
@@ -141,6 +169,26 @@ mod tests {
     #[test]
     fn ellipsize_handles_multibyte_without_panicking() {
         assert_eq!(ellipsize("ααααα", 3), "αα\u{2026}");
+    }
+
+    #[test]
+    fn a_shortened_path_still_shows_which_file_it_is() {
+        // The regression this guards: cutting the tail off an absolute path
+        // leaves a row that names a machine and a repository but not a file,
+        // which is the one thing the reader is looking for.
+        let path = "Tool output: Read C:\\Users\\anesk\\source\\repos\\VoxMux\\docs\\HANDBOOK.md";
+        let short = ellipsize_middle(path, 48);
+        assert!(short.starts_with("Tool output: Read"), "got {short}");
+        assert!(short.ends_with("HANDBOOK.md"), "the filename must survive: {short}");
+        assert_eq!(short.chars().count(), 48);
+    }
+
+    #[test]
+    fn middle_ellipsis_leaves_short_text_alone_and_never_panics() {
+        assert_eq!(ellipsize_middle("short", 40), "short");
+        assert_eq!(ellipsize_middle("ααααααααα", 6).chars().count(), 6);
+        // Too narrow for two ends: degrade to a plain cut rather than nonsense.
+        assert_eq!(ellipsize_middle("abcdefghij", 4), "abc\u{2026}");
     }
 
     #[test]

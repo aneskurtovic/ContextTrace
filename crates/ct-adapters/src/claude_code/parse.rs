@@ -174,6 +174,7 @@ fn assistant_kind(v: &Value) -> EventKind {
                 tool: str_field(tool, "name").unwrap_or_else(|| "unknown".into()),
                 call_id: str_field(tool, "id"),
                 char_len,
+                target: tool.get("input").and_then(crate::tool_target::describe),
             };
         }
         let has_thinking = blocks.iter().any(|b| block_type(b) == Some("thinking"));
@@ -676,9 +677,34 @@ mod tests {
             ]}
         });
         match assistant_kind(&line) {
-            EventKind::ToolCall { tool, call_id, .. } => {
+            EventKind::ToolCall {
+                tool,
+                call_id,
+                target,
+                ..
+            } => {
                 assert_eq!(tool, "Bash");
                 assert_eq!(call_id.as_deref(), Some("toolu_1"));
+                // Without this the biggest row in a context breakdown reads
+                // "Tool output: Bash" and says nothing about which command.
+                assert_eq!(target.as_deref(), Some("ls"));
+            }
+            other => panic!("expected a tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_file_read_records_the_path_it_read() {
+        let line = json!({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "id": "toolu_2", "name": "Read",
+                 "input": {"file_path": "src/schema.ts", "limit": 200}}
+            ]}
+        });
+        match assistant_kind(&line) {
+            EventKind::ToolCall { target, .. } => {
+                assert_eq!(target.as_deref(), Some("src/schema.ts"))
             }
             other => panic!("expected a tool call, got {other:?}"),
         }

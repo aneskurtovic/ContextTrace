@@ -218,11 +218,15 @@ fn a_tool_output_is_named_after_the_call_it_answers() {
     let context = adapter
         .reconstruct(&session, TurnNumber::new(2).unwrap(), &HeuristicEstimator::for_code())
         .unwrap();
+    // Both halves matter. The tool name comes from the matching call, because
+    // the result records only a `tool_use_id`; the path comes from that call's
+    // arguments, because a turn holding four `Read` results needs to say which
+    // file each one was.
     assert!(
         context
             .items
             .iter()
-            .any(|i| i.label == "Tool output: Read"),
+            .any(|i| i.label == "Tool output: Read server/app.py"),
         "an opaque toolu_ id defeats the whole 'find the giant tool result' workflow"
     );
 }

@@ -252,13 +252,13 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 49 tests |
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL (parse + parent-chain walk) | Implemented, 73 tests |
+| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 86 tests |
 | `ct-application` — use cases and diagnostics | Implemented, 19 tests |
-| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`residual`/`doctor` | Implemented, 15 tests |
+| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`residual`/`doctor` | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-169 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+184 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -298,8 +298,8 @@ Filter     category=tool-outputs, min-tokens=2000
            4 of 228 items, 27,462 of 135,668 tokens — 20.2% of this turn,
            excluding the unattributed remainder
 
-   14,805   10.9%  Tool outputs   Tool output: Read
-    7,822    5.8%  Tool outputs   Tool output: Read
+   14,805   10.9%  Tool outputs   Tool output: Read C:\Users\anes…repos\VoxMux\BACKLOG.md
+    7,822    5.8%  Tool outputs   Tool output: Read C:\Users\anes…epos\VoxMux\docs\HANDOFF.md
     ...
 Shares are of the turn's full 135,668 tokens, so these rows deliberately do not
 add up to 100%. 4 of 228 items matched.
@@ -324,6 +324,14 @@ so a query *by provenance* has nothing to match it against.
 A filter that matches nothing prints the categories, sources and confidence
 levels the turn actually contains, because an unexplained blank is
 indistinguishable from a broken flag.
+
+Rows are named by what a call *acted on*, not just which tool ran — the path for
+a read, the command for a shell call — taken from the call's own arguments. A
+turn holding four `Read` results is otherwise four identical rows with different
+numbers. The argument names are tried in order of specificity rather than
+hardcoded per tool, so an unfamiliar MCP tool taking a `path` or a `query` is
+named correctly anyway; where nothing matches, the bare tool name stands, because
+a wrong filename is worse than no filename.
 
 `ct residual` tracks the context the agent never wrote down, turn by turn. Since
 nothing in the log records a tool being registered or an MCP server connecting,
