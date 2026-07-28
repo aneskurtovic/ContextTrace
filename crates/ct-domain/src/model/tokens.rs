@@ -163,9 +163,17 @@ impl TokenUsage {
     /// immediately before a turn with a large `cache_creation` and no
     /// `cache_read` — the shape of a cache reset. Treated as a measured zero
     /// they invented a fall and a matching rise of ~288,000 tokens each, which
-    /// took three of the five largest reported changes in that session. They
-    /// would also have entered the characters-per-token fit as a sample
-    /// claiming a large body of text occupied no tokens at all.
+    /// took three of the five largest reported changes in that session.
+    ///
+    /// The characters-per-token fit turns out **not** to have been affected,
+    /// which was worth checking rather than assuming. Such a turn does enter
+    /// [`crate::services::ratio::derive`] as a sample, but both pairs it forms
+    /// are already rejected: the pair before it underflows `checked_sub` on
+    /// token growth, and the pair after it yields a ratio far below the
+    /// plausible range. Its effect on the recovered overhead constant is
+    /// absorbed by a median. Measured across the five affected sessions in the
+    /// local sample, ratio and overhead are identical with this filter on and
+    /// off. So this is a fix to what is *presented per turn*, not to the fit.
     pub fn prompt_tokens(&self) -> Option<u32> {
         match (self.input, self.cache_creation, self.cache_read) {
             (None, None, None) => None,

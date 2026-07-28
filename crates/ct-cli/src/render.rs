@@ -1017,8 +1017,12 @@ pub fn doctor(
     println!("Turns      {}", diagnostics.turns);
 
     if diagnostics.turns_without_usage > 0 {
+        // "no usable size", not "no usage record": an all-zero usage object is
+        // counted here too, and it is a record that exists. See
+        // `TokenUsage::prompt_tokens`.
         println!(
-            "           {} turn(s) had no usage reported, so their context size is unknown",
+            "           {} turn(s) reported no usable size (absent or all-zero usage), \
+             so their context size is unknown",
             diagnostics.turns_without_usage
         );
     }

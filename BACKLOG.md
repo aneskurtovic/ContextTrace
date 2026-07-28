@@ -164,9 +164,20 @@ in, always sitting just before a large `cache_creation` with no `cache_read`:
 a cache reset. A corpus sweep found **27 such turns across 3,795, in 11 of 60
 sessions**. Read as measurements they invented a fall of −287,629 and a rise of
 +288,312, taking **three of the five largest reported changes in that session**.
-Fixed in the domain, where the meaning lives, so `ct context`, `ct largest` and
-the ratio fit all get it — the fit especially, which would otherwise have taken
-those turns as samples claiming a large body of text occupied no tokens at all.
+Fixed in the domain, where the meaning lives, so every command reading a prompt
+size gets it.
+
+The obvious follow-on claim — that the characters-per-token fit was also being
+poisoned — was **checked and is false**, which is the more useful result. Such a
+turn does enter `ratio::derive` as a sample, but both pairs it forms are already
+rejected: the pair before it underflows `checked_sub` on token growth, and the
+pair after it yields a ratio far below the plausible range. Its pull on the
+recovered overhead constant is absorbed by a median. Measured on the five
+affected sessions in a 14-session sample, ratio and overhead are **identical to
+the printed precision with the filter on and off**. Two guards written for other
+reasons had it covered. Worth writing down twice over: the fix is real but its
+blast radius is per-turn presentation, and a plausible mechanism asserted without
+measuring it is exactly what this project claims not to do.
 
 *A compaction the agent did not place is not one that did not happen.* Rather
 than attaching it to a plausible neighbouring turn, it is counted as unplaced and
@@ -192,8 +203,10 @@ growth are reported side by side.
 
 **What building it taught.** A diff between two sessions is a comparison between
 two *instruments*. Claude Code item sizes come from a characters-per-token ratio
-fitted per session, and across the local corpus that ratio runs 2.00 to 2.55 —
-a 27% spread. Subtracting one session's category totals from another's mixes the
+fitted per session, and across the local corpus that ratio runs 1.85 to 2.51 —
+a 36% spread (re-measured over 14 sessions; the 5-session sample this entry
+originally quoted gave 2.00–2.55, so the wider sample made the case stronger,
+not weaker). Subtracting one session's category totals from another's mixes the
 change in content with the difference between the two scales, inseparably. The
 residual is worst hit, being `observed_total − sum(estimates)`: the axis this
 entry names third is the one most contaminated by the measurement.

@@ -585,7 +585,9 @@ ct diff 257a927b..25e27e70             # two sessions, each at its peak
 
 The thing that makes this harder than subtraction: **Claude Code item sizes come
 from a characters-per-token ratio fitted to each session's own usage.** Across
-the sessions on this machine that ratio runs from 2.00 to 2.55 — a 27% spread.
+the sessions on this machine that ratio runs from 1.85 to 2.51 — a 36% spread
+(14 sessions sampled; an earlier 5-session sample gave 2.00–2.55, so widening the
+sample widened the problem rather than averaging it away).
 Two sessions are therefore reported on two differently graduated scales, and a
 raw subtraction carries the change in content *and* the difference between the
 instruments with no way to tell which is which. The residual is worst affected,
@@ -665,6 +667,14 @@ There are **27 such turns across 3,795, in 11 of 60 local sessions**, and read
 naively they invented a fall and a matching rise of ~288,000 tokens that took
 three of the five largest changes above. They are now gaps, counted in the header
 and named when a reported change spans one.
+
+The tempting follow-on — "so the ratio fit was poisoned too" — was measured
+rather than asserted, and it is false. Such a turn does enter the fit as a
+sample, but both pairs it forms are already rejected by guards written for other
+reasons, and its pull on the overhead constant is absorbed by a median. Across
+the five affected sessions in a 14-session sample the derived ratio and overhead
+are identical with the fix on and off. The fix is real; its reach is per-turn
+presentation, not the fit.
 
 ### A note on reading the numbers
 
