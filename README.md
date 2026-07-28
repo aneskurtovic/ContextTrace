@@ -334,7 +334,8 @@ filters: --source <kind[:text]>  --category <name>
 externally tagged, with a `schema` on the header line:
 
 ```
-{"type":"session","schema":1,"id":"019f8f07…","agent":"codex","turns":1274,…}
+{"type":"session","schema":1,"id":"019f8f07…","agent":"codex","turns":1274,
+ "estimator":"o200k_base","fidelity":1.0}
 {"type":"turn","turn":1,"total_tokens":13416,"accounted_tokens":13416,"residual_tokens":0,…}
 {"type":"item","turn":1,"id":"codex:1","category":"system-instructions",
  "label":"Codex system prompt","tokens":4666,"confidence":"estimated","line_no":1}
@@ -360,9 +361,16 @@ to sum to the reported total**.
 
 Every figure carries its `confidence`, and a calibrated one keeps its
 `raw_estimate` — an export is the easiest place to lose the guarantee the type
-system enforces inside the process. Message and tool-output previews are
-excluded: labels carry the paths and commands that make a size analysable,
-conversation content stays in the session file until redaction exists (CT-025).
+system enforces inside the process. The header names the estimator, because for
+Claude Code the ratio is fitted per session (CT-014) and a file whose numbers
+cannot be reproduced is a file whose numbers cannot be trusted. Message and
+tool-output previews are excluded: labels carry the paths and commands that make
+a size analysable, conversation content stays in the session file until
+redaction exists (CT-025).
+
+It streams, and the cost is **turns, not bytes** — every turn is reconstructed,
+so the 99 MB session with 88 turns exports in 0.46 s while the 25 MB one with
+1,274 turns takes 2.1 s.
 
 ### Catching an agent that changed its format
 

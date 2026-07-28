@@ -578,13 +578,31 @@ because a size with no name is not analysable. Conversation content does not go
 in: an export is a file that leaves the agent's own directory, the brief asks
 for care precisely there, and redaction is CT-025 and not built yet.
 
-**It streams.** Records go to the sink as they are produced, so memory stays
-proportional to one turn — the largest local session is 362,218 records and
-105.6 MB, written in 2.3 s. The sink stays in `ct-cli` because which bytes go
-where is presentation; `ct-application` names no writer and takes `serde_json`
-only as a dev-dependency, so no JSON codec enters its shipped graph. A broken
-pipe ends the export quietly, because `ct export <id> | head` is the first thing
-anyone tries and it must not report an error for working as asked.
+**It streams, and the cost is turns rather than bytes.** Records go to the sink
+as they are produced, so memory stays proportional to one turn. Measuring two
+sessions inverted the intuition: the 99 MB one exports in **0.46 s** (88 turns),
+the 25 MB one in **2.1 s** (1,274 turns, 362,218 records, 105.6 MB out). Every
+turn is reconstructed, so turn count is the driver and file size is not — which
+is also the shape CT-029 will need to know when the index is built. The sink
+stays in `ct-cli` because which bytes go where is presentation;
+`ct-application` names no writer and takes `serde_json` only as a
+dev-dependency, so no JSON codec enters its shipped graph.
+
+**Two defects review caught, both about agreeing with the rest of the tool.**
+
+*The export used a different estimator from every other command.* It called
+`snapshot` directly, so Claude Code items were sized with the flat
+`chars/3.1` default while `ct context` used the ratio fitted to that session
+(CT-014). Same session, same turn, two answers: a residual of 116,872 against
+64,167 — 82% apart, on the one number the tool exists to name. The estimator is
+now threaded through, they agree exactly, and the header record carries its
+name so a file whose numbers cannot be reproduced does not exist.
+
+*`ct export <id> | head` printed an error on Windows.* Broken pipes were matched
+on message text, and Windows reports `ERROR_BROKEN_PIPE` (109) and
+`ERROR_NO_DATA` (232) without mapping either to `ErrorKind::BrokenPipe`. Now
+matched on kind and raw OS error, so the first thing anyone tries stops
+complaining about working as asked.
 
 **No `--exact`,** for the same reason `ct trace` and `ct residual` have none:
 this sweeps every turn, so a per-turn opt-in would multiply by turn count.

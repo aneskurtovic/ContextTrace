@@ -34,6 +34,7 @@
 //! estimates, and every one of them carries its confidence.
 
 use crate::AppError;
+use ct_domain::ports::TokenEstimator;
 use ct_domain::{AgentSession, ContextCategory, ContextSnapshot, TokenCount};
 use serde::Serialize;
 
@@ -62,6 +63,14 @@ pub enum ExportRecord<'a> {
         model: Option<&'a str>,
         turns: usize,
         events: usize,
+        /// Which estimator produced every item size in this file.
+        ///
+        /// Not decoration. For Claude Code the CLI fits a characters-per-token
+        /// ratio to the session itself (CT-014), and the flat default differs
+        /// from it enough to move a turn's unattributed remainder by 82% on a
+        /// real session. A file whose numbers cannot be reproduced is a file
+        /// whose numbers cannot be trusted, so it names its instrument.
+        estimator: &'a str,
         /// Fraction of events mapped to domain concepts. A file exported from a
         /// session this build only partly understood must say so, or its sums
         /// will be read as complete.
@@ -144,11 +153,15 @@ impl super::ContextTrace {
     /// A turn that cannot be reconstructed is skipped rather than fatal. One
     /// unreadable turn must not cost the export of the other four hundred, and
     /// the turn rows that *are* present say which those are.
+    /// `estimator` must be the same one the terminal views use for this
+    /// session, or `ct export` and `ct context` will report different sizes for
+    /// the same turn with nothing to explain the difference.
     pub fn export_ndjson(
         &self,
         session: &AgentSession,
         resolved_path: &str,
         binding: usize,
+        estimator: &dyn TokenEstimator,
         mut emit: impl FnMut(&ExportRecord<'_>) -> Result<(), AppError>,
     ) -> Result<(), AppError> {
         let meta = session.metadata();
@@ -161,11 +174,12 @@ impl super::ContextTrace {
             model: meta.model.as_deref(),
             turns: session.turn_count(),
             events: session.events().len(),
+            estimator: estimator.name(),
             fidelity: session.fidelity(),
         })?;
 
         for turn in session.turns() {
-            let Ok(snapshot) = self.snapshot(session, binding, turn.number) else {
+            let Ok(snapshot) = self.snapshot_with(session, binding, turn.number, estimator) else {
                 continue;
             };
             emit_turn(&snapshot, &mut emit)?;

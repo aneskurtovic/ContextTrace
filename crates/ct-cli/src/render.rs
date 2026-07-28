@@ -1125,41 +1125,56 @@ pub fn export_ndjson(
     app: &ContextTrace,
     session: &AgentSession,
     resolved: &ResolvedSession,
+    estimator: &dyn ct_domain::ports::TokenEstimator,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::{ErrorKind, Write};
+    use std::io::Write;
 
     let stdout = std::io::stdout();
     let mut out = std::io::BufWriter::new(stdout.lock());
+    // Set where the pipe actually broke, because `AppError` flattens an
+    // `io::Error` to a string at the port boundary and the kind is the only
+    // reliable way to recognise this -- the message differs by platform.
+    let mut pipe_closed = false;
 
     let result = app.export_ndjson(
         session,
         &resolved.descriptor.path,
         resolved.binding,
+        estimator,
         |record| {
             let line = serde_json::to_string(record)
                 .map_err(|e| AppError::Calibration(format!("could not serialise a record: {e}")))?;
-            writeln!(out, "{line}")
-                .map_err(|e| AppError::Port(PortError::Io(e.to_string())))
+            writeln!(out, "{line}").map_err(|e| {
+                pipe_closed |= is_pipe_gone(&e);
+                AppError::Port(PortError::Io(e.to_string()))
+            })
         },
     );
 
     match result {
         Ok(()) => {}
-        Err(AppError::Port(PortError::Io(ref message))) if is_broken_pipe(message) => return Ok(()),
+        Err(_) if pipe_closed => return Ok(()),
         Err(e) => return Err(e.into()),
     }
 
     match out.flush() {
-        Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
+        Err(e) if is_pipe_gone(&e) => Ok(()),
         other => Ok(other?),
     }
 }
 
-/// The io error text carries the kind, because [`AppError`] flattens it to a
-/// string at the port boundary.
-fn is_broken_pipe(message: &str) -> bool {
-    let lower = message.to_lowercase();
-    lower.contains("broken pipe") || lower.contains("pipe is being closed")
+/// Has the reader gone away?
+///
+/// Matched on the error *kind* rather than its text. Windows reports a closed
+/// pipe as `ERROR_BROKEN_PIPE` (109) or `ERROR_NO_DATA` (232) without mapping
+/// either to `ErrorKind::BrokenPipe`, so a message match would work on one
+/// platform and quietly fail on the other -- which is how `ct export <id> |
+/// head` came to print an error for doing exactly what was asked.
+fn is_pipe_gone(e: &std::io::Error) -> bool {
+    const ERROR_BROKEN_PIPE: i32 = 109;
+    const ERROR_NO_DATA: i32 = 232;
+    e.kind() == std::io::ErrorKind::BrokenPipe
+        || matches!(e.raw_os_error(), Some(ERROR_BROKEN_PIPE) | Some(ERROR_NO_DATA))
 }
 
 fn print_json<T: serde::Serialize + ?Sized>(value: &T) {

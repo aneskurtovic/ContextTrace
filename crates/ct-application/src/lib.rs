@@ -392,6 +392,15 @@ impl ContextTrace {
     }
 
     /// Name of the estimator backing a binding, for display.
+    /// The estimator paired with an agent at composition.
+    ///
+    /// Exposed so a caller that has *not* fitted a session-specific ratio can
+    /// pass the same instrument the default path would have used, rather than
+    /// constructing a second one that happens to differ.
+    pub fn binding_estimator(&self, binding: usize) -> &dyn TokenEstimator {
+        self.bindings[binding].estimator.as_ref()
+    }
+
     pub fn estimator_name(&self, binding: usize) -> &str {
         self.bindings[binding].estimator.name()
     }

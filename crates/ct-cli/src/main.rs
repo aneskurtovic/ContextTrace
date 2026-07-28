@@ -468,7 +468,12 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         Command::Export { id, format } => {
             let ExportFormat::Ndjson = format;
             let (session, resolved) = app.load(&id)?;
-            render::export_ndjson(&app, &session, &resolved)?;
+            // The same estimator the terminal views use. Without this the
+            // export would size Claude Code items with the flat default while
+            // `ct context` used the session's own fitted ratio, and one turn's
+            // unattributed remainder read 64,167 against 116,872.
+            let calibrated = session_estimator(&app, &session, resolved.binding);
+            calibrated.export(&app, &session, &resolved)?;
         }
 
         Command::Doctor { id, dir, json } => match (id, dir) {
@@ -555,6 +560,24 @@ impl SessionCalibration {
             None => app.snapshot_exact(session, binding, turn, &raw)?,
         };
         Ok((snapshot, Some(recount)))
+    }
+
+    /// Stream the session with whichever estimator this session calls for.
+    fn export(
+        &self,
+        app: &ContextTrace,
+        session: &ct_domain::AgentSession,
+        resolved: &ResolvedSession,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match &self.estimator {
+            Some(e) => render::export_ndjson(app, session, resolved, e),
+            None => render::export_ndjson(
+                app,
+                session,
+                resolved,
+                app.binding_estimator(resolved.binding),
+            ),
+        }
     }
 
     fn name(&self, app: &ContextTrace, binding: usize) -> String {
