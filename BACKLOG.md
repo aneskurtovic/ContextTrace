@@ -194,8 +194,12 @@ The turns were real, and carried `{input: 0, cache_creation: 0, cache_read: 0,
 output: 0}`. Every model request carries a prompt and a system prompt alone puts
 the floor in the thousands, so that object is a record written but never filled
 in, always sitting just before a large `cache_creation` with no `cache_read`:
-a cache reset. A corpus sweep found **27 such turns across 3,795, in 11 of 60
-sessions**. Read as measurements they invented a fall of −287,629 and a rise of
+a cache reset. First quoted from a 60-session sample as "27 turns across 3,795";
+counted across the whole corpus it is **393 of 52,156 turn records, in 320 of 775
+sessions** — and in both agents, 333 turns in 302 Claude Code sessions and 60 in
+18 Codex ones. The Codex occurrences are not characterised and no claim is made
+about their cause. Quoting a sample as though it were a census is the same error
+this entry's own correction below is about. Read as measurements they invented a fall of −287,629 and a rise of
 +288,312, taking **three of the five largest reported changes in that session**.
 Fixed in the domain, where the meaning lives, so every command reading a prompt
 size gets it.

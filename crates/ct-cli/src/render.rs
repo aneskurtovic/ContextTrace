@@ -1210,6 +1210,13 @@ fn sparkline(timeline: &GrowthTimeline, width: usize) {
 
     let buckets = timeline.buckets(width);
     let Some((_, peak)) = timeline.peak() else {
+        // Say that the chart is missing and why. Returning silently leaves a
+        // header with no chart under it, which reads as "flat" or as a display
+        // bug -- and "nothing was measured" is a different statement from
+        // either. Bars are drawn against the peak; without one there is no
+        // scale to draw against.
+        println!("\n  No chart: the bars are scaled against the session's peak, and no");
+        println!("  turn in this range recorded a size, so there is no scale to draw on.");
         return;
     };
 

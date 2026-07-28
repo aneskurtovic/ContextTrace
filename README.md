@@ -695,9 +695,10 @@ floor whose turns carried `{input: 0, cache_creation: 0, cache_read: 0}` — a
 usage record written but never filled in, always just before a cache reset. Every
 request carries a prompt and a system prompt alone puts the floor in the
 thousands, so a zero there is an absent measurement, not a measured absence.
-There are **27 such turns across 3,795, in 11 of 60 local sessions**, and read
-naively they invented a fall and a matching rise of ~288,000 tokens that took
-three of the five largest changes above. They are now gaps, counted in the header
+Counted across the whole corpus — not the 60-session sample this was first
+quoted from — there are **393 such turn records out of 52,156, in 320 of 775
+sessions**, in both agents. Read naively they invented a fall and a matching rise
+of ~288,000 tokens that took three of the five largest changes above. They are now gaps, counted in the header
 and named when a reported change spans one.
 
 The tempting follow-on — "so the ratio fit was poisoned too" — was measured

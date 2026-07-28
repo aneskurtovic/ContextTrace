@@ -158,12 +158,21 @@ impl TokenUsage {
     /// So an all-zero `usage` object is the agent writing a record without
     /// filling it in, not an observation that nothing was sent.
     ///
-    /// Found by charting a session: 27 turns across 3,795 in the local corpus
-    /// carry `{input: 0, cache_creation: 0, cache_read: 0, output: 0}`, always
-    /// immediately before a turn with a large `cache_creation` and no
-    /// `cache_read` — the shape of a cache reset. Treated as a measured zero
-    /// they invented a fall and a matching rise of ~288,000 tokens each, which
-    /// took three of the five largest reported changes in that session.
+    /// Found by charting one session, then counted properly across the whole
+    /// local corpus rather than the 60-session sample it was first quoted from:
+    /// **393 of 52,156 turn records carry all-zero input figures, in 320 of 775
+    /// sessions**. Both agents — 333 turns in 302 Claude Code sessions, 60 in 18
+    /// Codex ones — so this is not one harness's quirk.
+    ///
+    /// In Claude Code the shape is consistent: `{input: 0, cache_creation: 0,
+    /// cache_read: 0, output: 0}` sitting immediately before a turn with a large
+    /// `cache_creation` and no `cache_read`, which is what a cache reset looks
+    /// like. The Codex occurrences have not been characterised and no claim is
+    /// made about their cause; only that the figures are absent there too.
+    ///
+    /// Treated as a measured zero these invented a fall and a matching rise of
+    /// ~288,000 tokens each in the session that exposed them, taking three of
+    /// the five largest reported changes.
     ///
     /// The characters-per-token fit turns out **not** to have been affected,
     /// which was worth checking rather than assuming. Such a turn does enter
@@ -171,9 +180,9 @@ impl TokenUsage {
     /// are already rejected: the pair before it underflows `checked_sub` on
     /// token growth, and the pair after it yields a ratio far below the
     /// plausible range. Its effect on the recovered overhead constant is
-    /// absorbed by a median. Measured across the five affected sessions in the
-    /// local sample, ratio and overhead are identical with this filter on and
-    /// off. So this is a fix to what is *presented per turn*, not to the fit.
+    /// absorbed by a median. Measured across the five affected sessions in a
+    /// 14-session sample, ratio and overhead are identical with this filter on
+    /// and off. So this is a fix to what is *presented per turn*, not to the fit.
     pub fn prompt_tokens(&self) -> Option<u32> {
         match (self.input, self.cache_creation, self.cache_read) {
             (None, None, None) => None,

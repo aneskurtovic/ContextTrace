@@ -786,11 +786,16 @@ fn pick_turn(
         // here -- without usage figures nothing ranks turns by size at all, so
         // any turn returned would be one nobody chose, presented as one that
         // was measured. The caller knows their session; name the way out.
+        // Names the session rather than saying "this session", because
+        // `ct diff A B` resolves two of these and a message that does not say
+        // which one failed leaves the reader to guess -- in the one command
+        // whose entire job is keeping two sides apart.
         None => app.peak_turn(session).ok_or_else(|| {
             format!(
-                "no turn in this session reported a usable prompt size, so there is no \
-                 largest turn to default to -- pass --turn N to inspect one \
+                "no turn in session {} reported a usable prompt size, so there is no \
+                 largest turn to default to -- pass a turn explicitly to inspect one \
                  ({} turn(s) available)",
+                session.id(),
                 session.turn_count()
             )
             .into()
