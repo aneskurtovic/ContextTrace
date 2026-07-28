@@ -179,9 +179,9 @@ fn classify(
         }
         EventKind::OversizedToolResult {
             call_id,
+            non_image_chars,
             image_count,
             image_payload_chars,
-            ..
         } => {
             let matched = call_id.as_deref().and_then(|id| tool_names.get(id));
             let name = matched
