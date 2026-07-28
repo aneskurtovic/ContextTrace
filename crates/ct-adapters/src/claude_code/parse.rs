@@ -2,13 +2,13 @@
 
 use crate::fingerprint;
 use crate::jsonl::{self, LineRecord};
+use chrono::{DateTime, Utc};
 use ct_domain::model::event::{CompactionFacts, EventLinks};
 use ct_domain::ports::{PortError, PortResult};
 use ct_domain::{
     AgentKind, AgentSession, Event, EventId, EventKind, FileId, MessageRole, SessionId,
     SessionMetadata, SourceRef, TokenUsage, Turn, TurnNumber,
 };
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -103,8 +103,7 @@ pub fn load(
     let mut extras: Vec<LineExtras> = Vec::new();
 
     jsonl::read_lines(path, |record, _raw| {
-        let (event, line_extras) =
-            translate(&record, &mut metadata, include_content_analysis);
+        let (event, line_extras) = translate(&record, &mut metadata, include_content_analysis);
         if matches!(event.kind, EventKind::Unrecognised) {
             *unrecognised.entry(event.raw_type.clone()).or_insert(0) += 1;
         }
@@ -165,8 +164,8 @@ fn translate(
     let mut extras = LineExtras::default();
 
     let kind = match value {
-        // Oversized or unparseable: keep it as a session event so its recorded
-        // byte length still contributes, rather than losing it entirely.
+        // Oversized or unparseable records remain diagnostic session events;
+        // Claude Code has no lexical oversized-content recovery path yet.
         None => EventKind::SessionEvent {
             subtype: raw_type.clone(),
         },
@@ -186,10 +185,22 @@ fn translate(
                 // Recognised sidecar metadata. These lines are written to the
                 // log but never sent to the model, so they are classified (not
                 // left unrecognised) while contributing nothing to context.
-                "file-history-snapshot" | "file-history-delta" | "pr-link" | "frame-link"
-                | "ai-title" | "custom-title" | "agent-name" | "mode" | "permission-mode"
-                | "agent-setting" | "last-prompt" | "queue-operation" | "worktree-state"
-                | "bridge-session" | "relocated" | "summary" => EventKind::SessionEvent {
+                "file-history-snapshot"
+                | "file-history-delta"
+                | "pr-link"
+                | "frame-link"
+                | "ai-title"
+                | "custom-title"
+                | "agent-name"
+                | "mode"
+                | "permission-mode"
+                | "agent-setting"
+                | "last-prompt"
+                | "queue-operation"
+                | "worktree-state"
+                | "bridge-session"
+                | "relocated"
+                | "summary" => EventKind::SessionEvent {
                     subtype: raw_type.clone(),
                 },
                 _ => EventKind::Unrecognised,
@@ -224,14 +235,9 @@ fn translate(
 /// UUIDs, request ids and tool-use ids are transport/linkage, not content.
 /// They are deliberately excluded so a retry that re-injects the same output
 /// under a fresh id still compares equal.
-fn content_measurement(
-    value: &Value,
-    kind: &EventKind,
-) -> Option<ct_domain::ContentMeasurement> {
+fn content_measurement(value: &Value, kind: &EventKind) -> Option<ct_domain::ContentMeasurement> {
     match kind {
-        EventKind::ToolResult { .. } => {
-            measure_blocks_without_link_id(value, "tool_use_id")
-        }
+        EventKind::ToolResult { .. } => measure_blocks_without_link_id(value, "tool_use_id"),
         EventKind::ToolCall { .. } => measure_blocks_without_link_id(value, "id"),
         EventKind::Reasoning {
             redacted: false, ..
@@ -401,7 +407,13 @@ fn attachment_kind(v: &Value) -> EventKind {
 
 /// Human-facing name for an injected item, preferring a real path when present.
 fn attachment_label(attachment: &Value, mechanism: &str) -> String {
-    for key in ["displayPath", "path", "filename", "planFilePath", "skillDir"] {
+    for key in [
+        "displayPath",
+        "path",
+        "filename",
+        "planFilePath",
+        "skillDir",
+    ] {
         if let Some(p) = str_field(attachment, key) {
             return p;
         }
@@ -513,10 +525,7 @@ fn derive_turns(events: &mut [Event], extras: &[LineExtras]) -> Vec<Turn> {
         turns.push(Turn {
             number: turn_number,
             timestamp: events[index].timestamp,
-            model: extras[index]
-                .model
-                .clone()
-                .filter(|m| !m.starts_with('<')),
+            model: extras[index].model.clone().filter(|m| !m.starts_with('<')),
             usage,
             event_indices: indices,
             anchor_index: Some(index),
@@ -787,10 +796,14 @@ pub(crate) fn usage_from_message(v: &Value) -> Option<TokenUsage> {
 
 /// Prompt size of one usage object, for picking the largest call.
 fn prompt_sum(v: &Value) -> u64 {
-    ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
-        .iter()
-        .filter_map(|k| v.get(*k).and_then(Value::as_u64))
-        .sum()
+    [
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ]
+    .iter()
+    .filter_map(|k| v.get(*k).and_then(Value::as_u64))
+    .sum()
 }
 
 #[cfg(test)]
@@ -957,7 +970,10 @@ mod tests {
                 {"type": "tool_result", "tool_use_id": "t", "content": "boom", "is_error": true}
             ]}
         });
-        assert!(matches!(user_kind(&line), EventKind::ToolResult { is_error: true, .. }));
+        assert!(matches!(
+            user_kind(&line),
+            EventKind::ToolResult { is_error: true, .. }
+        ));
     }
 
     #[test]
@@ -972,9 +988,16 @@ mod tests {
             }
         });
         match attachment_kind(&line) {
-            EventKind::ContextInjection { mechanism, label, char_len } => {
+            EventKind::ContextInjection {
+                mechanism,
+                label,
+                char_len,
+            } => {
                 assert_eq!(mechanism, "nested_memory");
-                assert_eq!(label, "server\\CLAUDE.md", "provenance is observed, not guessed");
+                assert_eq!(
+                    label, "server\\CLAUDE.md",
+                    "provenance is observed, not guessed"
+                );
                 assert_eq!(char_len, 14);
             }
             other => panic!("expected a context injection, got {other:?}"),
@@ -988,9 +1011,16 @@ mod tests {
             "attachment": {"type": "some_future_injection", "mystery": "abcdefghij"}
         });
         match attachment_kind(&line) {
-            EventKind::ContextInjection { mechanism, char_len, .. } => {
+            EventKind::ContextInjection {
+                mechanism,
+                char_len,
+                ..
+            } => {
                 assert_eq!(mechanism, "some_future_injection");
-                assert!(char_len > 0, "unknown injections must not count as zero tokens");
+                assert!(
+                    char_len > 0,
+                    "unknown injections must not count as zero tokens"
+                );
             }
             other => panic!("expected a context injection, got {other:?}"),
         }
@@ -1014,7 +1044,10 @@ mod tests {
                 assert_eq!(facts.trigger.as_deref(), Some("manual"));
                 assert_eq!(facts.tokens_before, Some(165_223));
                 assert_eq!(facts.tokens_after, Some(17_542));
-                assert!(!facts.replacement_recorded, "Claude Code records sizes, not content");
+                assert!(
+                    !facts.replacement_recorded,
+                    "Claude Code records sizes, not content"
+                );
             }
             other => panic!("expected a compaction, got {other:?}"),
         }
@@ -1029,9 +1062,17 @@ mod tests {
     #[test]
     fn synthetic_models_do_not_become_the_session_model() {
         let mut meta = SessionMetadata::default();
-        absorb_metadata(&json!({"message": {"model": "<synthetic>"}}), &mut meta, None);
+        absorb_metadata(
+            &json!({"message": {"model": "<synthetic>"}}),
+            &mut meta,
+            None,
+        );
         assert_eq!(meta.model, None);
-        absorb_metadata(&json!({"message": {"model": "claude-opus-4-8"}}), &mut meta, None);
+        absorb_metadata(
+            &json!({"message": {"model": "claude-opus-4-8"}}),
+            &mut meta,
+            None,
+        );
         assert_eq!(meta.model.as_deref(), Some("claude-opus-4-8"));
     }
 
@@ -1062,7 +1103,11 @@ mod tests {
             Some(76_603),
             "the top-level sum (148,236) is three prompts added together, not one prompt"
         );
-        assert_eq!(usage.api_calls, Some(3), "the aggregation must stay visible");
+        assert_eq!(
+            usage.api_calls,
+            Some(3),
+            "the aggregation must stay visible"
+        );
     }
 
     #[test]
@@ -1151,7 +1196,10 @@ mod tests {
         let line = json!({"type": "assistant", "message": {"content": blocks}});
         assert!(matches!(
             assistant_kind(&line),
-            EventKind::Reasoning { redacted: false, .. }
+            EventKind::Reasoning {
+                redacted: false,
+                ..
+            }
         ));
     }
 

@@ -2,13 +2,13 @@
 
 use crate::fingerprint;
 use crate::jsonl::{self, LineRecord};
+use chrono::{DateTime, Utc};
 use ct_domain::model::event::{CompactionFacts, EventLinks};
 use ct_domain::ports::{PortError, PortResult};
 use ct_domain::{
     AgentKind, AgentSession, Event, EventId, EventKind, FileId, MessageRole, SessionId,
     SessionMetadata, SourceRef, TokenUsage, Turn, TurnNumber,
 };
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -117,11 +117,7 @@ fn translate(
             }),
             (
                 "response_item",
-                Some(
-                    "function_call_output"
-                    | "custom_tool_call_output"
-                    | "tool_search_output",
-                ),
+                Some("function_call_output" | "custom_tool_call_output" | "tool_search_output"),
                 Some(payload_start),
             ) => match oversized_output_facts(raw, payload_start) {
                 Some((non_image_chars, image_count, image_payload_chars)) => {
@@ -132,8 +128,11 @@ fn translate(
                         image_payload_chars,
                     }
                 }
-                None => EventKind::SessionEvent {
-                    subtype: raw_type.clone(),
+                None => EventKind::OversizedToolResult {
+                    call_id: string_field(raw, b"call_id", payload_start),
+                    non_image_chars: 0,
+                    image_count: 0,
+                    image_payload_chars: 0,
                 },
             },
             _ => EventKind::SessionEvent {
@@ -275,10 +274,7 @@ fn string_field(raw: &[u8], field: &[u8], from: usize) -> Option<String> {
 }
 
 fn skip_ascii_space(raw: &[u8], mut at: usize) -> usize {
-    while raw
-        .get(at)
-        .is_some_and(|byte| byte.is_ascii_whitespace())
-    {
+    while raw.get(at).is_some_and(|byte| byte.is_ascii_whitespace()) {
         at += 1;
     }
     at
@@ -308,7 +304,8 @@ fn scan_json_string(raw: &[u8], quote: usize) -> Option<ScannedString> {
     while i < raw.len() {
         match raw[i] {
             b'"' => {
-                chars = chars.checked_add(std::str::from_utf8(&raw[segment..i]).ok()?.chars().count())?;
+                chars = chars
+                    .checked_add(std::str::from_utf8(&raw[segment..i]).ok()?.chars().count())?;
                 return Some(ScannedString {
                     content_start,
                     content_end: i,
@@ -318,21 +315,23 @@ fn scan_json_string(raw: &[u8], quote: usize) -> Option<ScannedString> {
                 });
             }
             b'\\' => {
-                chars = chars.checked_add(std::str::from_utf8(&raw[segment..i]).ok()?.chars().count())?;
+                chars = chars
+                    .checked_add(std::str::from_utf8(&raw[segment..i]).ok()?.chars().count())?;
                 escaped = true;
                 let escape = *raw.get(i + 1)?;
                 if escape == b'u' {
                     let high = parse_hex_quad(raw.get(i + 2..i + 6)?)?;
                     i += 6;
-                    if (0xd800..=0xdbff).contains(&high)
-                        && raw.get(i..i + 2) == Some(b"\\u")
-                    {
+                    if (0xd800..=0xdbff).contains(&high) && raw.get(i..i + 2) == Some(b"\\u") {
                         let low = parse_hex_quad(raw.get(i + 2..i + 6)?)?;
                         if (0xdc00..=0xdfff).contains(&low) {
                             i += 6;
                         }
                     }
-                } else if matches!(escape, b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') {
+                } else if matches!(
+                    escape,
+                    b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't'
+                ) {
                     i += 2;
                 } else {
                     return None;
@@ -409,8 +408,7 @@ fn oversized_output_facts(raw: &[u8], payload_start: usize) -> Option<(u32, u32,
                     let value_start = skip_ascii_space(raw, after + 1);
                     let value = scan_json_string(raw, value_start)?;
                     image_count = image_count.checked_add(1)?;
-                    image_payload_chars =
-                        image_payload_chars.checked_add(value.chars)?;
+                    image_payload_chars = image_payload_chars.checked_add(value.chars)?;
                     excluded_raw_chars = excluded_raw_chars.checked_add(
                         std::str::from_utf8(&raw[value_start..value.end])
                             .ok()?
@@ -467,8 +465,7 @@ fn response_item_measurement(
             if let Some(encrypted) = payload.get("encrypted_content") {
                 content.insert("encrypted_content".into(), encrypted.clone());
             }
-            return (!content.is_empty())
-                .then(|| fingerprint::value(&Value::Object(content)));
+            return (!content.is_empty()).then(|| fingerprint::value(&Value::Object(content)));
         }
         Some("function_call") | Some("custom_tool_call") | Some("tool_search_call") => {
             let mut content = serde_json::Map::new();
@@ -480,8 +477,7 @@ fn response_item_measurement(
                     content.insert(key.into(), value.clone());
                 }
             }
-            return (!content.is_empty())
-                .then(|| fingerprint::value(&Value::Object(content)));
+            return (!content.is_empty()).then(|| fingerprint::value(&Value::Object(content)));
         }
         _ => return None,
     };
@@ -565,7 +561,8 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
             // already ranks `url` above `query`, so both shapes name themselves.
             target: payload.get("action").and_then(crate::tool_target::describe),
         },
-        Some("function_call_output") | Some("custom_tool_call_output")
+        Some("function_call_output")
+        | Some("custom_tool_call_output")
         | Some("tool_search_output") => EventKind::ToolResult {
             tool: None,
             call_id: str_field(payload, "call_id"),
@@ -749,7 +746,11 @@ fn visit_content(payload: &Value, f: &mut dyn FnMut(Component<'_>)) {
                     f(Component::Text(s));
                 }
             }
-            // Inline images are sent as data URLs and are enormous; count them.
+            // The ordinary path keeps the historical serialized-character
+            // proxy, so inline image bytes are charged here. The oversized
+            // lexical path excludes image payloads because it cannot assign
+            // them an honest text-token estimate; the two paths are therefore
+            // intentionally different until the image-accounting follow-up.
             if let Some(s) = block.get("image_url").and_then(Value::as_str) {
                 f(Component::Opaque(Cow::Borrowed(s)));
             }
@@ -937,6 +938,25 @@ mod tests {
     }
 
     #[test]
+    fn malformed_oversized_output_stays_in_context_as_unmeasured() {
+        let raw = br#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"c3","output":{"image_url":42}}}"#;
+        let event = translate(
+            &oversized_record(),
+            raw,
+            &mut SessionMetadata::default(),
+            false,
+        );
+
+        assert!(matches!(event.kind, EventKind::OversizedToolResult {
+            call_id: Some(ref id),
+            non_image_chars: 0,
+            image_count: 0,
+            image_payload_chars: 0,
+        } if id == "c3"));
+        assert!(event.occupies_context());
+    }
+
+    #[test]
     fn unrelated_oversized_telemetry_does_not_enter_context() {
         let raw =
             br#"{"type":"event_msg","payload":{"type":"image_generation_end","image":"AAAA"}}"#;
@@ -959,7 +979,10 @@ mod tests {
         });
         // "hello" plus the full data URL, which is counted because inline
         // images really do occupy context.
-        assert_eq!(content_chars(&payload), 5 + "data:image/png;base64,AAAA".len() as u32);
+        assert_eq!(
+            content_chars(&payload),
+            5 + "data:image/png;base64,AAAA".len() as u32
+        );
     }
 
     #[test]
@@ -1048,7 +1071,8 @@ mod tests {
     #[test]
     fn tool_calls_are_recognised_across_codex_spellings() {
         for kind in ["function_call", "custom_tool_call", "tool_search_call"] {
-            let payload = json!({"type": kind, "name": "shell", "call_id": "c1", "arguments": "ls"});
+            let payload =
+                json!({"type": kind, "name": "shell", "call_id": "c1", "arguments": "ls"});
             let ev = translate_response_item(&payload, Some(kind));
             assert!(
                 matches!(ev, EventKind::ToolCall { ref tool, .. } if tool == "shell"),
@@ -1126,7 +1150,11 @@ mod tests {
         let kind = translate_event_msg(&payload, Some("token_count"), &mut meta);
         match kind {
             EventKind::TokenReport(u) => {
-                assert_eq!(u.prompt_tokens(), Some(17_268), "cumulative totals must not leak in");
+                assert_eq!(
+                    u.prompt_tokens(),
+                    Some(17_268),
+                    "cumulative totals must not leak in"
+                );
                 assert_eq!(u.output, Some(234));
                 assert_eq!(u.reasoning, Some(46));
                 assert_eq!(u.context_window, Some(258_400));

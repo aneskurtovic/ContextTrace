@@ -98,7 +98,10 @@ pub fn reconstruct(
         items: live,
         observed_total,
         context_window,
-        model: turn_data.model.clone().or_else(|| session.metadata().model.clone()),
+        model: turn_data
+            .model
+            .clone()
+            .or_else(|| session.metadata().model.clone()),
         preceding_compaction,
     })
 }
@@ -186,7 +189,10 @@ fn classify(
                 .or_else(|| call_id.clone())
                 .unwrap_or_else(|| "tool".into());
             let base = tool_target::label(&name, matched.and_then(|(_, target)| *target));
-            let detail = if *image_count == 0 {
+            let detail = if *image_count == 0 && *image_payload_chars == 0 && *non_image_chars == 0
+            {
+                "oversized output; size unmeasured".to_string()
+            } else if *image_count == 0 {
                 "oversized output; partial size".to_string()
             } else {
                 format!(
@@ -280,8 +286,8 @@ mod tests {
     use crate::tokenizers::HeuristicEstimator;
     use ct_domain::model::event::{CompactionFacts, EventLinks};
     use ct_domain::{
-        AgentKind, AgentSession, EventId, FileId, SessionId, SessionMetadata, SourceRef, TokenUsage,
-        Turn,
+        AgentKind, AgentSession, EventId, FileId, SessionId, SessionMetadata, SourceRef,
+        TokenUsage, Turn,
     };
 
     fn event(line: u32, kind: EventKind, turn: Option<TurnNumber>) -> Event {
@@ -461,7 +467,9 @@ mod tests {
 
         assert_eq!(r.items[0].source, ContextSource::AgentSystemPrompt);
         assert!(
-            !r.items.iter().any(|i| i.category == ContextCategory::UserMessages),
+            !r.items
+                .iter()
+                .any(|i| i.category == ContextCategory::UserMessages),
             "the conversation itself must still be replaced"
         );
     }
@@ -476,7 +484,11 @@ mod tests {
         let s = session(events, 2, 1000);
         let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
 
-        assert_eq!(r.items[0].category, ContextCategory::UserMessages, "history stays history");
+        assert_eq!(
+            r.items[0].category,
+            ContextCategory::UserMessages,
+            "history stays history"
+        );
         assert_eq!(r.items[2].category, ContextCategory::CurrentPrompt);
     }
 

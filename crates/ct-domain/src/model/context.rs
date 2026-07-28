@@ -5,9 +5,9 @@
 //! the whole -- is enforced at construction, so no consumer has to trust that
 //! whichever adapter produced it remembered to reconcile its numbers.
 
+use super::analysis::ContentMeasurement;
 use super::event::CompactionFacts;
 use super::filter::{FilteredView, ItemFilter};
-use super::analysis::ContentMeasurement;
 use super::identity::{ContentFingerprint, ContextItemId, SessionId, TurnNumber};
 use super::provenance::{Confidence, Provenance, SourceRef};
 use super::session::AgentKind;
@@ -516,9 +516,10 @@ pub(crate) fn find_duplicate_content<'a>(
             let total_tokens = items
                 .iter()
                 .fold(0u32, |sum, item| sum.saturating_add(item.tokens.tokens()));
-            let repeated_tokens = items.iter().skip(1).fold(0u32, |sum, item| {
-                sum.saturating_add(item.tokens.tokens())
-            });
+            let repeated_tokens = items
+                .iter()
+                .skip(1)
+                .fold(0u32, |sum, item| sum.saturating_add(item.tokens.tokens()));
             let confidence = items.iter().fold(Confidence::Observed, |confidence, item| {
                 confidence.weakest(item.confidence())
             });
@@ -552,8 +553,9 @@ pub(crate) fn find_duplicate_content<'a>(
     groups
 }
 
-/// Four KiB is large enough that compression overhead is immaterial and, at
-/// code/log densities, normally represents at least a thousand prompt tokens.
+/// Four KiB is large enough that compression overhead is immaterial for the
+/// byte-level measurement. This gate is deliberately independent of the
+/// calibrated token estimate used to rank findings.
 pub const MIN_LOW_ENTROPY_BYTES: u32 = 4 * 1024;
 /// Above this, compression has not removed enough structure to justify calling
 /// a payload low-information.
@@ -623,7 +625,11 @@ mod tests {
         }
     }
 
-    fn assemble(items: Vec<ContextItem>, total: u32, residual: u32) -> Result<ContextSnapshot, SnapshotError> {
+    fn assemble(
+        items: Vec<ContextItem>,
+        total: u32,
+        residual: u32,
+    ) -> Result<ContextSnapshot, SnapshotError> {
         ContextSnapshot::assemble(
             SessionId::new("s1").unwrap(),
             AgentKind::ClaudeCode,
@@ -676,7 +682,10 @@ mod tests {
 
         // Shares are shares of the observed total, so they sum to 1.
         let sum: f32 = rows.iter().map(|r| r.share).sum();
-        assert!((sum - 1.0).abs() < 1e-5, "category shares must sum to 1, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "category shares must sum to 1, got {sum}"
+        );
     }
 
     #[test]
@@ -809,7 +818,12 @@ mod tests {
 
     #[test]
     fn utilisation_uses_the_observed_total() {
-        let snap = assemble(vec![item("a", ContextCategory::ToolOutputs, 100_000)], 100_000, 0).unwrap();
+        let snap = assemble(
+            vec![item("a", ContextCategory::ToolOutputs, 100_000)],
+            100_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(snap.utilisation(), Some(0.5));
     }
 }

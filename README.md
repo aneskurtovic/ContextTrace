@@ -201,10 +201,16 @@ payload characters were excluded, and no visual-token charge is assigned a
 base64-derived text estimate during observed-total reconciliation. Exact mode
 refuses these lines from their recorded size before fetching them.
 
+The ordinary (sub-4 MiB) parser still uses its established serialized-character
+proxy, which includes inline image data URLs because those bytes occupy the
+replayed request. Image accounting is therefore currently threshold-dependent:
+oversized output excludes image payloads from the text proxy, while ordinary
+output does not. Unifying those policies is tracked separately as CT-041.
+
 **It is far cheaper than the design implied.** `SourceRef` seeks to a byte
 offset, so this is one seek per item, not a scan. On the largest local Codex
-session (99 MB, 262 items at the peak turn) `ct context` takes 0.43 s and
-`ct context --exact` takes 0.50 s.
+session (94.6 MB, 269 items at the peak turn) `ct context` takes 1.34 s and
+`ct context --exact` takes 1.49 s in a release build.
 
 **What it does not make the residual mean.** It is tempting to conclude that
 once every item is measured, the remainder is purely context the agent never
