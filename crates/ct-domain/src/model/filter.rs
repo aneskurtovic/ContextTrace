@@ -20,8 +20,8 @@
 //! a field.
 
 use super::context::{
-    find_duplicate_content, CategoryBreakdown, ContextCategory, ContextItem, ContextSnapshot,
-    ContextSource, Contributor, DuplicateContent,
+    find_duplicate_content, find_low_entropy_content, CategoryBreakdown, ContextCategory,
+    ContextItem, ContextSnapshot, ContextSource, Contributor, DuplicateContent, LowEntropyContent,
 };
 use super::identity::{SessionId, TurnNumber};
 use super::provenance::Confidence;
@@ -399,6 +399,14 @@ impl<'a> FilteredView<'a> {
         )
     }
 
+    /// Large low-information blocks among the items surviving this filter.
+    pub fn low_entropy_content(&self) -> Vec<LowEntropyContent> {
+        find_low_entropy_content(
+            self.matched.iter().copied(),
+            self.snapshot.total().tokens(),
+        )
+    }
+
     /// Distinct categories present in the *unfiltered* snapshot, with sizes.
     ///
     /// For the empty-result case: telling someone their filter matched nothing
@@ -466,6 +474,7 @@ impl<'a> FilteredView<'a> {
             header: self.header(),
             categories: self.by_category(),
             duplicates: self.duplicate_content(),
+            low_entropy: self.low_entropy_content(),
         }
     }
 
@@ -531,6 +540,7 @@ pub struct CompositionReport {
     pub header: ViewHeader,
     pub categories: Vec<CategoryBreakdown>,
     pub duplicates: Vec<DuplicateContent>,
+    pub low_entropy: Vec<LowEntropyContent>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -543,7 +553,8 @@ pub struct ContributorReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::identity::{ContextItemId, FileId};
+    use crate::model::analysis::ContentMeasurement;
+    use crate::model::identity::{ContentFingerprint, ContextItemId, FileId};
     use crate::model::provenance::{Provenance, SourceRef};
     use crate::model::session::AgentKind;
 
@@ -557,7 +568,7 @@ mod tests {
             first_seen_turn: None,
             provenance: Provenance::observed(SourceRef::new(FileId(0), 0, 0, 1)),
             preview: None,
-            content_fingerprint: None,
+            content_measurement: None,
         }
     }
 
@@ -692,6 +703,56 @@ mod tests {
         let view = snap.filtered(&f);
         assert_eq!(view.largest_contributors(10).len(), 2);
         assert_eq!(view.largest_contributors(1).len(), 1);
+    }
+
+    #[test]
+    fn low_entropy_ranking_only_contains_items_surviving_the_filter() {
+        let mut tool = item(
+            "large log",
+            ContextCategory::ToolOutputs,
+            ContextSource::ToolExecution {
+                tool: "Bash".into(),
+            },
+            2_000,
+        );
+        tool.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([1; 32]),
+            10_000,
+            1_000,
+        ));
+        let mut file = item(
+            "large file",
+            ContextCategory::FileContents,
+            ContextSource::FileRead {
+                path: "vendor.js".into(),
+            },
+            2_000,
+        );
+        file.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([2; 32]),
+            10_000,
+            1_000,
+        ));
+        let snap = ContextSnapshot::assemble(
+            SessionId::new("filtered-waste").unwrap(),
+            AgentKind::Codex,
+            TurnNumber::FIRST,
+            None,
+            vec![tool, file],
+            TokenCount::observed(4_000),
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+        let filter = ItemFilter {
+            category: Some(ContextCategory::ToolOutputs),
+            ..ItemFilter::ALL
+        };
+
+        let findings = snap.filtered(&filter).low_entropy_content();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].label, "large log");
     }
 
     #[test]

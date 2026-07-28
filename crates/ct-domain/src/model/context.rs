@@ -5,6 +5,7 @@
 //! the whole -- is enforced at construction, so no consumer has to trust that
 //! whichever adapter produced it remembered to reconcile its numbers.
 
+use super::analysis::ContentMeasurement;
 use super::event::CompactionFacts;
 use super::filter::{FilteredView, ItemFilter};
 use super::identity::{ContentFingerprint, ContextItemId, SessionId, TurnNumber};
@@ -162,10 +163,10 @@ pub struct ContextItem {
     pub provenance: Provenance,
     /// Short excerpt for display. Full content is re-read via `provenance.source`.
     pub preview: Option<String>,
-    /// Exact identity of the model-visible content, when the adapter could
-    /// derive one without guessing.
+    /// Fixed-size facts about model-visible content, retained only on the
+    /// opt-in diagnostics path.
     #[serde(skip)]
-    pub content_fingerprint: Option<ContentFingerprint>,
+    pub content_measurement: Option<ContentMeasurement>,
 }
 
 impl ContextItem {
@@ -221,6 +222,26 @@ pub struct DuplicateContent {
     pub repeated_tokens: u32,
     pub share: f32,
     /// Weakest confidence among the copies' token counts and membership.
+    pub confidence: Confidence,
+}
+
+/// One large, unusually compressible context item.
+///
+/// `waste_score_tokens` is deliberately named as a score rather than a saving:
+/// compression reveals redundancy but does not prove the whole redundant
+/// fraction can be removed from a prompt.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LowEntropyContent {
+    pub id: ContextItemId,
+    pub label: String,
+    pub category: ContextCategory,
+    pub source: ContextSource,
+    pub tokens: u32,
+    pub original_bytes: u32,
+    pub compressed_bytes: u32,
+    pub compression_ratio: f32,
+    pub waste_score_tokens: u32,
+    pub share: f32,
     pub confidence: Confidence,
 }
 
@@ -466,6 +487,11 @@ impl ContextSnapshot {
     pub fn duplicate_content(&self) -> Vec<DuplicateContent> {
         find_duplicate_content(self.items.iter(), self.total.tokens())
     }
+
+    /// Large low-information blocks, ranked by redundant token footprint.
+    pub fn low_entropy_content(&self) -> Vec<LowEntropyContent> {
+        find_low_entropy_content(self.items.iter(), self.total.tokens())
+    }
 }
 
 pub(crate) fn find_duplicate_content<'a>(
@@ -474,8 +500,11 @@ pub(crate) fn find_duplicate_content<'a>(
 ) -> Vec<DuplicateContent> {
     let mut by_content: HashMap<ContentFingerprint, Vec<&ContextItem>> = HashMap::new();
     for item in items {
-        if let Some(fingerprint) = item.content_fingerprint {
-            by_content.entry(fingerprint).or_default().push(item);
+        if let Some(measurement) = item.content_measurement {
+            by_content
+                .entry(measurement.fingerprint)
+                .or_default()
+                .push(item);
         }
     }
 
@@ -487,9 +516,10 @@ pub(crate) fn find_duplicate_content<'a>(
             let total_tokens = items
                 .iter()
                 .fold(0u32, |sum, item| sum.saturating_add(item.tokens.tokens()));
-            let repeated_tokens = items.iter().skip(1).fold(0u32, |sum, item| {
-                sum.saturating_add(item.tokens.tokens())
-            });
+            let repeated_tokens = items
+                .iter()
+                .skip(1)
+                .fold(0u32, |sum, item| sum.saturating_add(item.tokens.tokens()));
             let confidence = items.iter().fold(Confidence::Observed, |confidence, item| {
                 confidence.weakest(item.confidence())
             });
@@ -523,6 +553,59 @@ pub(crate) fn find_duplicate_content<'a>(
     groups
 }
 
+/// Four KiB is large enough that compression overhead is immaterial for the
+/// byte-level measurement. This gate is deliberately independent of the
+/// calibrated token estimate used to rank findings.
+pub const MIN_LOW_ENTROPY_BYTES: u32 = 4 * 1024;
+/// Above this, compression has not removed enough structure to justify calling
+/// a payload low-information.
+pub const MAX_LOW_ENTROPY_RATIO: f32 = 0.75;
+
+pub(crate) fn find_low_entropy_content<'a>(
+    items: impl IntoIterator<Item = &'a ContextItem>,
+    turn_total: u32,
+) -> Vec<LowEntropyContent> {
+    let denominator = turn_total.max(1) as f32;
+    let mut findings: Vec<LowEntropyContent> = items
+        .into_iter()
+        .filter_map(|item| {
+            let measurement = item.content_measurement?;
+            if measurement.original_bytes < MIN_LOW_ENTROPY_BYTES {
+                return None;
+            }
+            let compression_ratio = measurement.compression_ratio();
+            if compression_ratio > MAX_LOW_ENTROPY_RATIO {
+                return None;
+            }
+            let redundant_fraction = (1.0 - compression_ratio).clamp(0.0, 1.0);
+            let waste_score_tokens =
+                (item.tokens.tokens() as f32 * redundant_fraction).round() as u32;
+            Some(LowEntropyContent {
+                id: item.id.clone(),
+                label: item.label.clone(),
+                category: item.category,
+                source: item.source.clone(),
+                tokens: item.tokens.tokens(),
+                original_bytes: measurement.original_bytes,
+                compressed_bytes: measurement.compressed_bytes,
+                compression_ratio,
+                waste_score_tokens,
+                share: item.tokens.tokens() as f32 / denominator,
+                confidence: item.confidence(),
+            })
+        })
+        .collect();
+
+    findings.sort_by(|a, b| {
+        b.waste_score_tokens
+            .cmp(&a.waste_score_tokens)
+            .then_with(|| a.compression_ratio.total_cmp(&b.compression_ratio))
+            .then(b.tokens.cmp(&a.tokens))
+            .then(a.id.cmp(&b.id))
+    });
+    findings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,11 +621,15 @@ mod tests {
             first_seen_turn: None,
             provenance: Provenance::observed(SourceRef::new(FileId(0), 0, 0, 1)),
             preview: None,
-            content_fingerprint: None,
+            content_measurement: None,
         }
     }
 
-    fn assemble(items: Vec<ContextItem>, total: u32, residual: u32) -> Result<ContextSnapshot, SnapshotError> {
+    fn assemble(
+        items: Vec<ContextItem>,
+        total: u32,
+        residual: u32,
+    ) -> Result<ContextSnapshot, SnapshotError> {
         ContextSnapshot::assemble(
             SessionId::new("s1").unwrap(),
             AgentKind::ClaudeCode,
@@ -595,7 +682,10 @@ mod tests {
 
         // Shares are shares of the observed total, so they sum to 1.
         let sum: f32 = rows.iter().map(|r| r.share).sum();
-        assert!((sum - 1.0).abs() < 1e-5, "category shares must sum to 1, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "category shares must sum to 1, got {sum}"
+        );
     }
 
     #[test]
@@ -622,11 +712,15 @@ mod tests {
     fn duplicate_content_reports_total_and_avoidable_cost() {
         let same = ContentFingerprint::new([7; 32]);
         let mut first = item("Read src/lib.rs", ContextCategory::ToolOutputs, 300);
-        first.content_fingerprint = Some(same);
+        first.content_measurement = Some(ContentMeasurement::new(same, 8_000, 800));
         let mut retry = item("Read src/lib.rs (retry)", ContextCategory::ToolOutputs, 300);
-        retry.content_fingerprint = Some(same);
+        retry.content_measurement = Some(ContentMeasurement::new(same, 8_000, 800));
         let mut unrelated = item("cargo test", ContextCategory::ToolOutputs, 200);
-        unrelated.content_fingerprint = Some(ContentFingerprint::new([8; 32]));
+        unrelated.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([8; 32]),
+            8_000,
+            7_000,
+        ));
 
         let snap = assemble(vec![first, retry, unrelated], 1000, 200).unwrap();
         let groups = snap.duplicate_content();
@@ -656,6 +750,50 @@ mod tests {
     }
 
     #[test]
+    fn low_entropy_content_is_ranked_by_redundant_token_footprint() {
+        let mut compact_but_large = item("large build log", ContextCategory::ToolOutputs, 2_000);
+        compact_but_large.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([1; 32]),
+            20_000,
+            4_000,
+        ));
+        let mut smaller_ratio = item("repeated paths", ContextCategory::ToolOutputs, 500);
+        smaller_ratio.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([2; 32]),
+            8_000,
+            400,
+        ));
+
+        let snap = assemble(vec![smaller_ratio, compact_but_large], 3_000, 500).unwrap();
+        let findings = snap.low_entropy_content();
+
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].label, "large build log");
+        assert_eq!(findings[0].waste_score_tokens, 1_600);
+        assert!((findings[0].compression_ratio - 0.2).abs() < f32::EPSILON);
+        assert_eq!(findings[1].waste_score_tokens, 475);
+    }
+
+    #[test]
+    fn low_entropy_detection_ignores_small_and_poorly_compressed_payloads() {
+        let mut small = item("small", ContextCategory::ToolOutputs, 1_000);
+        small.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([3; 32]),
+            MIN_LOW_ENTROPY_BYTES as usize - 1,
+            10,
+        ));
+        let mut dense = item("dense", ContextCategory::ToolOutputs, 1_000);
+        dense.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([4; 32]),
+            10_000,
+            8_000,
+        ));
+
+        let snap = assemble(vec![small, dense], 2_000, 0).unwrap();
+        assert!(snap.low_entropy_content().is_empty());
+    }
+
+    #[test]
     fn one_item_looked_up_by_id_reports_its_share_of_the_whole_turn() {
         // `ct trace` prints this figure for an item the user just read in
         // `ct largest`. Computing it against anything but the turn's total
@@ -680,7 +818,12 @@ mod tests {
 
     #[test]
     fn utilisation_uses_the_observed_total() {
-        let snap = assemble(vec![item("a", ContextCategory::ToolOutputs, 100_000)], 100_000, 0).unwrap();
+        let snap = assemble(
+            vec![item("a", ContextCategory::ToolOutputs, 100_000)],
+            100_000,
+            0,
+        )
+        .unwrap();
         assert_eq!(snap.utilisation(), Some(0.5));
     }
 }

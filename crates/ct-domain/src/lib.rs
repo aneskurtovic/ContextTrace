@@ -27,9 +27,10 @@ pub mod model;
 pub mod ports;
 pub mod services;
 
+pub use model::analysis::ContentMeasurement;
 pub use model::context::{
     CategoryBreakdown, CompactionEvent, ContextCategory, ContextItem, ContextSnapshot,
-    ContextSource, Contributor, DuplicateContent, DuplicateInstance,
+    ContextSource, Contributor, DuplicateContent, DuplicateInstance, LowEntropyContent,
 };
 pub use model::event::{Event, EventKind, MessageRole};
 pub use model::filter::{

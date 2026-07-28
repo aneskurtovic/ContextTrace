@@ -169,6 +169,9 @@ fn describe_kind(event: &ct_domain::Event) -> String {
                 format!("tool output: {}", ellipsize(name, 28))
             }
         }
+        EventKind::OversizedToolResult { image_count, .. } => {
+            format!("oversized tool output: {image_count} inline image(s)")
+        }
         EventKind::ContextInjection { label, .. } => {
             format!("injected: {}", ellipsize(label, 32))
         }
@@ -363,6 +366,56 @@ pub fn context(
         println!(
             "\n  Total is the footprint of every copy; repeated is the avoidable cost after\n  \
              keeping the first. Matching is byte-exact over model-visible content."
+        );
+    }
+
+    let low_entropy = view.low_entropy_content();
+    if low_entropy.is_empty() {
+        println!(
+            "\n  Low entropy  none detected{}.",
+            if view.filter().is_active() {
+                " among the matching items"
+            } else {
+                ""
+            }
+        );
+    } else {
+        const SHOWN_ITEMS: usize = 10;
+        let total_score = low_entropy.iter().fold(0u32, |sum, item| {
+            sum.saturating_add(item.waste_score_tokens)
+        });
+        println!(
+            "\nLow-information blocks - {} large items, {} combined waste score\n",
+            low_entropy.len(),
+            thousands(total_score)
+        );
+        println!(
+            "  {}  {}  {}  ITEM",
+            rpad("SCORE", 10),
+            rpad("TOKENS", 10),
+            rpad("RATIO", 8)
+        );
+        for item in low_entropy.iter().take(SHOWN_ITEMS) {
+            println!(
+                "  {}  {}  {}  {}  {} {}",
+                rpad(&thousands(item.waste_score_tokens), 10),
+                rpad(&thousands(item.tokens), 10),
+                rpad(&percent(item.compression_ratio), 8),
+                item.id,
+                ellipsize_middle(&item.label, 48),
+                confidence_tag(item.confidence)
+            );
+        }
+        if low_entropy.len() > SHOWN_ITEMS {
+            println!(
+                "  ... {} more item(s) (all findings are in --json)",
+                low_entropy.len() - SHOWN_ITEMS
+            );
+        }
+        println!(
+            "\n  Ratio is DEFLATE bytes / original bytes. Score is tokens x (1 - ratio):\n  \
+             a ranking heuristic for repetition, not a claim that those tokens are removable.\n  \
+             Only visible payloads of at least 4 KiB with a ratio at or below 75% qualify."
         );
     }
 

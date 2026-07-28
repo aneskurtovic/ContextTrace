@@ -1,6 +1,7 @@
 //! Events: the normalized unit an adapter produces per line of an agent log.
 
-use super::identity::{ContentFingerprint, EventId, TurnNumber};
+use super::analysis::ContentMeasurement;
+use super::identity::{EventId, TurnNumber};
 use super::provenance::SourceRef;
 use super::tokens::TokenUsage;
 use chrono::{DateTime, Utc};
@@ -41,12 +42,13 @@ pub struct Event {
     pub turn: Option<TurnNumber>,
     /// Claude Code threads its log as a DAG via these. Codex leaves them empty.
     pub links: EventLinks,
-    /// Exact identity of the model-visible payload, when the log exposed it.
+    /// Fixed-size analysis of the model-visible payload, when the log exposed
+    /// it and the caller opted into content diagnostics.
     ///
     /// Kept out of serialized session views: it exists only to compare items
     /// without retaining their potentially huge content.
     #[serde(skip)]
-    pub content_fingerprint: Option<ContentFingerprint>,
+    pub content_measurement: Option<ContentMeasurement>,
 }
 
 /// Graph edges between events.
@@ -124,6 +126,20 @@ pub enum EventKind {
         /// Whether the agent flagged this result as an error.
         is_error: bool,
     },
+    /// A response item too large to materialise as a JSON tree.
+    ///
+    /// Membership and the presence of inline images are observed by a narrow
+    /// streaming scan. `non_image_chars` covers a decoded plain-text output or,
+    /// for structured output, its serialised representation with image URL
+    /// values removed. Base64 length is deliberately not treated as a token
+    /// count; any image charge remains unattributed during observed-total
+    /// reconciliation.
+    OversizedToolResult {
+        call_id: Option<String>,
+        non_image_chars: u32,
+        image_count: u32,
+        image_payload_chars: u32,
+    },
     /// Content injected into the prompt by the harness rather than authored by
     /// user or model: instruction files, skill listings, tool schemas, hook
     /// output, file reads.
@@ -184,6 +200,7 @@ impl Event {
             | EventKind::ToolCall { char_len, .. }
             | EventKind::ToolResult { char_len, .. }
             | EventKind::ContextInjection { char_len, .. } => Some(*char_len),
+            EventKind::OversizedToolResult { non_image_chars, .. } => Some(*non_image_chars),
             _ => None,
         }
     }
@@ -199,6 +216,7 @@ impl Event {
                 | EventKind::Reasoning { .. }
                 | EventKind::ToolCall { .. }
                 | EventKind::ToolResult { .. }
+                | EventKind::OversizedToolResult { .. }
                 | EventKind::ContextInjection { .. }
         )
     }
@@ -219,7 +237,7 @@ mod tests {
             raw_type: "test".into(),
             turn: None,
             links: EventLinks::default(),
-            content_fingerprint: None,
+            content_measurement: None,
         }
     }
 
@@ -240,5 +258,14 @@ mod tests {
         });
         assert!(e.occupies_context());
         assert_eq!(e.char_len(), Some(4096));
+
+        let oversized = ev(EventKind::OversizedToolResult {
+            call_id: Some("call-1".into()),
+            non_image_chars: 83,
+            image_count: 2,
+            image_payload_chars: 8_000_000,
+        });
+        assert!(oversized.occupies_context());
+        assert_eq!(oversized.char_len(), Some(83));
     }
 }

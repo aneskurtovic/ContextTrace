@@ -92,11 +92,19 @@ inconsistent breakdown is unrepresentable, not merely discouraged.
 **Exact duplicate content is named and costed.** On `ct context`'s opt-in
 analysis path, each adapter reduces model-visible content to a fixed-size
 identity, excluding retry-specific transport ids. Other commands do not pay to
-hash content they never compare. `ct context` groups equal identities, reports
-the tokens occupied by every copy and the avoidable tokens after the first, and
-includes all groups in `--json`. Content the log hides — notably Claude Code's
-redacted thinking — is not fingerprinted, because an exact-match claim cannot
-be made from it.
+analyse content they never compare. `ct context` groups equal identities,
+reports the tokens occupied by every copy and the avoidable tokens after the
+first, and includes all groups in `--json`. Content the log hides — notably
+Claude Code's redacted thinking — is not fingerprinted, because an exact-match
+claim cannot be made from it.
+
+**Low-information blocks are ranked, not called removable.** The same opt-in
+pass records each visible payload's DEFLATE size without retaining its content.
+`ct context` ranks large, unusually compressible items by
+`tokens × (1 − compressed/original)`, shows the ten strongest findings and
+includes all of them in `--json`. The number is explicitly a waste *score*:
+compression reveals repetition, but cannot prove which repeated structure the
+model did not need.
 
 ---
 
@@ -184,10 +192,25 @@ data URLs are charged as patches rather than BPE tokens, and re-serializing a
 structured output would measure `serde_json`'s key order rather than Codex's.
 Those items keep their character estimate, and the header says how many did.
 
+**Oversized outputs do not disappear to preserve that bound.** Codex response
+items above 4 MiB are not materialised as JSON trees. A narrow lexical scan
+recovers their tool-call link and measures only decoded text or structured
+output with inline `image_url` values removed. The item remains visible with
+observed membership and an estimated size, its label states how many image
+payload characters were excluded, and no visual-token charge is assigned a
+base64-derived text estimate during observed-total reconciliation. Exact mode
+refuses these lines from their recorded size before fetching them.
+
+The ordinary (sub-4 MiB) parser still uses its established serialized-character
+proxy, which includes inline image data URLs because those bytes occupy the
+replayed request. Image accounting is therefore currently threshold-dependent:
+oversized output excludes image payloads from the text proxy, while ordinary
+output does not. Unifying those policies is tracked separately as CT-041.
+
 **It is far cheaper than the design implied.** `SourceRef` seeks to a byte
 offset, so this is one seek per item, not a scan. On the largest local Codex
-session (99 MB, 262 items at the peak turn) `ct context` takes 0.43 s and
-`ct context --exact` takes 0.50 s.
+session (94.6 MB, 269 items at the peak turn) `ct context` takes 1.34 s and
+`ct context --exact` takes 1.49 s in a release build.
 
 **What it does not make the residual mean.** It is tempting to conclude that
 once every item is measured, the remainder is purely context the agent never
@@ -330,16 +353,16 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 | Component | Status |
 |---|---|
-| `ct-domain` — model, ports, calibration, filtering | Implemented, 56 tests |
-| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 111 tests |
+| `ct-domain` — model, ports, calibration, filtering | Implemented, 61 tests |
+| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 118 tests |
 | `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle, diff, growth | Implemented, 61 tests |
 | `ct-cli` — the eleven commands below | Implemented, 23 tests |
 | Standalone JSONL fixture files | Implemented, 14 tests |
 | Search, SQLite index, desktop shell | Not started |
 
-**265 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+**277 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 29 done, 1 next, 9
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 31 done, 1 next, 7
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -357,7 +380,7 @@ an event type from the future.
 ct roots                          # which local directories are read
 ct sessions [--agent] [--project] [--since] [--limit]
 ct inspect <id> [--raw] [--limit]
-ct context <id> [--turn N] [--exact] [filters]  # defaults to the largest turn
+ct context <id> [--turn N] [--exact] [filters]  # composition, duplicates, waste
 ct largest <id> [--turn N] [--limit] [--exact] [filters]
 ct trace   <id> --item <id-or-label>   # one item's lifecycle across the session
 ct residual <id> [--from N] [--to N]

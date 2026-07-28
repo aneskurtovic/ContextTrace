@@ -37,36 +37,16 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-024 · Waste and low-entropy detection
-`status: next` · `tier: B` · `size: M` · `source: IDEAS.md §4`
-**Done when:** large low-information blocks are ranked by compressed-size ratio.
-
----
-
-## Todo
-
-### CT-040 · Preserve oversized context items
-`status: todo` · `tier: A` · `size: S` · `source: CT-023`
-
-**Why:** `jsonl::read_lines` deliberately declines to parse lines above 4 MiB,
-but both adapters then translate an oversized non-compaction line into
-`SessionEvent`, which does not occupy context. This contradicts the reader's own
-claim that the recorded byte length still feeds reconstruction. A scan of the
-readable local corpus found three live Codex
-`response_item/custom_tool_call_output` cases across two sessions (4.4 MiB, 4.7 MiB and 21.8
-MiB), all of which currently disappear from the item list and inflate the
-unattributed remainder. Two other oversized lines were non-context
-`image_generation_end` telemetry.
-**Done when:** an oversized response item remains represented in context with an
-honest size/confidence, without treating inline image base64 as text tokens or
-fully parsing the pathological line.
-
 ### CT-025 · Secret scanning and redacted export
-`status: todo` · `tier: B` · `size: M` · `source: brief`
+`status: next` · `tier: B` · `size: M` · `source: brief`
 **Why:** the brief requires optional secret redaction for exports, and this is
 the one item where being wrong has consequences outside the tool.
 **Done when:** exports can be redacted, and scanning never writes findings
 anywhere outside the user's terminal.
+
+---
+
+## Todo
 
 ### CT-026 · Cost projection
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
@@ -122,6 +102,87 @@ a small, exactly-measured case of the same defect.
 ---
 
 ## Done
+
+### CT-040 · Preserve oversized context items
+`status: done` · `tier: A` · `size: S` · `source: CT-023`
+
+**Why:** `jsonl::read_lines` deliberately declines to parse lines above 4 MiB,
+but an oversized non-compaction line became a `SessionEvent`, which does not
+occupy context. Live Codex tool outputs therefore disappeared from the item
+list and inflated the unattributed remainder.
+**Done when:** an oversized response item remains represented in context with an
+honest size/confidence, without treating inline image base64 as text tokens or
+fully parsing the pathological line.
+
+**What building it taught.** The backlog evidence had already gone stale. The
+three recorded cases had grown to **10 oversized live outputs across three
+sessions**, ranging from 4.24 MiB to 20.81 MiB. Together they held 24 inline
+images and 89,895,024 image-URL characters. The two other oversized lines remain
+correctly excluded `image_generation_end` telemetry.
+
+The useful boundary is not "parse or know nothing". The JSONL reader lends the
+raw line to the adapter before reusing its buffer, and a narrow lexical scan
+recovers only the response-item type, call id, output shape and image URL
+lengths. It never materialises a multi-megabyte `serde_json::Value`. String
+tokens are skipped as units and object depth is tracked, so field-looking text
+inside tool output cannot be mistaken for envelope metadata.
+
+An oversized tool result now occupies context with observed membership and an
+estimated size. Plain string output is counted in decoded characters; structured
+output keeps its serialised structural/text proxy with every `image_url` value
+removed. The item label states the image count and excluded payload size. Those
+images therefore receive no base64-derived text-token estimate during
+observed-total reconciliation. `--exact` refuses the line from its recorded byte
+length before fetching or parsing it, preserving the same memory bound on the
+opt-in path.
+
+Layered regressions cover the bounded JSONL hand-off, decoded escaped text,
+multiple inline images, unrelated oversized telemetry, context replay/tool-call
+joining and exact recount refusal. A live turn confirmed the formerly absent
+items now appear as estimated tool outputs with the exclusion stated.
+
+### CT-024 · Waste and low-entropy detection
+`status: done` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+
+**Done when:** large low-information blocks are ranked by compressed-size ratio.
+
+**What building it taught.** Compressed size belongs on the same opt-in parse
+path as exact duplicate identity. Both adapters already isolate the
+model-visible payload and remove retry-specific transport ids there; compressing
+that value while it is in memory measures the thing the model received without
+re-reading the session or retaining a second copy. Each event keeps only its
+original and compressed byte counts beside the existing hash. Commands that do
+not diagnose content still pay nothing.
+
+A compression ratio alone ranks a tiny repeated acknowledgement above a
+ten-thousand-token build log. The useful order is
+`tokens × (1 - compressed/original)`, the expansion already proposed in
+`IDEAS.md`: size says how much prompt budget is at stake and the ratio says how
+repetitive it is. The terminal calls this a **waste score**, not wasted tokens.
+Compression establishes redundancy, not that removing the redundant fraction
+would preserve the information the model needed.
+
+The qualification boundary is explicit rather than intuitive: at least 4 KiB
+of visible payload and a DEFLATE ratio no higher than 75%. Four KiB makes
+compressor framing irrelevant and normally means roughly a thousand tokens of
+code or logs. Text output shows the ten highest scores and `--json` carries
+every finding, including original bytes, compressed bytes, ratio, score,
+category, provenance and confidence. Existing context filters narrow the
+analysis before ranking.
+
+Two live peak-turn checks produced signal immediately. A 383,810-token Claude
+Code turn contained 44 qualifying blocks with a combined score of 92,073; its
+largest were captured build output, full source reads and a long compacted
+summary. A 244,500-token Codex turn contained 34 with a combined score of
+140,947, led by repeated large command outputs. Those totals remain scores, not
+claims about recoverable context.
+
+The first implementation used `flate2`, whose CRC dependency runs a build script
+that cannot link on the pinned Windows GNU toolchain -- the same constraint
+CT-023 met in the common crypto stack. The final implementation uses the
+build-script-free pure-Rust DEFLATE core directly at the conventional level 6.
+It adds two small, non-network-capable packages (`miniz_oxide` and `adler2`) and
+keeps the repository's structural local-first guarantee intact.
 
 ### CT-023 · Duplicate context detection
 `status: done` · `tier: B` · `size: M` · `source: IDEAS.md §4`

@@ -17,6 +17,7 @@ serde_json.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 tiktoken-rs = "0.9"
+miniz_oxide.workspace = true
 
 [lints]
 workspace = true
