@@ -455,6 +455,16 @@ would be offering a file the adapter cannot use. Measured: the first
 observed across 707 sessions, while the four journals have none at any depth.
 The separation is not marginal.
 
+**Scanning the prelude also fixed a bug it exposed.** Header fields were read
+from line 1 only, so those same 90 sidecar-opening sessions had no `cwd` and no
+timestamp — 74 of 707 carried no `started_at` at all, and `ct sessions --since`
+deliberately waves timestamp-less sessions through, so every one of them leaked
+past every date filter. Each field now comes from the first line that has it,
+which the append-only format makes the earliest such line. `started_at` missing
+went 74 → 0. Discovery over 707 sessions went 0.34 s → 0.57 s, about 0.3 ms
+each, because the scan stops as soon as all three questions are answered and the
+ordinary session answers them on line 1.
+
 **It fails open on exhaustion, which is the part worth keeping.** The prelude
 scan is capped at 1 MiB, and hitting that cap establishes nothing — a session
 whose first line is one enormous pasted message is merely unread, not disproved.

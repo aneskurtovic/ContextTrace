@@ -292,13 +292,13 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 100 tests |
+| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 101 tests |
 | `ct-application` — use cases, diagnostics, drift sweep, item lifecycle | Implemented, 37 tests |
 | `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`trace`/`residual`/`doctor` | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-223 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+224 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -396,6 +396,12 @@ session *is* — reconstruction is an ancestor walk over `uuid`-keyed events, so
 file with no `uuid` anywhere has no node the walk could start from. It fails
 open when the 1 MiB prelude budget runs out, because discarding a real session
 is a worse error than keeping four journals.
+
+Scanning the prelude also fixed a bug it exposed: header fields were read from
+line 1 only, so 74 of 707 sessions carried no `started_at` — and `ct sessions
+--since` deliberately keeps timestamp-less sessions, so all 74 leaked past every
+date filter. Each field now comes from the first line that has it. Missing
+`started_at` went 74 → 0, at a cost of 0.3 ms per session at discovery.
 
 ### Filtering without lying about the whole
 

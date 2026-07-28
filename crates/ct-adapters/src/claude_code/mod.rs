@@ -246,6 +246,27 @@ mod tests {
     }
 
     #[test]
+    fn header_fields_come_from_the_first_line_that_has_them() {
+        // Reading line 1 alone left 74 of 707 local sessions with no
+        // `started_at`, and `ct sessions --since` deliberately waves
+        // timestamp-less sessions through — so every one of them leaked past
+        // every date filter.
+        let path = temp_session(
+            "late-header",
+            "{\"type\":\"last-prompt\",\"prompt\":\"hi\"}\n\
+             {\"type\":\"mode\",\"mode\":\"default\"}\n\
+             {\"type\":\"user\",\"uuid\":\"u1\",\"cwd\":\"C:\\\\src\",\
+               \"timestamp\":\"2026-07-20T09:15:00.000Z\"}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        let d = described.expect("this is a session");
+        assert_eq!(d.project.as_deref(), Some("C:\\src"));
+        assert!(d.started_at.is_some(), "the timestamp is three lines down");
+    }
+
+    #[test]
     fn a_session_opening_with_sidecar_lines_is_still_a_session() {
         // The regression the obvious rule would have caused: 90 of 711 local
         // sessions open with a line that carries no `uuid`, and judging by the

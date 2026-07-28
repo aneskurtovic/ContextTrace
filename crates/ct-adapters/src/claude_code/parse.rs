@@ -38,44 +38,52 @@ pub struct Header {
 /// session at all.
 ///
 /// Not a first-line read, because 90 of 711 local sessions open with a sidecar
-/// line — `last-prompt`, `mode`, `queue-operation`, `ai-title` — that carries no
-/// `uuid`. Judging by the first line alone would discard all of them. The first
-/// `uuid`-bearing line sits at depth 1 in the median case and 10 at the worst
-/// observed, while the four files that are not sessions have none at any depth.
+/// line — `last-prompt`, `mode`, `queue-operation`, `ai-title` — that carries
+/// neither a `uuid` nor a `cwd` nor a timestamp. Reading line 1 alone would
+/// discard all of them as non-sessions, and did leave 74 of them with no
+/// `started_at`, which every date filter then had to wave through. Each field
+/// is taken from the first line that has it. Since the file is append-only,
+/// that is also the earliest such line.
+///
+/// The scan stops as soon as all three are answered, so the ordinary session —
+/// whose first line is a `user` event carrying all of them — still costs one
+/// `read_line`.
 pub fn read_header(path: &Path) -> PortResult<Header> {
     let file = File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
     let mut reader = BufReader::new(file.take(PRELUDE_BYTES));
     let io = |e: std::io::Error| PortError::Io(format!("{}: {e}", path.display()));
 
-    // Descriptor metadata still comes from the first line only, unchanged: the
-    // directory slug is the established fallback where it is absent.
-    let mut first = String::new();
-    let mut consumed = reader.read_line(&mut first).map_err(io)? as u64;
-    let head = serde_json::from_str::<Value>(first.trim()).ok();
-
-    let mut has_conversation = head.as_ref().is_some_and(|v| v.get("uuid").is_some());
+    let mut header = Header::default();
+    let mut consumed: u64 = 0;
     let mut line = String::new();
-    while !has_conversation {
+
+    while !(header.has_conversation && header.cwd.is_some() && header.timestamp.is_some()) {
         line.clear();
         match reader.read_line(&mut line).map_err(io)? {
             0 => break,
             n => consumed += n as u64,
         }
-        if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
-            has_conversation = value.get("uuid").is_some();
+        // An unparsable line is skipped rather than fatal: a truncated write at
+        // the head of a file must not cost us the session behind it.
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if header.cwd.is_none() {
+            header.cwd = str_field(&value, "cwd");
         }
+        if header.timestamp.is_none() {
+            header.timestamp = parse_time(value.get("timestamp"));
+        }
+        header.has_conversation |= value.get("uuid").is_some();
     }
 
-    Ok(Header {
-        cwd: head.as_ref().and_then(|v| str_field(v, "cwd")),
-        timestamp: head.as_ref().and_then(|v| parse_time(v.get("timestamp"))),
-        // Exhausting the budget establishes nothing, so it fails open. Only a
-        // file read to its end without a `uuid` is *known* not to be a
-        // transcript; one whose first megabyte is a single enormous pasted
-        // message is merely unread, and discarding it would be a worse error
-        // than keeping the four journals.
-        has_conversation: has_conversation || consumed >= PRELUDE_BYTES,
-    })
+    // Exhausting the budget establishes nothing, so it fails open. Only a file
+    // read to its end without a `uuid` is *known* not to be a transcript; one
+    // whose first megabyte is a single enormous pasted message is merely
+    // unread, and discarding it would be a worse error than keeping the four
+    // journals.
+    header.has_conversation |= consumed >= PRELUDE_BYTES;
+    Ok(header)
 }
 
 /// Parse a full Claude Code session.
