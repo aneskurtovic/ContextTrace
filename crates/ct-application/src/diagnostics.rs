@@ -5,7 +5,7 @@
 //! the confidence of the data it came from.
 
 use ct_domain::model::event::EventKind;
-use ct_domain::{AgentKind, AgentSession, TurnNumber};
+use ct_domain::{AgentKind, AgentSession};
 use serde::Serialize;
 
 /// Growth between consecutive turns large enough to be worth explaining.
@@ -48,7 +48,12 @@ pub struct Diagnostics {
     /// Tokens reclaimed by compaction, where the agent reported both sides.
     pub compaction_reduction: Option<u32>,
     pub spikes: Vec<ResidualSpike>,
-    /// Turns for which the agent reported no usage, so context size is unknown.
+    /// Turns with no usable prompt size, so their context size is unknown.
+    ///
+    /// Counts two different records: no `usage` object at all, and one that
+    /// exists but is all zero. Both mean the same thing to a reader -- nothing
+    /// was measured -- so they are counted together, but the wording must not
+    /// say "reported no usage", because for some of these the agent did.
     pub turns_without_usage: usize,
     /// Turns whose figures the agent produced from more than one API call.
     ///
@@ -237,7 +242,7 @@ pub fn diagnose(session: &AgentSession) -> Diagnostics {
         unrecognised_types,
         turns: session.turn_count(),
         peak_prompt_tokens: session.peak_prompt_tokens(),
-        peak_turn: peak_turn(session).map(|t| t.get()),
+        peak_turn: session.peak_turn().map(|t| t.get()),
         compactions: compactions.len(),
         compaction_reduction,
         spikes: find_spikes(session),
@@ -257,15 +262,6 @@ pub fn diagnose(session: &AgentSession) -> Diagnostics {
             .filter(|e| matches!(e.kind, EventKind::Reasoning { redacted: true, .. }))
             .count(),
     }
-}
-
-fn peak_turn(session: &AgentSession) -> Option<TurnNumber> {
-    session
-        .turns()
-        .iter()
-        .filter(|t| t.prompt_tokens().is_some())
-        .max_by_key(|t| t.prompt_tokens().unwrap_or(0))
-        .map(|t| t.number)
 }
 
 /// Find turn-to-turn prompt growth above [`SPIKE_THRESHOLD`].
@@ -374,6 +370,7 @@ mod tests {
     use ct_domain::model::event::{CompactionFacts, EventLinks};
     use ct_domain::{
         AgentKind, Event, EventId, FileId, SessionId, SessionMetadata, SourceRef, TokenUsage, Turn,
+        TurnNumber,
     };
 
     fn event(line: u32, kind: EventKind) -> Event {

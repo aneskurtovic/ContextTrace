@@ -261,6 +261,38 @@ cannot observe:
 Clamping that to "0 tokens hidden" would turn a broken measurement into a
 confident and wrong inventory.
 
+The same rule decides which turn a command defaults to. `ct context <id>` with no
+`--turn` picks the session's largest, but "largest" needs sizes, and **256 of the
+775 local sessions have turns with no usable size** — subagent transcripts, which
+log a turn without filling in its usage. Ranking those on `unwrap_or(0)` gives
+every turn the same key and silently returns the last one, so the command used to
+answer:
+
+```
+Context at turn 1 - 0 [observed]
+  Developer instructions          0    0.0%  ····················  [estimated]
+  Calibration: estimates scaled by 0.00 to meet the observed total of 0.
+```
+
+An empty context, stated as **observed**, for a turn holding about 10,400 tokens.
+It now refuses and names the way out, and that way out is honest about what it
+is:
+
+```
+$ ct context agent-a168…
+error: no turn in this session reported a usable prompt size, so there is no
+largest turn to default to -- pass --turn N to inspect one (1 turn(s) available)
+
+$ ct context agent-a168… --turn 1
+Context at turn 1 - 10,372 [estimated]
+```
+
+Worth noting how that defect survived: both halves were individually well-typed.
+An all-zero `usage` object read as `Some(0)` is a plausible reading, and
+calibrating estimates to an observed total is exactly what the tool should do.
+The false claim only appeared when they composed. Sum types make a bad value hard
+to *write*; they do not make a bad value hard to *derive*.
+
 ---
 
 ## Building
@@ -289,16 +321,16 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 | Component | Status |
 |---|---|
-| `ct-domain` — model, ports, calibration, filtering | Implemented, 51 tests |
+| `ct-domain` — model, ports, calibration, filtering | Implemented, 54 tests |
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 101 tests |
 | `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle, diff, growth | Implemented, 61 tests |
 | `ct-cli` — the eleven commands below | Implemented, 23 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | Search, SQLite index, desktop shell | Not started |
 
-**249 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+**252 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 27 done, 1 next, 10
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 28 done, 1 next, 9
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 

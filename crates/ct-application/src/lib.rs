@@ -389,12 +389,12 @@ impl ContextTrace {
     }
 
     /// The turn with the largest prompt -- usually where to start looking.
+    ///
+    /// `None` when no turn reported a usable size. This used to rank on
+    /// `unwrap_or(0)` and so always answered *something*, which meant a session
+    /// with no usage records got its last turn described as its peak.
     pub fn peak_turn(&self, session: &AgentSession) -> Option<TurnNumber> {
-        session
-            .turns()
-            .iter()
-            .max_by_key(|t| t.prompt_tokens().unwrap_or(0))
-            .map(|t| t.number)
+        session.peak_turn()
     }
 
     /// Name of the estimator backing a binding, for display.

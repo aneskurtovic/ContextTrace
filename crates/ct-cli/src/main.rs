@@ -782,9 +782,19 @@ fn pick_turn(
 ) -> Result<TurnNumber, Box<dyn std::error::Error>> {
     match requested {
         Some(n) => Ok(TurnNumber::new(n)?),
-        None => app
-            .peak_turn(session)
-            .ok_or_else(|| "this session has no turns with recorded token usage".into()),
+        // Refusing beats defaulting. There is no "roughly the peak" available
+        // here -- without usage figures nothing ranks turns by size at all, so
+        // any turn returned would be one nobody chose, presented as one that
+        // was measured. The caller knows their session; name the way out.
+        None => app.peak_turn(session).ok_or_else(|| {
+            format!(
+                "no turn in this session reported a usable prompt size, so there is no \
+                 largest turn to default to -- pass --turn N to inspect one \
+                 ({} turn(s) available)",
+                session.turn_count()
+            )
+            .into()
+        }),
     }
 }
 

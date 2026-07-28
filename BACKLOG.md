@@ -37,40 +37,16 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-039 · `pick_turn` presents a fallback as a peak
-`status: next` · `tier: A` · `size: S` · `source: review`
-**Why:** `peak_turn` is `max_by_key(|t| t.prompt_tokens().unwrap_or(0))`. Where
-no turn in a session carries a usage record every key is zero, so it returns the
-last turn and `pick_turn` hands it back as "the session's largest" — a turn
-nobody chose, described as one that was measured. The error message naming this
-condition ("no turns with recorded token usage") fires only when there are *no
-turns at all*, so the one case it names is the one case it never catches.
-
-Surfaced by `ct diff`, which prints each side's total with its provenance and so
-showed a `[estimated]` total sitting under a defaulted turn. Latent rather than
-observed: all five affected sessions in the local corpus have exactly one turn,
-where "the peak" and "the only turn" coincide, so nothing has been mis-sized yet.
-Nothing prevents it either.
-
-**Done when:** a session whose turns carry no usage record is either refused by
-name, or has its defaulted turn stated as a fallback rather than as a peak.
-
-**Since filed, the exposure grew.** CT-022's fix to `TokenUsage::prompt_tokens`
-makes an all-zero `usage` object return `None`, so turns that used to key as a
-measured zero now key as an absent one. That is the correct reading, but it means
-more turns reach `unwrap_or(0)` than before — 27 across the corpus that did not
-previously. Still latent, and still no reason to leave it standing.
-
----
-
-## Todo
-
 ### CT-023 · Duplicate context detection
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+`status: next` · `tier: B` · `size: M` · `source: IDEAS.md §4`
 **Why:** agent retry loops re-inject identical file content, and it is invisible
 in a per-turn view.
 **Done when:** identical content appearing more than once in a turn's context is
 reported with its total cost.
+
+---
+
+## Todo
 
 ### CT-024 · Waste and low-entropy detection
 `status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
@@ -137,6 +113,63 @@ a small, exactly-measured case of the same defect.
 ---
 
 ## Done
+
+### CT-039 · `pick_turn` presents a fallback as a peak
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `peak_turn` ranked turns on `prompt_tokens().unwrap_or(0)`. Where no
+turn carries a usable size every key is zero, so `max_by_key` returned whichever
+turn came last and `pick_turn` handed it back as "the session's largest" — a turn
+nobody chose, described as one that was measured. The error message naming that
+condition fired only when there were *no turns at all*, so the one case it named
+was the one case it never caught.
+**Done when:** a session whose turns carry no usage record is either refused by
+name, or has its defaulted turn stated as a fallback rather than as a peak.
+
+**What building it taught. The severity in the original filing was wrong, and
+wrong because it was estimated rather than measured** — which is the finding
+worth keeping. This entry claimed "all five affected sessions in the local corpus
+have exactly one turn … nothing has been mis-sized yet". A sweep of all 775
+sessions found **256**, not five: subagent sidecar transcripts, which log a turn
+but no usable usage figures. Filing a severity is filing a claim, and this
+project's own standard is that claims get measured.
+
+**Nor was it latent.** CT-039 and the zero-usage defect were each analysed alone
+and each looked survivable; together they were not. `prompt_tokens()` returned
+`Some(0)`, `peak_turn` selected that turn, and calibration then scaled the
+estimates to fit an observed total of zero. The pre-fix output, captured before
+the change to confirm it rather than assume it:
+
+```
+Context at turn 1 - 0 [observed]
+  Developer instructions          0    0.0%  ····················  [estimated]
+  Tool definitions                0    0.0%  ····················  [estimated]
+  Calibration: estimates scaled by 0.00 to meet the observed total of 0.
+  The estimator ran inf% high, so the scaled figures consumed the whole …
+```
+
+An empty context, stated as **observed**, for a turn holding ~10,400 tokens. That
+is the exact failure the `TokenCount` sum type exists to make unrepresentable,
+and it got through because both inputs to it were individually well-typed. Two
+correct-looking parts composed into a false claim.
+
+**The fix was to have one implementation, not to fix the broken one.** "The peak"
+existed three times: here, in `diagnostics.rs`, and nowhere authoritative. The
+`diagnostics` copy already filtered on `prompt_tokens().is_some()` and was right;
+the public one was wrong. Adding the missing filter would have left three copies
+and scheduled the next divergence, so `peak_turn()` now lives in the domain next
+to `peak_prompt_tokens()` — which was always correct, being a `filter_map` — and
+both former implementations delegate to it. Ties resolve to the earliest turn, so
+a session that plateaus reports where the plateau began.
+
+**Refusing beat defaulting**, and the deciding argument was that nothing else in
+the codebase was willing to guess either: `Diagnostics.peak_turn` is already
+`Option`, and the renderer simply omits the line. A `Peak`/`Fallback` sum type
+was considered and rejected — every turn-selecting call site would have to match
+on it to decide whether to print a caveat, which is the same hazard as the
+estimator defaulting that `SessionCalibration::effective` was written to remove.
+The refusal names the way out (`pass --turn N`), and that path gives an honest
+`10,372 [estimated]` where the default previously gave `0 [observed]`.
 
 ### CT-022 · Context growth timeline
 `status: done` · `tier: B` · `size: S` · `source: plan`

@@ -194,6 +194,26 @@ impl AgentSession {
         self.turns.iter().filter_map(|t| t.prompt_tokens()).max()
     }
 
+    /// The turn that sent that prompt.
+    ///
+    /// `None` when *no* turn reported a usable size, which is a different
+    /// statement from "this session has no turns" and must stay that way. The
+    /// filter is the whole point: ranking on `prompt_tokens().unwrap_or(0)`
+    /// gives every unmeasured turn the same key, and `max_by_key` then returns
+    /// whichever happened to come last -- a turn nobody chose, handed back as
+    /// the largest. Callers that want a starting point regardless are free to
+    /// pick one, but they have to do it in the open.
+    ///
+    /// Ties keep the earliest turn, so a session that plateaus at its peak
+    /// reports where the plateau began rather than where it ended.
+    pub fn peak_turn(&self) -> Option<TurnNumber> {
+        self.turns
+            .iter()
+            .filter_map(|t| Some((t.prompt_tokens()?, t.number)))
+            .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+            .map(|(_, number)| number)
+    }
+
     /// Number of events this version of ContextTrace could not classify.
     pub fn unrecognised_total(&self) -> u32 {
         self.unrecognised
@@ -330,6 +350,36 @@ mod tests {
     fn empty_session_has_no_peak() {
         let s = session_with_turns(&[]);
         assert_eq!(s.peak_prompt_tokens(), None);
+        assert_eq!(s.peak_turn(), None);
         assert_eq!(s.total_output_tokens(), 0);
+    }
+
+    #[test]
+    fn peak_turn_is_the_turn_that_sent_the_peak_prompt() {
+        let s = session_with_turns(&[100, 90_000, 4_000]);
+        assert_eq!(s.peak_turn(), Some(TurnNumber::new(2).unwrap()));
+    }
+
+    #[test]
+    fn a_session_nobody_measured_has_no_peak_turn_rather_than_its_last_one() {
+        // Three real turns, none with a usable size. Ranking on
+        // `prompt_tokens().unwrap_or(0)` gives all three the same key and hands
+        // back turn 3 -- a turn nobody chose, described as the largest.
+        let s = session_with_turns(&[0, 0, 0]);
+        assert_eq!(s.turn_count(), 3, "the turns exist");
+        assert_eq!(s.peak_prompt_tokens(), None);
+        assert_eq!(
+            s.peak_turn(),
+            None,
+            "no turn was measured, so no turn is the largest"
+        );
+    }
+
+    #[test]
+    fn a_plateau_reports_where_it_began() {
+        // Ties keep the earliest turn: a session that sits at its ceiling for
+        // a while should point at the turn that got there.
+        let s = session_with_turns(&[500, 90_000, 90_000, 90_000]);
+        assert_eq!(s.peak_turn(), Some(TurnNumber::new(2).unwrap()));
     }
 }
