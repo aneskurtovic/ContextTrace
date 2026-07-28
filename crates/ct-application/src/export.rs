@@ -25,18 +25,20 @@
 //!
 //! *Content.* Item labels carry file paths, shell commands and search queries,
 //! because a size with no name is not analysable. Message and tool-output
-//! previews are excluded: an export is a file that leaves the agent's own
-//! directory, the brief asks for care exactly there, and redaction is not built
-//! yet (CT-025). Structure and sizes are what "analytical value" means here.
+//! previews are excluded. `ExportRedaction::Secrets` additionally replaces
+//! provider credentials in every exported string-bearing field without ever
+//! putting the matched value in a report.
 //!
 //! *Exact counting.* `--exact` is a per-turn opt-in; this sweeps every turn, so
 //! the cost would multiply by turn count. Item sizes are the calibrated
 //! estimates, and every one of them carries its confidence.
 
-use crate::AppError;
+use crate::secrets::{redact_source, redact_text};
+use crate::{AppError, ExportRedaction, ExportReport};
 use ct_domain::ports::TokenEstimator;
 use ct_domain::{AgentSession, ContextCategory, ContextSnapshot, TokenCount};
 use serde::Serialize;
+use std::borrow::Cow;
 
 /// The record shape this export promises.
 ///
@@ -56,13 +58,15 @@ pub enum ExportRecord<'a> {
     /// One header line, first.
     Session {
         schema: u32,
-        id: &'a str,
+        id: Cow<'a, str>,
         agent: &'a str,
-        path: &'a str,
-        project: Option<&'a str>,
-        model: Option<&'a str>,
+        path: Cow<'a, str>,
+        project: Option<Cow<'a, str>>,
+        model: Option<Cow<'a, str>>,
         turns: usize,
         events: usize,
+        /// Whether provider-shaped credentials were replaced in string fields.
+        redaction: &'static str,
         /// Which estimator produced every item size in this file.
         ///
         /// Not decoration. For Claude Code the CLI fits a characters-per-token
@@ -80,7 +84,7 @@ pub enum ExportRecord<'a> {
     /// One per turn, carrying the figures every item row must add up to.
     Turn {
         turn: u32,
-        model: Option<&'a str>,
+        model: Option<Cow<'a, str>>,
         /// The prompt size, and how it was arrived at.
         total_tokens: u32,
         total_confidence: &'static str,
@@ -103,11 +107,11 @@ pub enum ExportRecord<'a> {
     Item {
         turn: u32,
         /// `None` for the residual row, which has no line in any file.
-        id: Option<&'a str>,
+        id: Option<Cow<'a, str>>,
         category: String,
-        label: &'a str,
+        label: Cow<'a, str>,
         /// Where it came from, or `None` for the residual.
-        source: Option<&'a ct_domain::ContextSource>,
+        source: Option<Cow<'a, ct_domain::ContextSource>>,
         tokens: u32,
         confidence: &'static str,
         /// The pre-scaling figure, where the count was calibrated.
@@ -162,18 +166,25 @@ impl super::ContextTrace {
         resolved_path: &str,
         binding: usize,
         estimator: &dyn TokenEstimator,
+        redaction: ExportRedaction,
         mut emit: impl FnMut(&ExportRecord<'_>) -> Result<(), AppError>,
-    ) -> Result<(), AppError> {
+    ) -> Result<ExportReport, AppError> {
         let meta = session.metadata();
+        let mut redactor = ExportRedactor::new(redaction);
+        let id = redactor.text(session.id().as_str());
+        let path = redactor.text(resolved_path);
+        let project = meta.project.as_deref().map(|value| redactor.text(value));
+        let model = meta.model.as_deref().map(|value| redactor.text(value));
         emit(&ExportRecord::Session {
             schema: SCHEMA_VERSION,
-            id: session.id().as_str(),
+            id,
             agent: session.agent().label(),
-            path: resolved_path,
-            project: meta.project.as_deref(),
-            model: meta.model.as_deref(),
+            path,
+            project,
+            model,
             turns: session.turn_count(),
             events: session.events().len(),
+            redaction: redaction.label(),
             estimator: estimator.name(),
             fidelity: session.fidelity(),
         })?;
@@ -182,15 +193,18 @@ impl super::ContextTrace {
             let Ok(snapshot) = self.snapshot_with(session, binding, turn.number, estimator) else {
                 continue;
             };
-            emit_turn(&snapshot, &mut emit)?;
+            emit_turn(&snapshot, &mut redactor, &mut emit)?;
         }
 
-        Ok(())
+        Ok(ExportReport {
+            redactions: redactor.redactions,
+        })
     }
 }
 
 fn emit_turn(
     snapshot: &ContextSnapshot,
+    redactor: &mut ExportRedactor,
     emit: &mut impl FnMut(&ExportRecord<'_>) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     let turn = snapshot.turn().get();
@@ -200,9 +214,10 @@ fn emit_turn(
         .map(|i| i.tokens.tokens())
         .fold(0u32, u32::saturating_add);
 
+    let model = snapshot.model().map(|value| redactor.text(value));
     emit(&ExportRecord::Turn {
         turn,
-        model: snapshot.model(),
+        model,
         total_tokens: snapshot.total().tokens(),
         total_confidence: confidence_name(snapshot.total().confidence()),
         accounted_tokens: accounted,
@@ -214,12 +229,15 @@ fn emit_turn(
     })?;
 
     for item in snapshot.items() {
+        let id = redactor.text(item.id.as_str());
+        let label = redactor.text(&item.label);
+        let source = redactor.source(&item.source);
         emit(&ExportRecord::Item {
             turn,
-            id: Some(item.id.as_str()),
+            id: Some(id),
             category: item.category.slug(),
-            label: &item.label,
-            source: Some(&item.source),
+            label,
+            source: Some(source),
             tokens: item.tokens.tokens(),
             confidence: confidence_name(item.confidence()),
             raw_estimate: raw_estimate_of(item.tokens),
@@ -235,7 +253,7 @@ fn emit_turn(
         turn,
         id: None,
         category: ContextCategory::Unattributed.slug(),
-        label: ContextCategory::Unattributed.label(),
+        label: Cow::Borrowed(ContextCategory::Unattributed.label()),
         source: None,
         tokens: snapshot.residual(),
         // The remainder is a fitted difference, never a measurement, whatever
@@ -245,6 +263,41 @@ fn emit_turn(
         first_seen_turn: None,
         line_no: None,
     })
+}
+
+struct ExportRedactor {
+    mode: ExportRedaction,
+    redactions: usize,
+}
+
+impl ExportRedactor {
+    fn new(mode: ExportRedaction) -> Self {
+        Self {
+            mode,
+            redactions: 0,
+        }
+    }
+
+    fn text<'a>(&mut self, value: &'a str) -> Cow<'a, str> {
+        if self.mode == ExportRedaction::None {
+            return Cow::Borrowed(value);
+        }
+        let (redacted, count) = redact_text(value);
+        self.redactions += count;
+        redacted
+    }
+
+    fn source<'a>(
+        &mut self,
+        value: &'a ct_domain::ContextSource,
+    ) -> Cow<'a, ct_domain::ContextSource> {
+        if self.mode == ExportRedaction::None {
+            return Cow::Borrowed(value);
+        }
+        let (redacted, count) = redact_source(value);
+        self.redactions += count;
+        redacted
+    }
 }
 
 #[cfg(test)]
@@ -287,10 +340,14 @@ mod tests {
         .expect("the snapshot must balance");
 
         let mut out = Vec::new();
-        emit_turn(&snapshot, &mut |record| {
-            out.push(serde_json::to_value(record).unwrap());
-            Ok(())
-        })
+        emit_turn(
+            &snapshot,
+            &mut ExportRedactor::new(ExportRedaction::None),
+            &mut |record| {
+                out.push(serde_json::to_value(record).unwrap());
+                Ok(())
+            },
+        )
         .unwrap();
         out
     }
@@ -375,14 +432,53 @@ mod tests {
 
     #[test]
     fn previews_never_reach_the_export() {
-        // An export is a file that leaves the agent's directory, and redaction
-        // is not built yet (CT-025). Labels carry paths and commands because a
-        // size with no name is not analysable; conversation content does not.
+        // Labels carry paths and commands because a size with no name is
+        // not analysable; conversation content does not.
         let rows = records(vec![item("a", TokenCount::estimated(1000))], 1000, 0);
         let text = serde_json::to_string(&rows).unwrap();
         assert!(
             !text.contains("must not reach the export"),
             "no message or tool-output preview may be serialised"
         );
+    }
+
+    #[test]
+    fn optional_redaction_covers_labels_and_structured_sources() {
+        let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB";
+        let mut sensitive = item(
+            &format!("shell --token {secret}"),
+            TokenCount::estimated(1000),
+        );
+        sensitive.source = ContextSource::FileRead {
+            path: format!("C:\\checkout\\{secret}\\config"),
+        };
+        let snapshot = ContextSnapshot::assemble(
+            SessionId::new("s").unwrap(),
+            AgentKind::Codex,
+            TurnNumber::FIRST,
+            Some(format!("proxy-{secret}")),
+            vec![sensitive],
+            TokenCount::observed(1000),
+            0,
+            Some(258_400),
+            None,
+        )
+        .unwrap();
+        let mut records = Vec::new();
+        let mut redactor = ExportRedactor::new(ExportRedaction::Secrets);
+        emit_turn(&snapshot, &mut redactor, &mut |record| {
+            records.push(serde_json::to_value(record).unwrap());
+            Ok(())
+        })
+        .unwrap();
+
+        let text = serde_json::to_string(&records).unwrap();
+        assert!(!text.contains(secret));
+        assert_eq!(
+            text.matches("[REDACTED:github-token]").count(),
+            4,
+            "the turn model, item id, label and source path are all export surfaces"
+        );
+        assert_eq!(redactor.redactions, 4);
     }
 }
