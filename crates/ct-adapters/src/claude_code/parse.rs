@@ -14,28 +14,67 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
+/// How much of a file to read while deciding what it is.
+///
+/// A budget, not a structural claim. Refusing to read an unbounded prelude
+/// protects against a corrupt file with no newlines at all, and every real
+/// session answers both questions below within a few kilobytes.
+const PRELUDE_BYTES: u64 = 1024 * 1024;
+
 #[derive(Default)]
 pub struct Header {
     pub cwd: Option<String>,
     pub timestamp: Option<DateTime<Utc>>,
+    /// Whether any line in the prelude carries a `uuid`.
+    ///
+    /// The test for "is this a session transcript at all". A Claude Code
+    /// session is a DAG of `uuid`-keyed events, so a file with no `uuid`
+    /// anywhere has no node the ancestor walk could start from — discovery
+    /// offering it would be offering a file the adapter cannot use.
+    pub has_conversation: bool,
 }
 
-/// Read enough of the first line to describe the session.
+/// Read enough of a file's prelude to describe it, and to tell whether it is a
+/// session at all.
+///
+/// Not a first-line read, because 90 of 711 local sessions open with a sidecar
+/// line — `last-prompt`, `mode`, `queue-operation`, `ai-title` — that carries no
+/// `uuid`. Judging by the first line alone would discard all of them. The first
+/// `uuid`-bearing line sits at depth 1 in the median case and 10 at the worst
+/// observed, while the four files that are not sessions have none at any depth.
 pub fn read_header(path: &Path) -> PortResult<Header> {
     let file = File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
-    let mut line = String::new();
-    let mut reader = BufReader::new(file.take(1024 * 1024));
-    reader
-        .read_line(&mut line)
-        .map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
+    let mut reader = BufReader::new(file.take(PRELUDE_BYTES));
+    let io = |e: std::io::Error| PortError::Io(format!("{}: {e}", path.display()));
 
-    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
-        return Ok(Header::default());
-    };
+    // Descriptor metadata still comes from the first line only, unchanged: the
+    // directory slug is the established fallback where it is absent.
+    let mut first = String::new();
+    let mut consumed = reader.read_line(&mut first).map_err(io)? as u64;
+    let head = serde_json::from_str::<Value>(first.trim()).ok();
+
+    let mut has_conversation = head.as_ref().is_some_and(|v| v.get("uuid").is_some());
+    let mut line = String::new();
+    while !has_conversation {
+        line.clear();
+        match reader.read_line(&mut line).map_err(io)? {
+            0 => break,
+            n => consumed += n as u64,
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
+            has_conversation = value.get("uuid").is_some();
+        }
+    }
 
     Ok(Header {
-        cwd: str_field(&value, "cwd"),
-        timestamp: parse_time(value.get("timestamp")),
+        cwd: head.as_ref().and_then(|v| str_field(v, "cwd")),
+        timestamp: head.as_ref().and_then(|v| parse_time(v.get("timestamp"))),
+        // Exhausting the budget establishes nothing, so it fails open. Only a
+        // file read to its end without a `uuid` is *known* not to be a
+        // transcript; one whose first megabyte is a single enormous pasted
+        // message is merely unread, and discarding it would be a worse error
+        // than keeping the four journals.
+        has_conversation: has_conversation || consumed >= PRELUDE_BYTES,
     })
 }
 

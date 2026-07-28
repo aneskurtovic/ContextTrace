@@ -157,6 +157,21 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
 
     let header = parse::read_header(path)?;
 
+    // Not every `.jsonl` under `~/.claude/projects` is a conversation. Workflow
+    // bookkeeping lives at `subagents/workflows/<id>/journal.jsonl` and holds
+    // `{"type":"started"|"result"}` lines, which made `ct sessions` list four
+    // entries called `journal` and `ct doctor --dir` report 466 unrecognised
+    // events. The rule is stated from what a session *is* rather than from that
+    // filename: no `uuid` anywhere means no node for the ancestor walk to start
+    // from. Excluding by name would also have been wrong the other way — the
+    // 625 local `agent-<hex>.jsonl` subagent transcripts are real sessions.
+    if !header.has_conversation {
+        return Err(PortError::Malformed {
+            path: path.display().to_string(),
+            detail: "no line carries a `uuid`, so this is not a session transcript".into(),
+        });
+    }
+
     let project = header.cwd.clone().or_else(|| {
         path.parent()
             .and_then(|p| p.file_name())
@@ -199,6 +214,69 @@ fn unslug(slug: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn temp_session(name: &str, contents: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("ct-discovery-{name}.jsonl"));
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(contents.as_bytes())
+            .unwrap();
+        path
+    }
+
+    #[test]
+    fn a_workflow_journal_is_not_a_session() {
+        // The four local `subagents/workflows/<id>/journal.jsonl` files, which
+        // put 466 unrecognised events into the drift sweep and four entries
+        // called `journal` into `ct sessions`.
+        let path = temp_session(
+            "journal",
+            "{\"type\":\"started\",\"key\":\"v2:abc\",\"agentId\":\"a1\"}\n\
+             {\"type\":\"result\",\"key\":\"v2:abc\"}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            matches!(described, Err(PortError::Malformed { .. })),
+            "a file with no uuid anywhere has no node for the walk to start from"
+        );
+    }
+
+    #[test]
+    fn a_session_opening_with_sidecar_lines_is_still_a_session() {
+        // The regression the obvious rule would have caused: 90 of 711 local
+        // sessions open with a line that carries no `uuid`, and judging by the
+        // first line alone would have discarded every one of them.
+        let path = temp_session(
+            "sidecars",
+            "{\"type\":\"last-prompt\",\"prompt\":\"hi\"}\n\
+             {\"type\":\"mode\",\"mode\":\"default\"}\n\
+             {\"type\":\"ai-title\",\"title\":\"x\"}\n\
+             {\"type\":\"user\",\"uuid\":\"u1\",\"parentUuid\":null,\"cwd\":\"C:\\\\src\"}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(described.is_ok(), "got {described:?}");
+    }
+
+    #[test]
+    fn a_subagent_transcript_is_a_session_despite_its_name() {
+        // 625 of the 711 local Claude Code sessions are named `agent-<hex>`,
+        // so any rule keyed on a UUID filename would have discarded most of
+        // the corpus while fixing four files.
+        let path = temp_session(
+            "agent-a0ba077117b8bf6b2",
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"parentUuid\":null}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(described.is_ok(), "got {described:?}");
+    }
 
     #[test]
     fn unslugs_windows_project_directories() {

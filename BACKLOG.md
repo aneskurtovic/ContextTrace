@@ -155,9 +155,9 @@ being asked about, in both directions, with fixture coverage. ✔
 
 ## Next
 
-### CT-038 · `journal.jsonl` is discovered as a Claude Code session
-`status: next` · `tier: A` · `size: S` · `source: CT-019`
-Found by the first `ct doctor --dir` run; the entry is under **Todo** below.
+### CT-020 · `--format ndjson` export
+`status: next` · `tier: B` · `size: S` · `source: IDEAS.md §2`
+The entry is under **Todo** below, where its reasoning already sits.
 
 ---
 
@@ -427,22 +427,44 @@ the model read are not in the log, so they are real context that lands in the
 unattributed remainder. Saying more than that would be guessing at how the
 harness replays them.
 
+### CT-038 · `journal.jsonl` is discovered as a Claude Code session
+`status: done` · `tier: A` · `size: S` · `source: CT-019`
+**Why:** found by the first `ct doctor --dir` run — 466 unrecognised events
+across 4 files. `subagents/workflows/<id>/journal.jsonl` is workflow bookkeeping
+(`{"type":"started"|"result"}`), not a conversation, and discovering it meant
+`ct sessions` listed four entries called `journal`.
+**Done when:** the file is not discovered as a session, by a rule stated from
+what the format actually is rather than fitted to one filename. ✔ The full sweep
+is now 770 sessions, 126,130 events, **100% fidelity**, exit 0.
+
+**Two obvious rules were wrong, and measuring caught both before either shipped.**
+
+*Require a UUID filename.* Would have discarded 625 of the 711 local Claude Code
+sessions: subagent transcripts are named `agent-<hex>.jsonl` and are real
+sessions worth inspecting.
+
+*Require a `uuid` on the first line.* Would have discarded 90, because that many
+sessions open with a sidecar line — `last-prompt`, `mode`, `queue-operation`,
+`ai-title` — carrying no `uuid`.
+
+**The rule that survives is stated from what a session is.** Claude Code
+reconstruction is an ancestor walk over `uuid`-keyed events, so a file with no
+`uuid` *anywhere* has no node the walk could start from — discovery offering it
+would be offering a file the adapter cannot use. Measured: the first
+`uuid`-bearing line sits at depth 1 in the median case and 10 at the worst
+observed across 707 sessions, while the four journals have none at any depth.
+The separation is not marginal.
+
+**It fails open on exhaustion, which is the part worth keeping.** The prelude
+scan is capped at 1 MiB, and hitting that cap establishes nothing — a session
+whose first line is one enormous pasted message is merely unread, not disproved.
+Only a file read to its end without a `uuid` is *known* not to be a transcript.
+Discarding a real session would be a worse error than keeping four journals, so
+the uncertain case keeps the file.
+
 ---
 
 ## Todo
-
-### CT-038 · `journal.jsonl` is discovered as a Claude Code session
-`status: next` · `tier: A` · `size: S` · `source: CT-019`
-**Why:** also found by the first `ct doctor --dir` run — 466 unrecognised events
-across 4 files. `subagents/workflows/<id>/journal.jsonl` is workflow bookkeeping
-(`{"type":"started"|"result"}`), not a conversation, and discovering it means
-`ct sessions` lists four entries called `journal`.
-**The obvious fix is wrong, which is why this is an entry and not a one-liner.**
-Requiring a UUID filename would drop 625 of the 711 local Claude Code sessions:
-subagent transcripts are named `agent-<hex>.jsonl` and *are* real sessions worth
-inspecting. The rule has to exclude the journal without excluding those.
-**Done when:** the file is not discovered as a session, by a rule stated from
-what the format actually is rather than fitted to one filename.
 
 ### CT-020 · `--format ndjson` export
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §2`

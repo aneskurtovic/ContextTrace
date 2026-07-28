@@ -22,10 +22,10 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 > zero failures** and 100% event-recognition fidelity, reported totals match the
 > raw JSONL, and a before/after mtime check confirms nothing is written.
 >
-> Sweeping *all* 774 rather than the largest 150 gives **99.60%** — three event
-> types this build does not yet parse, found by `ct doctor --dir` and filed as
-> [BACKLOG.md](BACKLOG.md) CT-037 and CT-038. Both figures are real; they measure
-> different sets, and the lower one is the honest headline. Most Claude Code
+> A full sweep of all 770 — not just the largest 150 — reports **100%
+> event-recognition fidelity** in 2.8 seconds. It did not at first: it found
+> three unrecognised types, which is what `ct doctor --dir` exists for, and both
+> underlying defects are now fixed (CT-037, CT-038). Most Claude Code
 > sessions now report a *measured* figure for the context their agent never
 > logged. See [Current state](#current-state).
 
@@ -292,13 +292,13 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 97 tests |
+| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 100 tests |
 | `ct-application` — use cases, diagnostics, drift sweep, item lifecycle | Implemented, 37 tests |
 | `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`trace`/`residual`/`doctor` | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-220 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+223 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -335,7 +335,7 @@ being attributed. `ct doctor --dir` parses every discovered session and reports
 what was not understood, exiting non-zero if anything was:
 
 ```
-$ ct doctor --dir
+$ ct doctor --dir          # the first run, before CT-037 and CT-038
 Format drift sweep
 
 Sessions   774 scanned
@@ -369,22 +369,33 @@ each file's agent is known from its descriptor. Detecting an agent from a file's
 contents would mean inventing a rule, and a misdetected file reports as
 wholesale drift — the loudest possible way for a guess to be wrong.
 
-The output above is the real first run, and both findings were real. Codex
-`web_search_call` items were unparsed — now fixed (CT-037), and `ct doctor
---dir ~/.codex` recognises every event type in all 63 local sessions.
-`journal.jsonl`, workflow bookkeeping under `subagents/workflows/`, is still
-being discovered as a session ([BACKLOG.md](BACKLOG.md) CT-038).
+That is the real first run, and both findings were real. The sweep now reports
+`Recognised every event type in every session` across 770 sessions and 126,130
+events, because both were fixed:
 
-The fix is worth a line because of what it did *not* need. A web search carries
-no tool name and no arguments — what it did lives in `action`, either
-`{type: "search", query}` or `{type: "open_page", url}`. The shared key list
-that names tool targets already ranks `url` above `query`, so both shapes named
-themselves with no new per-tool knowledge:
+**Codex `web_search_call` was unparsed** (CT-037) — 38 real API items that
+occupied context. The fix is worth a line for what it did *not* need. A web
+search carries no tool name and no arguments; what it did lives in `action`,
+either `{type: "search", query}` or `{type: "open_page", url}`. The shared key
+list that names tool targets already ranks `url` above `query`, so both shapes
+named themselves with no new per-tool knowledge:
 
 ```
    100    0.2%  Tool calls   web_search site:help.instagram.…conds Instagram best practices
                 codex:70  from tool: web_search [estimated]
 ```
+
+**`journal.jsonl` was being discovered as a session** (CT-038) — workflow
+bookkeeping under `subagents/workflows/`, which also put four entries called
+`journal` into `ct sessions`. Two obvious rules were wrong, and measuring caught
+both: requiring a UUID filename would have discarded 625 of 711 sessions, since
+subagent transcripts are named `agent-<hex>.jsonl`; requiring a `uuid` on the
+first line would have discarded 90, since that many sessions open with a
+`last-prompt` or `mode` sidecar. The rule that survives is stated from what a
+session *is* — reconstruction is an ancestor walk over `uuid`-keyed events, so a
+file with no `uuid` anywhere has no node the walk could start from. It fails
+open when the 1 MiB prelude budget runs out, because discarding a real session
+is a worse error than keeping four journals.
 
 ### Filtering without lying about the whole
 
