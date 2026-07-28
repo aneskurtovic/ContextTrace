@@ -6,8 +6,8 @@ use crate::format::{
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    AppError, Comparability, ContextTrace, Departure, Diagnostics, DriftReport, ItemLifecycle,
-    ResidualPoint, ResolvedSession, SessionDiff,
+    AppError, Comparability, ContextTrace, Departure, Diagnostics, DriftReport, GrowthTimeline,
+    ItemLifecycle, ResidualPoint, ResolvedSession, SessionDiff,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -1121,6 +1121,179 @@ fn system_prompt_is_itemised(snapshot: &ct_domain::ContextSnapshot) -> bool {
 /// A broken pipe ends the export quietly. `ct export <id> | head` is the first
 /// thing anyone tries, and it must not print an error for working exactly as
 /// asked.
+/// Prompt size across the session, as a sparkline.
+///
+/// Every figure here is the agent's own usage record. Nothing is reconstructed,
+/// estimated or calibrated, which is why this view carries no confidence tags:
+/// there is no guess in it to label.
+pub fn growth(timeline: &GrowthTimeline, session: &AgentSession, width: usize, json: bool) {
+    if json {
+        #[derive(serde::Serialize)]
+        struct Report<'a> {
+            #[serde(flatten)]
+            timeline: &'a GrowthTimeline,
+            measured_turns: usize,
+            gap_turns: usize,
+            peak_turn: Option<u32>,
+            peak_tokens: Option<u32>,
+            largest_jumps: Vec<ct_application::Jump>,
+        }
+        let peak = timeline.peak();
+        print_json(&Report {
+            timeline,
+            measured_turns: timeline.measured(),
+            gap_turns: timeline.gaps(),
+            peak_turn: peak.map(|(turn, _)| turn),
+            peak_tokens: peak.map(|(_, tokens)| tokens),
+            largest_jumps: timeline.largest_jumps(5),
+        });
+        return;
+    }
+
+    println!(
+        "Context growth  {}  {}",
+        session.id(),
+        session.agent().label()
+    );
+
+    if timeline.points.is_empty() {
+        println!("\n  No turns in that range.");
+        return;
+    }
+
+    let gaps = timeline.gaps();
+    println!(
+        "  Turns      {}{}",
+        thousands(timeline.points.len() as u64),
+        match gaps {
+            0 => String::new(),
+            // Named rather than quietly excluded: these turns are on the chart
+            // as blanks, and a reader counting bars would otherwise come up
+            // short with no explanation.
+            n => format!(
+                ", {n} of which the agent recorded no size for and are drawn as gaps"
+            ),
+        }
+    );
+
+    match timeline.peak() {
+        Some((turn, tokens)) => {
+            let share = timeline
+                .peak_utilisation()
+                .map(|u| {
+                    format!(
+                        " ({} of a {} window)",
+                        percent(u),
+                        thousands(timeline.context_window.unwrap_or(0))
+                    )
+                })
+                .unwrap_or_default();
+            println!("  Peak       {} tokens at turn {turn}{share}", thousands(tokens));
+        }
+        None => println!("  Peak       not known -- no turn in this range recorded its size"),
+    }
+
+    sparkline(timeline, width);
+    jumps_table(timeline);
+}
+
+/// The chart itself, plus the two lines that say what it means.
+fn sparkline(timeline: &GrowthTimeline, width: usize) {
+    const LEVELS: [char; 8] = ['\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}'];
+    /// A turn whose size the agent never recorded. Deliberately not the shortest
+    /// bar: the shortest bar is a small prompt, and this is not a prompt size.
+    const GAP: char = '\u{00b7}';
+
+    let buckets = timeline.buckets(width);
+    let Some((_, peak)) = timeline.peak() else {
+        return;
+    };
+
+    let bars: String = buckets
+        .iter()
+        .map(|bucket| match bucket.peak {
+            // Scaled against a zero baseline, so bar height is proportional to
+            // tokens. Scaling from the minimum instead would turn a session
+            // that grew 5% into one that appears to have grown tenfold.
+            Some(tokens) => {
+                let level = ((tokens as f32 / peak.max(1) as f32) * LEVELS.len() as f32).ceil();
+                LEVELS[(level as usize).clamp(1, LEVELS.len()) - 1]
+            }
+            None => GAP,
+        })
+        .collect();
+
+    let marks: String = buckets
+        .iter()
+        .map(|b| if b.compactions > 0 { 'c' } else { ' ' })
+        .collect();
+
+    println!("\n  {bars}");
+    if timeline.compactions() > 0 {
+        println!("  {}", marks.trim_end());
+    }
+
+    let per_column = timeline.turns_per_column(width);
+    let first = timeline.points[0].turn;
+    let last = timeline.points[timeline.points.len() - 1].turn;
+    let axis = format!("turn {first}");
+    let end = format!("turn {last}");
+    println!(
+        "  {}{}",
+        pad(&axis, buckets.len().saturating_sub(end.chars().count()).max(1)),
+        end
+    );
+
+    println!();
+    if per_column == 1 {
+        println!("  One column per turn. Bar height is the prompt size against a zero baseline.");
+    } else {
+        // Stated because it changes what the chart can be read to mean: a fall
+        // inside a column is invisible, and the compaction marks are the only
+        // reason the biggest of those falls is not lost with it.
+        println!(
+            "  Each column is {per_column} turns, drawn at the largest prompt among them\n  \
+             against a zero baseline. A fall within a column does not show."
+        );
+    }
+    match timeline.compactions() {
+        0 => {}
+        n => println!("  'c' marks a column containing a compaction; there are {n}."),
+    }
+    if timeline.unplaced_compactions > 0 {
+        println!(
+            "  {} further compaction(s) happened but name no turn, so they are not on\n  \
+             the chart. A fall with no 'c' under it may be one of them.",
+            timeline.unplaced_compactions
+        );
+    }
+}
+
+fn jumps_table(timeline: &GrowthTimeline) {
+    let jumps = timeline.largest_jumps(5);
+    if jumps.is_empty() {
+        return;
+    }
+
+    println!("\nLargest changes");
+    for jump in &jumps {
+        // A skipped turn means the change happened somewhere across a stretch
+        // the agent did not record, so naming this turn as the cause would
+        // assert more than the log supports.
+        let across = match jump.skipped {
+            0 => String::new(),
+            n => format!("  (across {} unrecorded turn(s))", n),
+        };
+        println!(
+            "  turn {}  {}  {} -> {}{across}",
+            pad(&jump.turn.to_string(), 6),
+            rpad(&signed(jump.growth()), 10),
+            thousands(jump.from),
+            thousands(jump.to),
+        );
+    }
+}
+
 /// Two turns side by side.
 ///
 /// The layout follows the honesty gradient rather than the interest gradient:

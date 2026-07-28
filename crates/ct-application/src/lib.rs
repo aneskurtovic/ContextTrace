@@ -10,6 +10,7 @@
 pub mod diagnostics;
 pub mod diff;
 pub mod export;
+pub mod growth;
 pub mod lifecycle;
 
 use ct_domain::ports::{AgentAdapter, ExactRecount, PortError, RawEventSource, TokenEstimator};
@@ -26,6 +27,7 @@ pub use diff::{
     compare, CategoryDelta, Comparability, Instrument, SessionDiff, Side, SideSummary, ToolDelta,
 };
 pub use export::{ExportRecord, SCHEMA_VERSION};
+pub use growth::{timeline, Bucket, CompactionAt, GrowthPoint, GrowthTimeline, Jump};
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 

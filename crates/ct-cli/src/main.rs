@@ -122,6 +122,28 @@ enum Command {
         json: bool,
     },
 
+    /// Chart prompt size across the session, with compactions marked
+    ///
+    /// The cheapest view here: every figure is the agent's own usage record,
+    /// read straight off the parsed turns. Nothing is reconstructed, so this
+    /// answers "when did this session get big" without paying for `ct residual`,
+    /// which reconstructs every turn to answer what was in it.
+    Growth {
+        id: String,
+        /// First turn to chart (1-based)
+        #[arg(long)]
+        from: Option<u32>,
+        /// Last turn to chart (1-based)
+        #[arg(long)]
+        to: Option<u32>,
+        /// Columns in the chart. A session longer than this is bucketed, and
+        /// the chart says by how much.
+        #[arg(long, default_value_t = 60)]
+        width: usize,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Track the context the agent never logged, turn by turn
     ///
     /// The system prompt and tool schemas do not change while a session runs, so
@@ -500,6 +522,18 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 });
 
             render::trace(&life, size.as_ref(), session.agent(), json);
+        }
+
+        Command::Growth {
+            id,
+            from,
+            to,
+            width,
+            json,
+        } => {
+            let (session, _) = app.load(&id)?;
+            let timeline = ct_application::timeline(&session).range(from, to);
+            render::growth(&timeline, &session, width, json);
         }
 
         Command::Residual {
