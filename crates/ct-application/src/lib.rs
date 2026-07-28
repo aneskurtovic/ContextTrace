@@ -10,7 +10,7 @@
 pub mod diagnostics;
 pub mod lifecycle;
 
-use ct_domain::ports::{AgentAdapter, PortError, TokenEstimator};
+use ct_domain::ports::{AgentAdapter, ExactRecount, PortError, RawEventSource, TokenEstimator};
 use ct_domain::services::ratio::{self, DerivedRatio, TurnSample};
 use ct_domain::services::TokenCalibrator;
 use ct_domain::{
@@ -243,6 +243,64 @@ impl ContextTrace {
 
         TokenCalibrator::calibrate(reconstructed, session.id().clone(), session.agent(), turn)
             .map_err(|e| AppError::Calibration(e.to_string()))
+    }
+
+    /// As [`ContextTrace::snapshot`], but measuring each item instead of
+    /// estimating it, where the agent allows that.
+    pub fn snapshot_exact(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        turn: TurnNumber,
+        raw: &dyn RawEventSource,
+    ) -> Result<(ContextSnapshot, ExactRecount), AppError> {
+        let estimator = self.bindings[binding].estimator.as_ref();
+        self.snapshot_exact_with(session, binding, turn, estimator, raw)
+    }
+
+    /// As [`ContextTrace::snapshot_with`], but measuring each item instead of
+    /// estimating it, where the agent allows that.
+    ///
+    /// Costs one seek, one JSON parse and one tokenizer pass per context item,
+    /// which is why it is a separate use case rather than the default. The
+    /// [`ExactRecount`] comes back beside the snapshot because how much was
+    /// actually measured is part of the answer -- an exact view in which most
+    /// items stayed estimated is a different claim from one in which they did
+    /// not, and the caller must be able to say which it has.
+    ///
+    /// Returns [`PortError::Unsupported`] through [`AppError`] for an agent
+    /// that cannot do this, rather than silently returning estimates.
+    ///
+    /// Calibration afterwards is unchanged and needs no special case: its first
+    /// rule is already that measured counts are never rescaled, so exact items
+    /// keep their values and the slack becomes residual. That is the point of
+    /// the whole exercise -- for Codex, whose system prompt *is* logged, the
+    /// remainder stops being "unlogged context plus our estimation error" and
+    /// becomes just the first.
+    pub fn snapshot_exact_with(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        turn: TurnNumber,
+        estimator: &dyn TokenEstimator,
+        raw: &dyn RawEventSource,
+    ) -> Result<(ContextSnapshot, ExactRecount), AppError> {
+        if session.turn(turn).is_none() {
+            return Err(AppError::TurnOutOfRange {
+                requested: turn.get(),
+                available: session.turn_count(),
+            });
+        }
+
+        let adapter = &self.bindings[binding].adapter;
+        let mut reconstructed = adapter.reconstruct(session, turn, estimator)?;
+        let report = adapter.recount_exact(session, &mut reconstructed.items, raw, estimator)?;
+
+        let snapshot =
+            TokenCalibrator::calibrate(reconstructed, session.id().clone(), session.agent(), turn)
+                .map_err(|e| AppError::Calibration(e.to_string()))?;
+
+        Ok((snapshot, report))
     }
 
     /// Per-turn history of what the log could and could not account for.

@@ -53,14 +53,19 @@ pub type PortResult<T> = Result<T, PortError>;
 
 /// What an adapter reconstructed for one turn, before the domain balances it.
 ///
-/// Items carry whatever counts the adapter could honestly produce. Today that
-/// is `Estimated` for both agents: adapters size items from the character count
-/// recorded at parse time, via [`TokenEstimator::estimate_from_chars`], because
-/// counting exactly would mean re-reading and re-parsing every line of a session
-/// that can reach 55 MB. Codex *could* be exact -- `tiktoken` applies to
-/// GPT-family models and [`TokenEstimator::count_text`] implements it -- but
-/// nothing calls that path, and the docs must say what the code does rather than
-/// what the design allows.
+/// Items carry whatever counts the adapter could honestly produce. By default
+/// that is `Estimated` for both agents: adapters size items from the character
+/// count recorded at parse time, via [`TokenEstimator::estimate_from_chars`],
+/// because counting exactly would mean re-reading and re-parsing the lines
+/// behind them in a session that can reach 55 MB.
+///
+/// Codex can do better on request, because `tiktoken` applies to GPT-family
+/// models: [`AgentAdapter::recount_exact`] re-reads each item and measures it
+/// with [`TokenEstimator::count_text`]. That is opt-in, not the default, and it
+/// covers only items whose payload is entirely model-visible text. Claude Code
+/// refuses it outright, which is the honest answer rather than a missing
+/// feature -- Anthropic ships no local tokenizer, so re-reading would buy a
+/// slower estimate and nothing else.
 ///
 /// The adapter does *not* decide the headline total or the residual.
 #[derive(Debug, Clone)]
@@ -105,6 +110,57 @@ pub trait AgentAdapter: Send + Sync {
         turn: TurnNumber,
         estimator: &dyn TokenEstimator,
     ) -> PortResult<ReconstructedContext>;
+
+    /// Re-count items by re-reading and re-tokenizing their source lines.
+    ///
+    /// The opt-in half of the trade-off described on [`ReconstructedContext`]:
+    /// the default path sizes items from character counts recorded at parse
+    /// time, and this buys accuracy back at the cost of a seek, a parse and a
+    /// tokenizer pass per item.
+    ///
+    /// Refusing is the default, and it is the *correct* answer for an agent
+    /// whose models ship no public tokenizer -- re-reading the text would only
+    /// produce a more expensive estimate. Encoding that as
+    /// [`PortError::Unsupported`] rather than a note in the docs means a caller
+    /// asking for exactness is told it is unavailable instead of being handed
+    /// estimates that look like measurements.
+    fn recount_exact(
+        &self,
+        _session: &AgentSession,
+        _items: &mut [ContextItem],
+        _raw: &dyn RawEventSource,
+        _estimator: &dyn TokenEstimator,
+    ) -> PortResult<ExactRecount> {
+        Err(PortError::Unsupported(format!(
+            "exact token counting for {}: its models ship no public tokenizer, \
+             so re-reading the text would yield a slower estimate, not a measurement",
+            self.agent()
+        )))
+    }
+}
+
+/// What an exact recount managed to measure.
+///
+/// Reported rather than summarised into a boolean because partial success is
+/// the normal outcome: an item is only exactly countable when every part of its
+/// payload is text the tokenizer applies to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ExactRecount {
+    /// Items now carrying a real tokenizer's count.
+    pub counted: usize,
+    /// Items left estimated because their payload is not all model-visible
+    /// text -- opaque reasoning blobs, inline image data, structured tool
+    /// output.
+    pub opaque: usize,
+    /// Items left estimated because their source line could not be re-read or
+    /// re-parsed.
+    pub unavailable: usize,
+}
+
+impl ExactRecount {
+    pub fn total(&self) -> usize {
+        self.counted + self.opaque + self.unavailable
+    }
 }
 
 /// A driven port: counting tokens.

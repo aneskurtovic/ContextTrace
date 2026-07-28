@@ -9,10 +9,11 @@ use ct_application::{
     ContextTrace, Departure, Diagnostics, ItemLifecycle, ResidualPoint, ResolvedSession,
 };
 use ct_domain::model::event::EventKind;
-use ct_domain::ports::RawEventSource;
+use ct_domain::ports::{ExactRecount, RawEventSource};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
-    AgentKind, AgentSession, Contributor, FilteredView, SessionDescriptor, TokenCount,
+    AgentKind, AgentSession, ContextSnapshot, Contributor, FilteredView, SessionDescriptor,
+    TokenCount,
 };
 
 pub fn roots(app: &ContextTrace) {
@@ -189,10 +190,58 @@ fn describe_kind(event: &ct_domain::Event) -> String {
     }
 }
 
+/// What an `--exact` run actually managed to measure.
+///
+/// Printed rather than implied, because "exact" is a claim about the numbers
+/// underneath it and a partial recount does not support the whole claim.
+///
+/// The over-count case is the one that would otherwise bite. The calibrator's
+/// standing rule is that measurements exceeding the observed total have been
+/// disproved by it, so it rescales them and relabels them `Calibrated`. Without
+/// this notice, `--exact` would quietly print calibrated figures under a flag
+/// whose whole purpose is to stop that happening.
+fn exactness(recount: Option<ExactRecount>, snapshot: &ContextSnapshot) {
+    let Some(report) = recount else { return };
+    let estimated = report.opaque + report.unavailable;
+
+    if report.counted == 0 {
+        println!(
+            "Exact      requested, but none of the {} items could be measured; all are\n\
+             {:>10} still estimated from character counts.",
+            report.total(),
+            ""
+        );
+        return;
+    }
+
+    println!(
+        "Exact      {} of {} items measured with the tokenizer, {estimated} left estimated\n\
+         {:>10} ({} not tokenizable text, {} unreadable)",
+        report.counted,
+        report.total(),
+        "",
+        report.opaque,
+        report.unavailable
+    );
+
+    if !snapshot.items().iter().any(|i| i.tokens.is_trustworthy()) {
+        println!(
+            "{:>10} The measured counts came to more than the {} tokens the agent says it\n\
+             {:>10} sent, so reconstruction over-includes at this turn. Every figure below\n\
+             {:>10} has been rescaled to fit and is calibrated, not exact.",
+            "",
+            thousands(snapshot.total().tokens()),
+            "",
+            ""
+        );
+    }
+}
+
 pub fn context(
     view: &FilteredView<'_>,
     estimator: &str,
     derived: Option<DerivedRatio>,
+    recount: Option<ExactRecount>,
     json: bool,
 ) {
     if json {
@@ -218,6 +267,7 @@ pub fn context(
         println!("Window     {}{used}", thousands(window));
     }
     println!("Estimator  {estimator}");
+    exactness(recount, snapshot);
 
     if let Some(compaction) = snapshot.preceding_compaction() {
         let detail = match compaction.reduction() {
@@ -350,7 +400,13 @@ pub fn context(
     );
 }
 
-pub fn largest(view: &FilteredView<'_>, derived: Option<DerivedRatio>, limit: usize, json: bool) {
+pub fn largest(
+    view: &FilteredView<'_>,
+    derived: Option<DerivedRatio>,
+    recount: Option<ExactRecount>,
+    limit: usize,
+    json: bool,
+) {
     if json {
         print_json(&view.contributor_report(limit));
         return;
@@ -364,6 +420,7 @@ pub fn largest(view: &FilteredView<'_>, derived: Option<DerivedRatio>, limit: us
         snapshot.turn(),
         token_count(snapshot.total())
     );
+    exactness(recount, snapshot);
     coverage(view);
     println!();
 

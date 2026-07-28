@@ -9,9 +9,11 @@ mod format;
 mod render;
 
 use clap::{Parser, Subcommand};
-use ct_adapters::{ClaudeCodeAdapter, CodexAdapter, HeuristicEstimator, TiktokenEstimator};
-use ct_application::{AgentBinding, ContextTrace, ResolveError, SessionFilter};
-use ct_domain::ports::TokenEstimator;
+use ct_adapters::{
+    ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, TiktokenEstimator,
+};
+use ct_application::{AgentBinding, ContextTrace, ResolveError, ResolvedSession, SessionFilter};
+use ct_domain::ports::{ExactRecount, TokenEstimator};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
     AgentKind, Confidence, ContextCategory, FilterParseError, ItemFilter, SourcePattern, TurnNumber,
@@ -70,6 +72,16 @@ enum Command {
         /// Which turn (1-based). Defaults to the largest turn in the session.
         #[arg(long)]
         turn: Option<u32>,
+        /// Measure item sizes with a real tokenizer instead of estimating them
+        ///
+        /// Codex only, because only its models have a public tokenizer. Costs a
+        /// seek, a JSON parse and a tokenizer pass per item, and covers only the
+        /// items whose payload is entirely model-visible text -- roughly three
+        /// in five. Deliberately absent from `trace` and `residual`: both sweep
+        /// every turn, so the cost multiplies by turn count, and `trace` answers
+        /// a membership question that does not depend on the estimator at all.
+        #[arg(long)]
+        exact: bool,
         #[command(flatten)]
         filter: FilterArgs,
         #[arg(long)]
@@ -83,6 +95,13 @@ enum Command {
         turn: Option<u32>,
         #[arg(long, default_value_t = 15)]
         limit: usize,
+        /// Measure item sizes with a real tokenizer instead of estimating them
+        ///
+        /// See `ct context --help`. Most worth using here, because this is the
+        /// view that ranks items against each other, and estimation error is
+        /// what makes a ranking wrong.
+        #[arg(long)]
+        exact: bool,
         #[command(flatten)]
         filter: FilterArgs,
         #[arg(long)]
@@ -280,6 +299,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Context {
             id,
             turn,
+            exact,
             filter,
             json,
         } => {
@@ -287,11 +307,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
-            let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn)?;
+            let (snapshot, recount) =
+                calibrated.snapshot_for(&app, &session, &resolved, turn, exact)?;
             render::context(
                 &snapshot.filtered(&filter),
                 &calibrated.name(&app, resolved.binding),
                 calibrated.ratio,
+                recount,
                 json,
             );
         }
@@ -300,6 +322,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             id,
             turn,
             limit,
+            exact,
             filter,
             json,
         } => {
@@ -307,8 +330,15 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let (session, resolved) = app.load(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
-            let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn)?;
-            render::largest(&snapshot.filtered(&filter), calibrated.ratio, limit, json);
+            let (snapshot, recount) =
+                calibrated.snapshot_for(&app, &session, &resolved, turn, exact)?;
+            render::largest(
+                &snapshot.filtered(&filter),
+                calibrated.ratio,
+                recount,
+                limit,
+                json,
+            );
         }
 
         Command::Trace { id, item, json } => {
@@ -421,6 +451,32 @@ impl SessionCalibration {
         })
     }
 
+    /// The snapshot behind a single-turn view, exactly counted on request.
+    ///
+    /// `None` for the recount means exactness was not asked for. That is a
+    /// different thing from a recount that measured nothing, and the views have
+    /// to be able to tell them apart before they can caption their own numbers.
+    fn snapshot_for(
+        &self,
+        app: &ContextTrace,
+        session: &ct_domain::AgentSession,
+        resolved: &ResolvedSession,
+        turn: TurnNumber,
+        exact: bool,
+    ) -> Result<(ct_domain::ContextSnapshot, Option<ExactRecount>), Box<dyn std::error::Error>> {
+        let binding = resolved.binding;
+        if !exact {
+            return Ok((self.snapshot(app, session, binding, turn)?, None));
+        }
+
+        let raw = FileRawEventSource::for_session(&resolved.descriptor.path);
+        let (snapshot, recount) = match &self.estimator {
+            Some(e) => app.snapshot_exact_with(session, binding, turn, e, &raw)?,
+            None => app.snapshot_exact(session, binding, turn, &raw)?,
+        };
+        Ok((snapshot, Some(recount)))
+    }
+
     fn name(&self, app: &ContextTrace, binding: usize) -> String {
         match &self.estimator {
             Some(e) => e.name().to_string(),
@@ -432,11 +488,13 @@ impl SessionCalibration {
 /// Build an estimator calibrated to this session, where that makes sense.
 ///
 /// **A composition-root decision, deliberately.** Deriving a characters-per-
-/// token ratio is only meaningful where counts are heuristic. Codex runs
-/// GPT-family models, so `tiktoken` counts its items exactly and replacing that
-/// with a fitted ratio would trade a measurement for an estimate -- strictly
-/// worse. This function is the one place that knows which agent got which
-/// estimator, because this function is the one place that paired them.
+/// token ratio fits a curve to how far reconstruction falls short of the
+/// observed totals, and that only means something where the shortfall is
+/// dominated by estimation error. Codex sessions log their own system prompt,
+/// so their shortfall is small and mostly tool schemas -- there is no
+/// systematic gap to fit, and `--exact` is the better instrument there anyway.
+/// This function is the one place that knows which agent got which estimator,
+/// because this function is the one place that paired them.
 fn session_estimator(
     app: &ContextTrace,
     session: &ct_domain::AgentSession,

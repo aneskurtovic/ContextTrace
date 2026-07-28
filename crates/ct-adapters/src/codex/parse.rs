@@ -9,6 +9,7 @@ use ct_domain::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
@@ -351,39 +352,70 @@ fn parse_time(v: Option<&Value>) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-/// Character count of the parts of a payload that occupy context.
+/// One part of a payload that occupies context.
 ///
-/// Counts the fields that are actually sent back to the model, including
-/// `encrypted_content` on reasoning items -- those are opaque to us but are
-/// genuinely replayed into the request, so excluding them would understate the
-/// context.
-pub(crate) fn content_chars(payload: &Value) -> u32 {
-    let mut total: usize = 0;
+/// The split is not cosmetic: it decides whether an item can be counted
+/// exactly. [`Component::Text`] is text the model tokenizes as text, so a real
+/// tokenizer measures it. [`Component::Opaque`] occupies context but is not
+/// tokenizable text we hold:
+///
+/// - `encrypted_content` on reasoning items is a blob we cannot read;
+/// - `image_url` data URLs are charged as image patches, not as BPE tokens
+///   over their base64;
+/// - a structured `output` would have to be re-serialized before we could read
+///   it, in *serde_json's* key order and spacing rather than the ones Codex
+///   sent.
+///
+/// All three are genuinely replayed into the request, so their length still
+/// counts. But running a tokenizer over them would produce a wrong number
+/// wearing an `Exact` label, which is the one thing this project must not do.
+pub(crate) enum Component<'a> {
+    Text(&'a str),
+    Opaque(Cow<'a, str>),
+}
 
+impl Component<'_> {
+    fn chars(&self) -> usize {
+        match self {
+            Component::Text(s) => s.chars().count(),
+            Component::Opaque(s) => s.chars().count(),
+        }
+    }
+}
+
+/// Walk the parts of a payload that occupy context.
+///
+/// Single traversal shared by [`content_chars`] and [`content_text`], so the
+/// exact path can never measure a different selection from the estimated one.
+fn visit_content(payload: &Value, f: &mut dyn FnMut(Component<'_>)) {
     if let Some(content) = payload.get("content").and_then(Value::as_array) {
         for block in content {
             for key in ["text", "input_text", "output_text"] {
                 if let Some(s) = block.get(key).and_then(Value::as_str) {
-                    total += s.chars().count();
+                    f(Component::Text(s));
                 }
             }
             // Inline images are sent as data URLs and are enormous; count them.
             if let Some(s) = block.get("image_url").and_then(Value::as_str) {
-                total += s.chars().count();
+                f(Component::Opaque(Cow::Borrowed(s)));
             }
         }
     }
 
-    for key in ["arguments", "input", "encrypted_content"] {
+    for key in ["arguments", "input"] {
         if let Some(s) = payload.get(key).and_then(Value::as_str) {
-            total += s.chars().count();
+            f(Component::Text(s));
         }
     }
 
+    if let Some(s) = payload.get("encrypted_content").and_then(Value::as_str) {
+        f(Component::Opaque(Cow::Borrowed(s)));
+    }
+
     match payload.get("output") {
-        Some(Value::String(s)) => total += s.chars().count(),
+        Some(Value::String(s)) => f(Component::Text(s)),
         Some(other @ Value::Object(_)) | Some(other @ Value::Array(_)) => {
-            total += other.to_string().chars().count()
+            f(Component::Opaque(Cow::Owned(other.to_string())))
         }
         _ => {}
     }
@@ -391,25 +423,53 @@ pub(crate) fn content_chars(payload: &Value) -> u32 {
     if let Some(summary) = payload.get("summary").and_then(Value::as_array) {
         for block in summary {
             if let Some(s) = block.get("text").and_then(Value::as_str) {
-                total += s.chars().count();
+                f(Component::Text(s));
             }
         }
     }
+}
 
+/// Character count of the parts of a payload that occupy context.
+pub(crate) fn content_chars(payload: &Value) -> u32 {
+    let mut total: usize = 0;
+    visit_content(payload, &mut |part| total += part.chars());
     total.min(u32::MAX as usize) as u32
 }
 
-/// Size of `base_instructions`, which Codex writes either as a bare string or
-/// as `{text: "..."}` depending on version.
-fn instruction_chars(value: &Value) -> u32 {
-    let len = match value {
-        Value::String(s) => s.chars().count(),
+/// The model-visible text of a payload, when *all* of it is text.
+///
+/// `None` is a refusal, not a failure: it means the payload holds at least one
+/// [`Component::Opaque`] part, so no exact count of the whole item exists and
+/// the character estimate remains the honest answer. An empty result is `None`
+/// for the same reason -- there is nothing to have counted.
+pub(crate) fn content_text(payload: &Value) -> Option<String> {
+    let mut text = String::new();
+    let mut opaque = false;
+    visit_content(payload, &mut |part| match part {
+        Component::Text(s) => text.push_str(s),
+        Component::Opaque(_) => opaque = true,
+    });
+    (!opaque && !text.is_empty()).then_some(text)
+}
+
+/// `base_instructions`, which Codex writes either as a bare string or as
+/// `{text: "..."}` depending on version. `None` for any shape we do not
+/// recognise, which is then sized by its serialized length instead.
+pub(crate) fn instruction_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.clone()),
         Value::Object(_) => value
             .get("text")
             .and_then(Value::as_str)
-            .map(|s| s.chars().count())
-            .unwrap_or_else(|| value.to_string().chars().count()),
-        other => other.to_string().chars().count(),
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn instruction_chars(value: &Value) -> u32 {
+    let len = match instruction_text(value) {
+        Some(text) => text.chars().count(),
+        None => value.to_string().chars().count(),
     };
     len.min(u32::MAX as usize) as u32
 }

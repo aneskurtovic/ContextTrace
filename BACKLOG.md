@@ -149,9 +149,9 @@ being asked about, in both directions, with fixture coverage. ✔
 
 ## Next
 
-### CT-035 · Offer exact Codex counting, or state plainly that it is absent
-`status: next` · `tier: A` · `size: S` · `source: review`
-Promoted on CT-018's completion; the entry is under **Todo** below, where its
+### CT-019 · `ct doctor --dir` — format-drift reporting across many sessions
+`status: next` · `tier: A` · `size: S` · `source: IDEAS.md §2`
+Promoted on CT-035's completion; the entry is under **Todo** below, where its
 reasoning already sits.
 
 ---
@@ -261,10 +261,13 @@ the denominator. The residual is excluded from any filtered view unless named
 by category: it has no source and no line in any file, so a query *by
 provenance* has nothing to match it against.
 
-`--confidence` matches nothing on every real session today, because per-item
-sizes are `Estimated` for both agents. That is not a broken flag — see CT-035 —
-so the empty case prints the categories, sources and confidences the turn
-actually contains rather than an unexplained blank.
+`--confidence derived` matched nothing on any real session when this landed,
+because per-item sizes were `Estimated` for both agents. That was not a broken
+flag but a missing one, and CT-035 supplied it: `--exact` promotes the
+countable Codex items to `Derived`, so the filter now selects something. The
+empty case still prints the categories, sources and confidences the turn
+actually contains rather than an unexplained blank, because on Claude Code it
+remains permanently empty by construction.
 
 ### CT-016 · `ct residual` — track unlogged context across turns
 `status: done` · `tier: A` · `size: M` · `source: IDEAS.md §2`
@@ -296,29 +299,54 @@ which this view cannot distinguish from the CT-031 over-count.
 
 ---
 
+### CT-035 · Offer exact Codex counting, or state plainly that it is absent
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Reason it existed:** the plan, the `TokenEstimator` port docs and CT-006 all
+said Codex items are counted exactly by `tiktoken`. They were not.
+`TiktokenEstimator::count_text` — the only exact path — was never called by
+either adapter. Both sized items from the `char_len` recorded at parse time and
+so went through `estimate_from_chars`, which returns `Estimated` by
+construction. The claim was what was wrong, not the code.
+**Done when:** the docs describe the trade-off actually made, and either exact
+counting is offered as an opt-in for Codex or its absence is stated plainly. ✔
+Both: `ct context --exact` and `ct largest --exact`, Codex only, with Claude
+Code refusing through `PortError::Unsupported` rather than a docs footnote.
+
+**Three things measuring it changed.**
+
+*The stated cost was wrong by two orders of magnitude.* This entry said exact
+counting "means re-reading and re-parsing every line of a 55 MB session". It
+does not: `SourceRef` seeks to a byte offset, so it is one seek per item. On
+the largest local Codex session — 99 MB, 262 items at the peak turn —
+`ct context` takes 0.43 s and `--exact` takes 0.50 s. The deferral was
+justified by a cost nobody had measured.
+
+*It covers about three items in five, and that had to become output rather
+than a caveat.* Of 20,768 `response_item` lines in the local corpus, 6,091
+carry `encrypted_content`, 2,498 a structured `output` object, 99 an inline
+`image_url`. Tokenizing any of those produces a wrong number wearing an
+`Exact` label: a ciphertext blob is not the text the model read, image data is
+charged as patches, and a structured output would be measured in `serde_json`'s
+key order rather than Codex's. `content_text` returns `None` for them — a
+refusal, not a failure — and the view prints how many items were actually
+measured, because "exact" is a claim about the numbers under it.
+
+*Calibration needed no change, which is the strongest evidence the rule was
+right.* Its first rule was already that measured counts are never rescaled, so
+exact items keep their values and the slack becomes residual. The one branch
+that does rescale them — measurements exceeding the observed total, i.e. the
+reconstruction has been disproved — would otherwise have printed calibrated
+figures under a flag named `--exact`. It fires on 1 of 53 local Codex sessions,
+and now says so in words. That is CT-031 becoming measurable: with exact
+counts, over-count is no longer confounded with estimator error.
+
+---
+
 ## Todo
 
-### CT-035 · Offer exact Codex counting, or state plainly that it is absent
-`status: next` · `tier: A` · `size: S` · `source: review`
-
-**The docs half landed with CT-017**; what remains is the opt-in.
-
-**Reason it exists:** the plan, the `TokenEstimator` port docs and CT-006 all
-said Codex items are counted exactly by `tiktoken`. They are not.
-`TiktokenEstimator::count_text` — the only exact path — is never called by
-either adapter. Both size items from the `char_len` recorded at parse time and
-so go through `estimate_from_chars`, which returns `Estimated` by construction.
-The *reason* is sound and deliberate: exact counting means re-reading and
-re-parsing every line of a 55 MB session, which is what `SourceRef` and the
-lazy-content design exist to avoid. The claim is what is wrong, not the code.
-**Done when:** the docs describe the trade-off actually made, and either exact
-counting is offered as an opt-in for Codex or its absence is stated plainly.
-Leaving a stronger claim in the docs than the code delivers is the one failure
-mode this project cannot afford. ⟨README, `ports.rs` and the adapter table now
-say what the code does; the opt-in is what is left.⟩
-
 ### CT-019 · `ct doctor --dir` — format-drift reporting across many sessions
-`status: todo` · `tier: A` · `size: S` · `source: IDEAS.md §2`
+`status: next` · `tier: A` · `size: S` · `source: IDEAS.md §2`
 **Why:** the corpus sweep already found five new event types this way; it should
 be a command rather than a scratch script.
 **Done when:** a histogram of unrecognised types across a directory, with a
@@ -403,6 +431,13 @@ no marker for such a removal exists anywhere in the log.
 **Done when:** either a mechanism is identified from evidence, or the hypothesis
 is written up as unresolvable from logs alone and the tool's reporting of it is
 final. Inventing semantics for it is explicitly out of scope.
+
+**CT-035 supplied the instrument this needs.** Until `--exact`, an over-count
+could always have been the character ratio running high, so there was nothing to
+investigate that was not first an estimator question. With real tokenizer counts
+the two separate: on Codex the exact sum exceeds the observed total on 1 of 53
+local sessions, and that surplus cannot be estimation error. Start there — it is
+a small, exactly-measured case of the same defect.
 
 ---
 

@@ -18,13 +18,17 @@
 //!   list in full. Discarded content is therefore *derivable by diffing*, which
 //!   is stronger than the original brief assumed was possible.
 
+mod exact;
 mod parse;
 mod reconstruct;
 
 use crate::home_dir;
 use crate::walk::{find_files, has_extension};
-use ct_domain::ports::{AgentAdapter, PortError, PortResult, ReconstructedContext, TokenEstimator};
-use ct_domain::{AgentKind, AgentSession, SessionDescriptor, SessionId, TurnNumber};
+use ct_domain::ports::{
+    AgentAdapter, ExactRecount, PortError, PortResult, RawEventSource, ReconstructedContext,
+    TokenEstimator,
+};
+use ct_domain::{AgentKind, AgentSession, ContextItem, SessionDescriptor, SessionId, TurnNumber};
 use std::path::{Path, PathBuf};
 
 /// Reads Codex CLI sessions.
@@ -106,6 +110,18 @@ impl AgentAdapter for CodexAdapter {
         estimator: &dyn TokenEstimator,
     ) -> PortResult<ReconstructedContext> {
         reconstruct::reconstruct(session, turn, estimator)
+    }
+
+    /// Codex is the one agent where this is a measurement rather than a slower
+    /// guess: its models use `o200k_base`, which is public.
+    fn recount_exact(
+        &self,
+        _session: &AgentSession,
+        items: &mut [ContextItem],
+        raw: &dyn RawEventSource,
+        estimator: &dyn TokenEstimator,
+    ) -> PortResult<ExactRecount> {
+        Ok(exact::recount(items, raw, estimator))
     }
 }
 

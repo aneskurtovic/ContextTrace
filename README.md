@@ -150,15 +150,39 @@ per-turn total is observed. Calibration reconciles the two: estimates are scaled
 to fit the known total, and whatever cannot be attributed becomes an explicit
 residual row rather than being smeared across the visible categories.
 
-**In practice neither agent's items are counted exactly today, including
-Codex's.** Both adapters record a character count while parsing and size items
-from that, because counting exactly means re-reading and re-parsing every line
-of a session that can reach 55 MB — the cost the whole lazy-content design
-exists to avoid. So every per-item figure is tagged `estimated`, and
-`--confidence observed` correctly matches nothing. The trade-off is deliberate;
-what would not be acceptable is claiming otherwise, which earlier drafts of this
-file did. Whether to offer exact Codex counting as an opt-in is
-[BACKLOG.md](BACKLOG.md) CT-035.
+**By default neither agent's items are counted exactly, including Codex's.**
+Both adapters record a character count while parsing and size items from that,
+because the lazy-content design exists precisely so that attributing a 99 MB
+session does not mean loading 99 MB. So every per-item figure is tagged
+`estimated` unless you ask for better.
+
+`ct context --exact` and `ct largest --exact` ask for better, on Codex only.
+Each item is seeked to, re-parsed, and measured with `o200k_base` — the encoding
+its models actually use, so the result is a measurement rather than a denser
+guess. Two things about it are worth knowing before trusting it, and the command
+prints both:
+
+**It covers about three items in five.** Across the local corpus, of 20,768
+`response_item` lines, 6,091 carry `encrypted_content`, 2,498 carry a structured
+`output` object, and 99 carry an inline `image_url`. None of those can be
+tokenized honestly — a ciphertext blob is not the text the model read, image
+data URLs are charged as patches rather than BPE tokens, and re-serializing a
+structured output would measure `serde_json`'s key order rather than Codex's.
+Those items keep their character estimate, and the header says how many did.
+
+**It is far cheaper than the design implied.** `SourceRef` seeks to a byte
+offset, so this is one seek per item, not a scan. On the largest local Codex
+session (99 MB, 262 items at the peak turn) `ct context` takes 0.43 s and
+`ct context --exact` takes 0.50 s.
+
+Exactness is deliberately absent from `ct trace` and `ct residual`: both sweep
+every turn, so the per-item cost would multiply by turn count, and `trace`
+answers a membership question that does not depend on the estimator at all.
+
+Claude Code refuses `--exact` outright, with an error rather than a footnote.
+Re-reading its text would buy a slower estimate and nothing else, and handing
+back estimates under a flag named `--exact` is the exact failure this project
+cannot afford.
 
 ### The ratio is measured, not assumed
 
