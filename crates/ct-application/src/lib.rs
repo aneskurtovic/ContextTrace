@@ -273,10 +273,18 @@ impl ContextTrace {
     ///
     /// Calibration afterwards is unchanged and needs no special case: its first
     /// rule is already that measured counts are never rescaled, so exact items
-    /// keep their values and the slack becomes residual. That is the point of
-    /// the whole exercise -- for Codex, whose system prompt *is* logged, the
-    /// remainder stops being "unlogged context plus our estimation error" and
-    /// becomes just the first.
+    /// keep their values and the slack becomes residual.
+    ///
+    /// What that buys is narrower than it first looks, and the difference
+    /// matters. On a turn where *every* item was measured, the residual is no
+    /// longer estimation error -- but it is not "unlogged context" either. An
+    /// exact count is the model-visible text of an item, deliberately not the
+    /// item's whole footprint in the request: the field names, role markers and
+    /// block structure around it are excluded, because counting serialized JSON
+    /// is the mistake CT-012 exists to prevent. So the remainder is the tool
+    /// schemas *plus* that framing. Measured on two fully-exact Codex turns it
+    /// came to 10,218 and 9,630 tokens -- large, stable, and now attributable
+    /// to something specific rather than to our own arithmetic.
     pub fn snapshot_exact_with(
         &self,
         session: &AgentSession,

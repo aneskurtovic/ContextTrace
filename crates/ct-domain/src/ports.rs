@@ -144,7 +144,7 @@ pub trait AgentAdapter: Send + Sync {
 /// Reported rather than summarised into a boolean because partial success is
 /// the normal outcome: an item is only exactly countable when every part of its
 /// payload is text the tokenizer applies to.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExactRecount {
     /// Items now carrying a real tokenizer's count.
     pub counted: usize,

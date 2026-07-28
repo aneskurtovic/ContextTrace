@@ -341,6 +341,18 @@ figures under a flag named `--exact`. It fires on 1 of 53 local Codex sessions,
 and now says so in words. That is CT-031 becoming measurable: with exact
 counts, over-count is no longer confounded with estimator error.
 
+**And one thing it deliberately does not buy.** The obvious conclusion — that
+with every item measured the remainder becomes purely unlogged context — is
+wrong, and asserting it was the first thing review caught. An exact count is an
+item's model-visible text; the field names, role markers and block structure
+around it are excluded on purpose, because counting serialized JSON is CT-012's
+mistake. On two fully-exact Codex turns the remainder came to **10,218 and
+9,630 tokens** (53% and 42% of the prompt) with nothing estimated at all. That
+is tool schemas plus request framing, and `ct context --exact` now says so
+rather than reusing the "plus whatever the estimates missed" clause, which is
+false where nothing was estimated. Those two figures are also the first clean
+measurement of Codex's schema overhead, which no other view can reach.
+
 ---
 
 ## Todo

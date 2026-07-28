@@ -175,6 +175,17 @@ offset, so this is one seek per item, not a scan. On the largest local Codex
 session (99 MB, 262 items at the peak turn) `ct context` takes 0.43 s and
 `ct context --exact` takes 0.50 s.
 
+**What it does not make the residual mean.** It is tempting to conclude that
+once every item is measured, the remainder is purely context the agent never
+logged. It is not. An exact count is the *model-visible text* of an item —
+field names, role markers and block structure are excluded on purpose, because
+counting serialized JSON is the mistake above. So on a fully-exact turn the
+remainder is the tool schemas plus that framing. Measured on two such Codex
+turns it came to **10,218 and 9,630 tokens** — 53% and 42% of their prompts.
+Large, stable, and now attributable to something specific rather than to our own
+arithmetic. `ct context --exact` says exactly that instead of the usual "plus
+whatever the estimates missed", which would be false there.
+
 Exactness is deliberately absent from `ct trace` and `ct residual`: both sweep
 every turn, so the per-item cost would multiply by turn count, and `trace`
 answers a membership question that does not depend on the estimator at all.

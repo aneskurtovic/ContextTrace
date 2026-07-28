@@ -322,7 +322,23 @@ pub fn context(
     // saying otherwise would be the exact kind of confident overclaim this tool
     // exists to prevent.
     if snapshot.residual_is_meaningful() {
-        if system_prompt_is_itemised(snapshot) {
+        // With nothing left estimated, the usual "plus whatever the estimates
+        // missed" clause would be false -- and the remainder is still large, so
+        // it has to be attributed to something rather than left implied. What is
+        // left is real: an exact count measures an item's model-visible text,
+        // not the framing the request wraps around it.
+        let fully_measured =
+            recount.is_some_and(|r| r.counted > 0 && r.opaque + r.unavailable == 0);
+        if fully_measured {
+            println!(
+                "\n  The unattributed {} tokens are not estimation error -- every item at\n  \
+                 this turn was counted exactly. What remains is the agent's tool JSON\n  \
+                 schemas, plus the request framing around each item: field names, role\n  \
+                 markers, block structure. `--exact` measures the text the model reads,\n  \
+                 deliberately not the JSON it arrives in.",
+                thousands(snapshot.residual())
+            );
+        } else if system_prompt_is_itemised(snapshot) {
             println!(
                 "\n  The unattributed {} tokens are context the agent did not log -- in\n  \
                  practice its tool JSON schemas, plus whatever the per-item estimates\n  \
