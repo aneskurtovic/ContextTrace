@@ -7,7 +7,7 @@ use crate::format::{
 use ct_adapters::FileRawEventSource;
 use ct_application::{
     AppError, Comparability, ContextTrace, Departure, Diagnostics, DriftReport, GrowthTimeline,
-    ItemLifecycle, ResidualPoint, ResolvedSession, SessionDiff,
+    ExportRedaction, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport, SessionDiff,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -1655,6 +1655,7 @@ pub fn export_ndjson(
     session: &AgentSession,
     resolved: &ResolvedSession,
     estimator: &dyn ct_domain::ports::TokenEstimator,
+    redaction: ExportRedaction,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
 
@@ -1670,6 +1671,7 @@ pub fn export_ndjson(
         &resolved.descriptor.path,
         resolved.binding,
         estimator,
+        redaction,
         |record| {
             let line = serde_json::to_string(record)
                 .map_err(|e| AppError::Calibration(format!("could not serialise a record: {e}")))?;
@@ -1681,7 +1683,14 @@ pub fn export_ndjson(
     );
 
     match result {
-        Ok(()) => {}
+        Ok(report) => {
+            if redaction == ExportRedaction::Secrets {
+                eprintln!(
+                    "Redacted {} potential secret occurrence(s) from exported fields.",
+                    report.redactions
+                );
+            }
+        }
         Err(_) if pipe_closed => return Ok(()),
         Err(e) => return Err(e.into()),
     }
@@ -1689,6 +1698,44 @@ pub fn export_ndjson(
     match out.flush() {
         Err(e) if is_pipe_gone(&e) => Ok(()),
         other => Ok(other?),
+    }
+}
+
+pub fn secrets(session: &AgentSession, report: &SecretScanReport) {
+    println!("Potential secrets  {}  {}\n", session.id(), session.agent());
+    println!(
+        "Scanned {} context-bearing record(s); matched values are never shown or exported.",
+        report.scanned_records
+    );
+    if report.unreadable_records > 0 {
+        println!(
+            "{} record(s) could not be re-read and were not scanned.",
+            report.unreadable_records
+        );
+    }
+
+    if report.findings.is_empty() {
+        println!("\nNo recognised provider credentials found.");
+        return;
+    }
+
+    println!(
+        "\nFound {} potential secret occurrence(s):\n",
+        report.occurrence_count()
+    );
+    for finding in &report.findings {
+        let turn = finding
+            .turn
+            .map(|turn| format!("turn {}", turn.get()))
+            .unwrap_or_else(|| "no turn assigned".into());
+        println!(
+            "  {:<24} {:>3}  {}, line {}  ({})",
+            finding.kind.label(),
+            finding.occurrences,
+            turn,
+            finding.line_no,
+            finding.event_type
+        );
     }
 }
 

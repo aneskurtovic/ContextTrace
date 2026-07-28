@@ -12,7 +12,9 @@ use clap::{Parser, Subcommand};
 use ct_adapters::{
     ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, TiktokenEstimator,
 };
-use ct_application::{AgentBinding, ContextTrace, ResolveError, ResolvedSession, SessionFilter};
+use ct_application::{
+    AgentBinding, ContextTrace, ExportRedaction, ResolveError, ResolvedSession, SessionFilter,
+};
 use ct_domain::ports::{ExactRecount, TokenEstimator};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
@@ -187,12 +189,26 @@ enum Command {
     ///
     /// Every item row carries its confidence, and the unattributed remainder is
     /// a row of its own, so summing item tokens per turn agrees with the prompt
-    /// size the agent reported. Message previews are excluded: an export leaves
-    /// the agent's directory and redaction is not built yet.
+    /// size the agent reported. Message previews are excluded. Pass
+    /// --redact-secrets to replace recognised provider credentials in labels,
+    /// paths, commands and other exported metadata.
     Export {
         id: String,
         #[arg(long, value_enum, default_value_t = ExportFormat::Ndjson)]
         format: ExportFormat,
+        /// Replace recognised credentials with typed redaction markers
+        #[arg(long)]
+        redact_secrets: bool,
+    },
+
+    /// Scan context-bearing records for potential secrets
+    ///
+    /// Findings name only a credential type and its turn/line. Matched values
+    /// are never displayed, serialized, or included in an export, so this
+    /// command deliberately has no --json mode.
+    Secrets {
+        /// Session id, or an unambiguous prefix
+        id: String,
     },
 
     /// Compare two turns: composition, tool usage and unattributed remainder
@@ -570,7 +586,11 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             render::residual(&series, ratio, &compaction_turns, json);
         }
 
-        Command::Export { id, format } => {
+        Command::Export {
+            id,
+            format,
+            redact_secrets,
+        } => {
             let ExportFormat::Ndjson = format;
             let (session, resolved) = app.load(&id)?;
             // The same estimator the terminal views use. Without this the
@@ -578,7 +598,23 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             // `ct context` used the session's own fitted ratio, and one turn's
             // unattributed remainder read 64,167 against 116,872.
             let calibrated = session_estimator(&app, &session, resolved.binding);
-            calibrated.export(&app, &session, &resolved)?;
+            calibrated.export(
+                &app,
+                &session,
+                &resolved,
+                if redact_secrets {
+                    ExportRedaction::Secrets
+                } else {
+                    ExportRedaction::None
+                },
+            )?;
+        }
+
+        Command::Secrets { id } => {
+            let (session, resolved) = app.load(&id)?;
+            let raw = FileRawEventSource::for_session(&resolved.descriptor.path);
+            let report = app.scan_secrets(&session, &raw);
+            render::secrets(&session, &report);
         }
 
         Command::Diff { left, right, json } => {
@@ -731,12 +767,14 @@ impl SessionCalibration {
         app: &ContextTrace,
         session: &ct_domain::AgentSession,
         resolved: &ResolvedSession,
+        redaction: ExportRedaction,
     ) -> Result<(), Box<dyn std::error::Error>> {
         render::export_ndjson(
             app,
             session,
             resolved,
             self.effective(app, resolved.binding),
+            redaction,
         )
     }
 

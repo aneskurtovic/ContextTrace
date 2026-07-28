@@ -354,15 +354,15 @@ cheaper audit of the "nothing leaves this machine" claim.
 | Component | Status |
 |---|---|
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 61 tests |
-| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 118 tests |
-| `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle, diff, growth | Implemented, 61 tests |
-| `ct-cli` — the eleven commands below | Implemented, 23 tests |
+| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 119 tests |
+| `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
+| `ct-cli` — the twelve commands below | Implemented, 23 tests |
 | Standalone JSONL fixture files | Implemented, 14 tests |
 | Search, SQLite index, desktop shell | Not started |
 
-**277 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+**285 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 31 done, 1 next, 7
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 32 done, 1 next, 6
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -389,6 +389,8 @@ ct growth  <id> [--from N] [--to N] [--width N]   # the whole session as a chart
 ct doctor  <id>
 ct doctor  --dir [PATH]                # sweep for format drift; exits 1 on any
 ct export  <id>                        # the whole session as NDJSON, streamed
+ct export  <id> --redact-secrets       # typed markers replace credentials
+ct secrets <id>                        # terminal-only type/location findings
 
 filters: --source <kind[:text]>  --category <name>
          --confidence <level>    --min-tokens <n>
@@ -401,7 +403,7 @@ externally tagged, with a `schema` on the header line:
 
 ```
 {"type":"session","schema":1,"id":"019f8f07…","agent":"codex","turns":1274,
- "estimator":"o200k_base","fidelity":1.0}
+ "redaction":"none","estimator":"o200k_base","fidelity":1.0}
 {"type":"turn","turn":1,"total_tokens":13416,"accounted_tokens":13416,"residual_tokens":0,…}
 {"type":"item","turn":1,"id":"codex:1","category":"system-instructions",
  "label":"Codex system prompt","tokens":4666,"confidence":"estimated","line_no":1}
@@ -431,12 +433,31 @@ system enforces inside the process. The header names the estimator, because for
 Claude Code the ratio is fitted per session (CT-014) and a file whose numbers
 cannot be reproduced is a file whose numbers cannot be trusted. Message and
 tool-output previews are excluded: labels carry the paths and commands that make
-a size analysable, conversation content stays in the session file until
-redaction exists (CT-025).
+a size analysable, while conversation content stays in the session file.
+`--redact-secrets` also protects those analytical labels and every other
+string-bearing field — including item ids and structured source paths — with
+markers such as `[REDACTED:github-token]`. The header records whether redaction
+was requested, and the terminal reports how many exported occurrences changed.
 
 It streams, and the cost is **turns, not bytes** — every turn is reconstructed,
 so the 99 MB session with 88 turns exports in 0.46 s while the 25 MB one with
 1,274 turns takes 2.1 s.
+
+### Finding credentials without disclosing them again
+
+`ct secrets <id>` re-reads only context-bearing session records and reports a
+credential type, turn, line and event type. It recognises provider-shaped
+OpenAI, Anthropic, GitHub, AWS, Google, Slack and Stripe credentials, bearer
+tokens, PEM private keys, and secret-like `.env` assignments. The matched value
+is never stored in a finding, shown in a preview, or made serializable; this is
+why the command deliberately has no `--json` mode.
+
+Records are scanned once even when their content survives for hundreds of
+turns. Codex replacement histories and the recorded base instructions are
+included because they can be placed into a later prompt. Findings are
+potential secrets rather than proof of a leak: a valid-looking test fixture is
+indistinguishable from a live credential by shape alone, so the location is
+reported for the user to inspect in the original local session.
 
 ### Catching an agent that changed its format
 

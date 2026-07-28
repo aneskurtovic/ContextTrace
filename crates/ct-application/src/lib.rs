@@ -12,6 +12,7 @@ pub mod diff;
 pub mod export;
 pub mod growth;
 pub mod lifecycle;
+pub mod secrets;
 
 use ct_domain::ports::{AgentAdapter, ExactRecount, PortError, RawEventSource, TokenEstimator};
 use ct_domain::services::ratio::{self, DerivedRatio, TurnSample};
@@ -27,6 +28,9 @@ pub use diff::{
     compare, CategoryDelta, Comparability, Instrument, SessionDiff, Side, SideSummary, ToolDelta,
 };
 pub use export::{ExportRecord, SCHEMA_VERSION};
+pub use secrets::{
+    ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport,
+};
 pub use growth::{timeline, Bucket, CompactionAt, GrowthPoint, GrowthTimeline, Jump};
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use ct_domain::services::DerivedRatio as SessionRatio;

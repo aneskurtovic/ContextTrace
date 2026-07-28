@@ -37,21 +37,14 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-025 · Secret scanning and redacted export
-`status: next` · `tier: B` · `size: M` · `source: brief`
-**Why:** the brief requires optional secret redaction for exports, and this is
-the one item where being wrong has consequences outside the tool.
-**Done when:** exports can be redacted, and scanning never writes findings
-anywhere outside the user's terminal.
+### CT-026 · Cost projection
+`status: next` · `tier: B` · `size: S` · `source: IDEAS.md §4`
+**Done when:** per-category cost is derived from a local pricing table, clearly
+marked as an estimate that depends on a table which will go stale.
 
 ---
 
 ## Todo
-
-### CT-026 · Cost projection
-`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
-**Done when:** per-category cost is derived from a local pricing table, clearly
-marked as an estimate that depends on a table which will go stale.
 
 ### CT-027 · Codex compaction diff engine
 `status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §1`
@@ -102,6 +95,40 @@ a small, exactly-measured case of the same defect.
 ---
 
 ## Done
+
+### CT-025 · Secret scanning and redacted export
+`status: done` · `tier: B` · `size: M` · `source: brief`
+
+**Why:** the brief requires optional secret redaction for exports, and this is
+the one item where being wrong has consequences outside the tool.
+**Done when:** exports can be redacted, and scanning never writes findings
+anywhere outside the user's terminal.
+
+**What building it taught. The obvious export surface was not the whole export
+surface.** Message and tool-output previews were already excluded, but labels
+still carry shell commands, paths and search queries. The first redaction pass
+covered those labels and their structured `source` fields; its own regression
+test then found the credential still present in `id`, because a context item id
+may be derived from that label. Redaction now covers every user-derived string
+that crosses the NDJSON boundary: session and item ids, path, project, model,
+label and every string-bearing source variant. The header says
+`"redaction":"secrets"` and the terminal counts changed occurrences.
+
+**A finding cannot disclose the thing it found.** The scanner's public result
+contains only a credential kind, occurrence count, turn, source line and event
+type. It has no matched-text field and deliberately implements no serialization;
+`ct secrets` consequently has no `--json` mode. Provider tokens, bearer tokens,
+PEM private keys and secret-like environment assignments are recognised by
+bounded local scans with no new dependency and no write path.
+
+Scanning follows the same lazy-content boundary as exact counting: ordinary
+commands do not re-read anything, while `ct secrets` fetches each context-bearing
+record once no matter how many turns retain it. Recorded base instructions and
+Codex replacement histories are included explicitly. A live Codex session
+reported 19 occurrences across 196 records, all traceable to the valid-looking
+credential examples used while building the feature; a 325-record Claude Code
+session reported none. That is the right semantic boundary: these are
+**potential secrets**, not proof of a live credential or a cloud leak.
 
 ### CT-040 · Preserve oversized context items
 `status: done` · `tier: A` · `size: S` · `source: CT-023`
@@ -859,7 +886,8 @@ process — an export is where that guarantee is easiest to lose.
 **Previews are excluded.** Labels carry paths, commands and search queries,
 because a size with no name is not analysable. Conversation content does not go
 in: an export is a file that leaves the agent's own directory, the brief asks
-for care precisely there, and redaction is CT-025 and not built yet.
+for care precisely there. Redaction was deliberately left to CT-025 rather than
+being smuggled into this item; it is now available as `--redact-secrets`.
 
 **It streams, and the cost is turns rather than bytes.** Records go to the sink
 as they are produced, so memory stays proportional to one turn. Measuring two
