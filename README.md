@@ -291,14 +291,14 @@ cheaper audit of the "nothing leaves this machine" claim.
 |---|---|
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 101 tests |
-| `ct-application` — use cases, diagnostics, drift sweep, item lifecycle | Implemented, 37 tests |
-| `ct-cli` — the eight commands below | Implemented, 17 tests |
+| `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle | Implemented, 41 tests |
+| `ct-cli` — the nine commands below | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index, desktop shell | Not started |
 
-**218 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+**222 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 24 done, 1 next, 11
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 25 done, 1 next, 11
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -322,10 +322,47 @@ ct trace   <id> --item <id-or-label>   # one item's lifecycle across the session
 ct residual <id> [--from N] [--to N]
 ct doctor  <id>
 ct doctor  --dir [PATH]                # sweep for format drift; exits 1 on any
+ct export  <id>                        # the whole session as NDJSON, streamed
 
 filters: --source <kind[:text]>  --category <name>
          --confidence <level>    --min-tokens <n>
 ```
+
+### Getting the numbers out
+
+`ct export <id>` streams the whole session as NDJSON — one record per line,
+externally tagged, with a `schema` on the header line:
+
+```
+{"type":"session","schema":1,"id":"019f8f07…","agent":"codex","turns":1274,…}
+{"type":"turn","turn":1,"total_tokens":13416,"accounted_tokens":13416,"residual_tokens":0,…}
+{"type":"item","turn":1,"id":"codex:1","category":"system-instructions",
+ "label":"Codex system prompt","tokens":4666,"confidence":"estimated","line_no":1}
+```
+
+`duckdb` reads NDJSON natively, so this replaces the dropped DuckDB export
+(CT-032) without a database driver in a dependency tree whose auditability is
+the privacy claim:
+
+```sql
+SELECT category, sum(tokens) FROM 'session.ndjson'
+WHERE type = 'item' AND turn = 88 GROUP BY 1 ORDER BY 2 DESC;
+```
+
+**The residual is an item row, and that is the whole design.** A consumer's
+first query is `sum(tokens) GROUP BY turn`. If only real items are emitted, that
+sum silently disagrees with the prompt size the agent reported — on the worst
+local turn by 53% of the context. So the remainder is a row of its own, *and*
+the turn record carries the totals, so the naive query is correct and the two
+ways of asking cross-check each other. Verified across the largest multi-turn
+session: 1,274 turns, 362,218 records, **zero turns where the item rows failed
+to sum to the reported total**.
+
+Every figure carries its `confidence`, and a calibrated one keeps its
+`raw_estimate` — an export is the easiest place to lose the guarantee the type
+system enforces inside the process. Message and tool-output previews are
+excluded: labels carry the paths and commands that make a size analysable,
+conversation content stays in the session file until redaction exists (CT-025).
 
 ### Catching an agent that changed its format
 

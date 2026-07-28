@@ -156,8 +156,35 @@ enum Command {
         json: bool,
     },
 
+    /// Stream a whole session as NDJSON, one record per line
+    ///
+    /// For piping into `jq`, `duckdb` or a script:
+    ///
+    ///   ct export <id> > session.ndjson
+    ///   duckdb -c "SELECT sum(tokens) FROM 'session.ndjson' WHERE type='item'"
+    ///
+    /// Every item row carries its confidence, and the unattributed remainder is
+    /// a row of its own, so summing item tokens per turn agrees with the prompt
+    /// size the agent reported. Message previews are excluded: an export leaves
+    /// the agent's directory and redaction is not built yet.
+    Export {
+        id: String,
+        #[arg(long, value_enum, default_value_t = ExportFormat::Ndjson)]
+        format: ExportFormat,
+    },
+
     /// Show which local directories ContextTrace reads
     Roots,
+}
+
+/// Export formats.
+///
+/// One variant today. It is an enum rather than a bare flag because the entry
+/// this came from also asked for Parquet, and adding a second value later must
+/// not change the shape of the first invocation.
+#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+enum ExportFormat {
+    Ndjson,
 }
 
 /// Narrowing options shared by the two context views.
@@ -436,6 +463,12 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 .filter_map(|(_, e)| e.turn.map(|t| t.get()))
                 .collect();
             render::residual(&series, ratio, &compaction_turns, json);
+        }
+
+        Command::Export { id, format } => {
+            let ExportFormat::Ndjson = format;
+            let (session, resolved) = app.load(&id)?;
+            render::export_ndjson(&app, &session, &resolved)?;
         }
 
         Command::Doctor { id, dir, json } => match (id, dir) {

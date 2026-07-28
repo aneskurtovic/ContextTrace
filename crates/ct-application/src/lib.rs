@@ -8,6 +8,7 @@
 //! that does not exist yet.
 
 pub mod diagnostics;
+pub mod export;
 pub mod lifecycle;
 
 use ct_domain::ports::{AgentAdapter, ExactRecount, PortError, RawEventSource, TokenEstimator};
@@ -20,6 +21,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
+pub use export::{ExportRecord, SCHEMA_VERSION};
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 

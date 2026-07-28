@@ -6,11 +6,11 @@ use crate::format::{
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    ContextTrace, Departure, Diagnostics, DriftReport, ItemLifecycle, ResidualPoint,
+    AppError, ContextTrace, Departure, Diagnostics, DriftReport, ItemLifecycle, ResidualPoint,
     ResolvedSession,
 };
 use ct_domain::model::event::EventKind;
-use ct_domain::ports::{ExactRecount, RawEventSource};
+use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
     AgentKind, AgentSession, ContextSnapshot, Contributor, FilteredView, SessionDescriptor,
@@ -1109,6 +1109,57 @@ fn system_prompt_is_itemised(snapshot: &ct_domain::ContextSnapshot) -> bool {
         .items()
         .iter()
         .any(|i| i.source == ct_domain::ContextSource::AgentSystemPrompt)
+}
+
+/// Write a session to stdout as NDJSON, one record per line.
+///
+/// Locked and buffered for the whole stream rather than going through
+/// `println!`, which takes the lock and flushes per call: the largest local
+/// session emits a few hundred thousand records, and paying that per line turns
+/// a seconds-long export into a minutes-long one.
+///
+/// A broken pipe ends the export quietly. `ct export <id> | head` is the first
+/// thing anyone tries, and it must not print an error for working exactly as
+/// asked.
+pub fn export_ndjson(
+    app: &ContextTrace,
+    session: &AgentSession,
+    resolved: &ResolvedSession,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{ErrorKind, Write};
+
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+
+    let result = app.export_ndjson(
+        session,
+        &resolved.descriptor.path,
+        resolved.binding,
+        |record| {
+            let line = serde_json::to_string(record)
+                .map_err(|e| AppError::Calibration(format!("could not serialise a record: {e}")))?;
+            writeln!(out, "{line}")
+                .map_err(|e| AppError::Port(PortError::Io(e.to_string())))
+        },
+    );
+
+    match result {
+        Ok(()) => {}
+        Err(AppError::Port(PortError::Io(ref message))) if is_broken_pipe(message) => return Ok(()),
+        Err(e) => return Err(e.into()),
+    }
+
+    match out.flush() {
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
+        other => Ok(other?),
+    }
+}
+
+/// The io error text carries the kind, because [`AppError`] flattens it to a
+/// string at the port boundary.
+fn is_broken_pipe(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("broken pipe") || lower.contains("pipe is being closed")
 }
 
 fn print_json<T: serde::Serialize + ?Sized>(value: &T) {

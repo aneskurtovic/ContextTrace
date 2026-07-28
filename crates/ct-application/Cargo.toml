@@ -13,5 +13,12 @@ serde.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 
+# A dev-dependency on purpose. This crate derives `Serialize` but names no
+# concrete format -- which bytes an export becomes is the CLI's business. The
+# tests need a parser to check the records a consumer actually sees, and that
+# need must not put a JSON codec into the shipped dependency graph.
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

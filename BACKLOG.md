@@ -37,22 +37,15 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-020 · `--format ndjson` export
-`status: next` · `tier: B` · `size: S` · `source: IDEAS.md §2`
-**Why:** gets most of the analytical value of a database export while keeping
-the dependency tree auditable. See CT-032, which it replaces.
-**Done when:** turns and context items stream as NDJSON with stable tagged
-types.
+### CT-021 · `ct diff A..B` — compare two sessions or turn ranges
+`status: next` · `tier: B` · `size: M` · `source: plan`
+**Why:** "it worked yesterday and fails today on the same task."
+**Done when:** structural differences in composition, tool usage and residual
+growth are reported side by side.
 
 ---
 
 ## Todo
-
-### CT-021 · `ct diff A..B` — compare two sessions or turn ranges
-`status: todo` · `tier: B` · `size: M` · `source: plan`
-**Why:** "it worked yesterday and fails today on the same task."
-**Done when:** structural differences in composition, tool usage and residual
-growth are reported side by side.
 
 ### CT-022 · Context growth timeline
 `status: todo` · `tier: B` · `size: S` · `source: plan`
@@ -554,6 +547,47 @@ whose first line is one enormous pasted message is merely unread, not disproved.
 Only a file read to its end without a `uuid` is *known* not to be a transcript.
 Discarding a real session would be a worse error than keeping four journals, so
 the uncertain case keeps the file.
+
+### CT-020 · `--format ndjson` export
+`status: done` · `tier: B` · `size: S` · `source: IDEAS.md §2`
+**Why:** gets most of the analytical value of a database export while keeping
+the dependency tree auditable. See CT-032, which it replaces.
+**Done when:** turns and context items stream as NDJSON with stable tagged
+types. ✔ `ct export <id>` — session, turn and item records, externally tagged
+on `type`, with a `schema` on the header line so a script can refuse a file it
+does not understand rather than misread one.
+
+**The residual is emitted as an item row, and that is the whole design.** A
+consumer's first query is `SELECT sum(tokens) GROUP BY turn`. If item rows are
+all that exist, that sum silently disagrees with the prompt size the agent
+reported — on the worst local turn by 53% of the context. An export that invites
+the mistake would undo the tool. So the remainder is a row in the category the
+terminal views already print it under, *and* the turn row carries
+`total_tokens` / `accounted_tokens` / `residual_tokens`, so the naive query is
+right and the two ways of asking cross-check each other. Verified on the largest
+multi-turn Codex session: 1,274 turns, 362,218 records, **zero turns where the
+item rows failed to sum to the reported total**.
+
+**Every token figure carries its confidence**, and a calibrated one keeps its
+`raw_estimate`. Dropping provenance would launder a guess into a measurement one
+`SELECT` later, which is exactly what the type system prevents inside the
+process — an export is where that guarantee is easiest to lose.
+
+**Previews are excluded.** Labels carry paths, commands and search queries,
+because a size with no name is not analysable. Conversation content does not go
+in: an export is a file that leaves the agent's own directory, the brief asks
+for care precisely there, and redaction is CT-025 and not built yet.
+
+**It streams.** Records go to the sink as they are produced, so memory stays
+proportional to one turn — the largest local session is 362,218 records and
+105.6 MB, written in 2.3 s. The sink stays in `ct-cli` because which bytes go
+where is presentation; `ct-application` names no writer and takes `serde_json`
+only as a dev-dependency, so no JSON codec enters its shipped graph. A broken
+pipe ends the export quietly, because `ct export <id> | head` is the first thing
+anyone tries and it must not report an error for working as asked.
+
+**No `--exact`,** for the same reason `ct trace` and `ct residual` have none:
+this sweeps every turn, so a per-turn opt-in would multiply by turn count.
 
 ---
 
