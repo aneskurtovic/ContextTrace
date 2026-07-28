@@ -1,25 +1,26 @@
-//! Fixed-size identities for model-visible content.
+//! Fixed-size measurements for model-visible content.
 //!
 //! Session lines can hold megabytes of tool output. Keeping a second copy just
 //! to compare it later would defeat the lazy-content design, so adapters hash
-//! content while the parsed JSON value is already in memory and retain only
-//! the digest.
+//! and compress content while the parsed JSON value is already in memory and
+//! retain only the digest and two byte counts.
 
-use ct_domain::ContentFingerprint;
+use ct_domain::{ContentFingerprint, ContentMeasurement};
+use miniz_oxide::deflate::compress_to_vec;
 use serde_json::Value;
 
-/// Fingerprint one text payload exactly.
-pub(crate) fn text(value: &str) -> ContentFingerprint {
+/// Measure one text payload exactly.
+pub(crate) fn text(value: &str) -> ContentMeasurement {
     bytes(value.as_bytes())
 }
 
-/// Fingerprint a JSON value in the representation the parser received.
+/// Measure a JSON value in the representation the parser received.
 ///
 /// `serde_json`'s `preserve_order` feature is enabled workspace-wide, so object
 /// key order survives parsing. This is intentionally exact matching rather
 /// than canonical JSON equivalence: near-duplicate normalisation belongs to a
 /// separate detector.
-pub(crate) fn value(value: &Value) -> ContentFingerprint {
+pub(crate) fn value(value: &Value) -> ContentMeasurement {
     match value {
         // Transport wrappers should not stop the same plain-text content from
         // matching across a message, attachment and tool result.
@@ -28,8 +29,16 @@ pub(crate) fn value(value: &Value) -> ContentFingerprint {
     }
 }
 
-fn bytes(value: &[u8]) -> ContentFingerprint {
-    ContentFingerprint::new(sha256(value))
+fn bytes(value: &[u8]) -> ContentMeasurement {
+    // A Vec is bounded by the input's DEFLATE representation and dropped
+    // immediately. The session keeps only the two byte counts and a digest.
+    // Level 6 is the conventional speed/ratio compromise used by gzip.
+    let compressed = compress_to_vec(value, 6);
+    ContentMeasurement::new(
+        ContentFingerprint::new(sha256(value)),
+        value.len(),
+        compressed.len(),
+    )
 }
 
 // Kept here instead of adding a hashing crate because this repository targets
@@ -146,6 +155,19 @@ mod tests {
             value(&json!({"a": 1, "b": 2})),
             value(&json!({"b": 2, "a": 1}))
         );
+    }
+
+    #[test]
+    fn repeated_content_has_a_far_smaller_compressed_representation() {
+        let measurement = text(&"node_modules/pkg/index.js\n".repeat(2_000));
+        assert!(measurement.original_bytes > 40_000);
+        assert!(measurement.compression_ratio() < 0.05);
+    }
+
+    #[test]
+    fn deflate_block_overhead_is_retained_in_the_measurement() {
+        let measurement = text("x");
+        assert!(measurement.compressed_bytes > measurement.original_bytes);
     }
 
     #[test]

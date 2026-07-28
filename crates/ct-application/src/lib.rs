@@ -203,19 +203,20 @@ impl ContextTrace {
         Ok((session, resolved))
     }
 
-    /// Resolve and parse a session for an analysis that compares item content.
+    /// Resolve and parse a session for analyses that compare or compress item
+    /// content.
     ///
     /// Kept separate from [`ContextTrace::load`] so commands that only inspect
-    /// event structure do not hash every payload and immediately discard the
-    /// result.
-    pub fn load_with_content_fingerprints(
+    /// event structure do not hash and compress every payload only to discard
+    /// the result.
+    pub fn load_with_content_analysis(
         &self,
         id_or_prefix: &str,
     ) -> Result<(AgentSession, ResolvedSession), AppError> {
         let resolved = self.resolve(id_or_prefix)?;
         let session = self.bindings[resolved.binding]
             .adapter
-            .load_with_content_fingerprints(&resolved.descriptor)?;
+            .load_with_content_analysis(&resolved.descriptor)?;
         Ok((session, resolved))
     }
 
@@ -928,7 +929,7 @@ mod tests {
                 raw_type: "x".into(),
                 turn: None,
                 links: EventLinks::default(),
-                content_fingerprint: None,
+                content_measurement: None,
             })
             .collect();
 

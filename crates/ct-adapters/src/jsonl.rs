@@ -14,10 +14,9 @@
 //! learn the least from.
 //!
 //! So lines above [`MAX_PARSE_BYTES`] are not fully parsed. We sniff their type
-//! from a bounded prefix and record their byte length -- which is all the
-//! reconstruction engine actually needs, since it estimates from content size
-//! and re-reads full content on demand through the
-//! [`RawEventSource`](ct_domain::ports::RawEventSource) port anyway.
+//! from a bounded prefix and let the receiving adapter inspect the raw bytes
+//! before this reader reuses its buffer. That permits narrow, allocation-free
+//! recovery of context metadata without building a multi-megabyte JSON tree.
 
 use ct_domain::ports::{PortError, PortResult};
 use serde_json::Value;
@@ -27,9 +26,8 @@ use std::path::Path;
 
 /// Lines larger than this are sniffed rather than parsed.
 ///
-/// 4 MiB comfortably exceeds any ordinary event (the largest genuine tool
-/// output observed in this machine's corpus is well under it) while excluding
-/// the base64 blobs that make up the pathological cases.
+/// 4 MiB comfortably exceeds ordinary textual events while excluding the
+/// inline-image payloads that make up the pathological cases.
 pub const MAX_PARSE_BYTES: usize = 4 * 1024 * 1024;
 
 /// How much of an oversized line to inspect when sniffing its type.
@@ -67,7 +65,10 @@ impl LineRecord {
 /// Never fails on a bad line: malformed JSON yields a record with `value:
 /// None`, which adapters translate into an unrecognised event. A single corrupt
 /// line must not cost the user the rest of a session.
-pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord)) -> PortResult<()> {
+pub fn read_lines(
+    path: &Path,
+    mut visit: impl FnMut(LineRecord, &[u8]),
+) -> PortResult<()> {
     let file = File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
     // 1 MiB buffer: these files are large and read strictly sequentially.
     let mut reader = BufReader::with_capacity(1024 * 1024, file);
@@ -105,7 +106,7 @@ pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord)) -> PortResult<
         let record = if content.len() > MAX_PARSE_BYTES {
             LineRecord {
                 offset: line_offset,
-                len: content.len() as u32,
+                len: content.len().min(u32::MAX as usize) as u32,
                 line_no,
                 value: None,
                 oversized: true,
@@ -114,7 +115,7 @@ pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord)) -> PortResult<
         } else {
             LineRecord {
                 offset: line_offset,
-                len: content.len() as u32,
+                len: content.len().min(u32::MAX as usize) as u32,
                 line_no,
                 value: serde_json::from_slice(content).ok(),
                 oversized: false,
@@ -122,7 +123,7 @@ pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord)) -> PortResult<
             }
         };
 
-        visit(record);
+        visit(record, content);
     }
 
     Ok(())
@@ -165,7 +166,7 @@ mod tests {
             b"{\"type\":\"a\"}\n{\"type\":\"b\"}\n",
         );
         let mut seen = Vec::new();
-        read_lines(&path, |r| {
+        read_lines(&path, |r, _| {
             seen.push((r.line_no, r.offset, r.len, r.type_str().map(String::from)))
         })
         .unwrap();
@@ -183,7 +184,7 @@ mod tests {
             b"{\"type\":\"good\"}\nNOT JSON AT ALL\n{\"type\":\"also-good\"}\n",
         );
         let mut kinds = Vec::new();
-        read_lines(&path, |r| kinds.push(r.type_str().map(String::from))).unwrap();
+        read_lines(&path, |r, _| kinds.push(r.type_str().map(String::from))).unwrap();
 
         assert_eq!(
             kinds,
@@ -197,7 +198,7 @@ mod tests {
     fn blank_lines_are_skipped_but_still_advance_offsets() {
         let path = temp_file("blank.jsonl", b"{\"type\":\"a\"}\n\n{\"type\":\"b\"}\n");
         let mut seen = Vec::new();
-        read_lines(&path, |r| seen.push((r.line_no, r.offset))).unwrap();
+        read_lines(&path, |r, _| seen.push((r.line_no, r.offset))).unwrap();
         assert_eq!(seen.len(), 2);
         assert_eq!(seen[1], (3, 14), "offset must account for the blank line");
         let _ = std::fs::remove_file(path);
@@ -207,7 +208,7 @@ mod tests {
     fn crlf_endings_are_not_counted_as_content() {
         let path = temp_file("crlf.jsonl", b"{\"type\":\"a\"}\r\n");
         let mut lens = Vec::new();
-        read_lines(&path, |r| lens.push(r.len)).unwrap();
+        read_lines(&path, |r, _| lens.push(r.len)).unwrap();
         assert_eq!(lens, vec![12], "CR and LF are framing, not payload");
         let _ = std::fs::remove_file(path);
     }
@@ -219,7 +220,8 @@ mod tests {
         let path = temp_file("oversized.jsonl", line.as_bytes());
 
         let mut seen = Vec::new();
-        read_lines(&path, |r| {
+        read_lines(&path, |r, raw| {
+            assert_eq!(raw.len(), r.len as usize);
             seen.push((r.oversized, r.value.is_none(), r.type_str().map(String::from), r.len))
         })
         .unwrap();

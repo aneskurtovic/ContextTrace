@@ -446,7 +446,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             json,
         } => {
             let filter = filter.build()?;
-            let (session, resolved) = app.load_with_content_fingerprints(&id)?;
+            let (session, resolved) = app.load_with_content_analysis(&id)?;
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let (snapshot, recount) =

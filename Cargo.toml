@@ -60,6 +60,7 @@ clap = { version = "4", default-features = false, features = [
     "usage",
     "error-context",
 ] }
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 
 [workspace.lints.clippy]
 # Descending sorts are written `b.cmp(&a)` throughout, which reads as what it is.

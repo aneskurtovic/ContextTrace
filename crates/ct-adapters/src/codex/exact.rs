@@ -20,6 +20,7 @@
 //! anyway would be worse than not counting them.
 
 use super::parse;
+use crate::jsonl::MAX_PARSE_BYTES;
 use ct_domain::ports::{ExactRecount, RawEventSource, TokenEstimator};
 use ct_domain::ContextItem;
 use serde_json::Value;
@@ -42,6 +43,15 @@ pub fn recount(
             report.unavailable += 1;
             continue;
         };
+
+        // Oversized lines were deliberately not parsed during ingestion. Do
+        // not defeat that memory bound during an exact recount: their narrow
+        // scan already established that some content is non-text or only
+        // partially measurable.
+        if source.byte_len as usize > MAX_PARSE_BYTES {
+            report.opaque += 1;
+            continue;
+        }
 
         let Ok(line) = raw.fetch(source) else {
             report.unavailable += 1;
@@ -121,6 +131,14 @@ mod tests {
         }
     }
 
+    struct MustNotFetch;
+
+    impl RawEventSource for MustNotFetch {
+        fn fetch(&self, _source: SourceRef) -> PortResult<String> {
+            panic!("an oversized line must not be fetched for exact recounting")
+        }
+    }
+
     fn item(line: u32) -> ContextItem {
         ContextItem {
             id: ContextItemId::new(format!("codex:{line}")),
@@ -131,7 +149,7 @@ mod tests {
             first_seen_turn: None,
             provenance: Provenance::observed(SourceRef::new(FileId(0), 0, 0, line)),
             preview: None,
-            content_fingerprint: None,
+            content_measurement: None,
         }
     }
 
@@ -168,6 +186,24 @@ mod tests {
         assert_eq!(report.opaque, 1);
         assert_eq!(report.counted, 0);
         assert_eq!(items[0].tokens.tokens(), 9999, "the estimate must survive untouched");
+    }
+
+    #[test]
+    fn an_oversized_item_is_refused_before_the_raw_line_is_fetched() {
+        let mut oversized = item(1);
+        oversized.provenance = Provenance::observed(SourceRef::new(
+            FileId(0),
+            0,
+            (MAX_PARSE_BYTES + 1) as u32,
+            1,
+        ));
+        let mut items = vec![oversized];
+
+        let report = recount(&mut items, &MustNotFetch, &tiktoken());
+
+        assert_eq!(report.opaque, 1);
+        assert_eq!(report.counted, 0);
+        assert_eq!(items[0].tokens.tokens(), 9999);
     }
 
     #[test]

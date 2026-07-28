@@ -69,12 +69,12 @@ fn codex() -> (CodexAdapter, AgentSession) {
 }
 
 #[test]
-fn content_fingerprints_are_opt_in_to_the_analysis_that_uses_them() {
+fn content_measurements_are_opt_in_to_the_analyses_that_use_them() {
     let adapter = CodexAdapter::new();
     let d = descriptor(
         fixture("codex", "rollout.jsonl"),
         AgentKind::Codex,
-        "fixture-codex-fingerprints",
+        "fixture-codex-content-analysis",
     );
 
     let ordinary = adapter.load(&d).expect("the fixture must parse");
@@ -82,19 +82,19 @@ fn content_fingerprints_are_opt_in_to_the_analysis_that_uses_them() {
         ordinary
             .events()
             .iter()
-            .all(|event| event.content_fingerprint.is_none()),
-        "ordinary inspection and corpus sweeps must not pay to hash content"
+            .all(|event| event.content_measurement.is_none()),
+        "ordinary inspection and corpus sweeps must not pay to analyse content"
     );
 
     let analysed = adapter
-        .load_with_content_fingerprints(&d)
-        .expect("the fixture must parse with fingerprints");
+        .load_with_content_analysis(&d)
+        .expect("the fixture must parse with content analysis");
     assert!(
         analysed
             .events()
             .iter()
-            .any(|event| event.content_fingerprint.is_some()),
-        "the context analysis path must retain content identities"
+            .any(|event| event.content_measurement.is_some()),
+        "the context analysis path must retain fixed-size content measurements"
     );
 }
 

@@ -91,7 +91,7 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
 pub fn load(
     path: &Path,
     id: SessionId,
-    include_content_fingerprints: bool,
+    include_content_analysis: bool,
 ) -> PortResult<AgentSession> {
     let mut events: Vec<Event> = Vec::new();
     let mut metadata = SessionMetadata::default();
@@ -102,9 +102,9 @@ pub fn load(
     // imply a per-line figure that does not exist.
     let mut extras: Vec<LineExtras> = Vec::new();
 
-    jsonl::read_lines(path, |record| {
+    jsonl::read_lines(path, |record, _raw| {
         let (event, line_extras) =
-            translate(&record, &mut metadata, include_content_fingerprints);
+            translate(&record, &mut metadata, include_content_analysis);
         if matches!(event.kind, EventKind::Unrecognised) {
             *unrecognised.entry(event.raw_type.clone()).or_insert(0) += 1;
         }
@@ -143,7 +143,7 @@ struct LineExtras {
 fn translate(
     record: &LineRecord,
     metadata: &mut SessionMetadata,
-    include_content_fingerprints: bool,
+    include_content_analysis: bool,
 ) -> (Event, LineExtras) {
     let source = SourceRef::new(FileId(0), record.offset, record.len, record.line_no);
     let raw_type = record.type_str().unwrap_or("unknown").to_string();
@@ -197,8 +197,8 @@ fn translate(
         }
     };
 
-    let content_fingerprint = include_content_fingerprints
-        .then(|| value.and_then(|value| content_fingerprint(value, &kind)))
+    let content_measurement = include_content_analysis
+        .then(|| value.and_then(|value| content_measurement(value, &kind)))
         .flatten();
     let event = Event {
         id: links
@@ -213,7 +213,7 @@ fn translate(
         raw_type,
         turn: None,
         links,
-        content_fingerprint,
+        content_measurement,
     };
 
     (event, extras)
@@ -224,15 +224,15 @@ fn translate(
 /// UUIDs, request ids and tool-use ids are transport/linkage, not content.
 /// They are deliberately excluded so a retry that re-injects the same output
 /// under a fresh id still compares equal.
-fn content_fingerprint(
+fn content_measurement(
     value: &Value,
     kind: &EventKind,
-) -> Option<ct_domain::ContentFingerprint> {
+) -> Option<ct_domain::ContentMeasurement> {
     match kind {
         EventKind::ToolResult { .. } => {
-            fingerprint_blocks_without_link_id(value, "tool_use_id")
+            measure_blocks_without_link_id(value, "tool_use_id")
         }
-        EventKind::ToolCall { .. } => fingerprint_blocks_without_link_id(value, "id"),
+        EventKind::ToolCall { .. } => measure_blocks_without_link_id(value, "id"),
         EventKind::Reasoning {
             redacted: false, ..
         } => {
@@ -285,10 +285,10 @@ fn content_fingerprint(
 /// id. A Claude line can carry explanatory text beside its tool block; hashing
 /// only the call or result would falsely group lines whose surrounding content
 /// differs.
-fn fingerprint_blocks_without_link_id(
+fn measure_blocks_without_link_id(
     value: &Value,
     link_key: &str,
-) -> Option<ct_domain::ContentFingerprint> {
+) -> Option<ct_domain::ContentMeasurement> {
     let mut blocks = value.get("message")?.get("content")?.as_array()?.clone();
     for block in &mut blocks {
         if let Some(object) = block.as_object_mut() {
@@ -909,8 +909,8 @@ mod tests {
         let first_kind = user_kind(&first);
         let retry_kind = user_kind(&retry);
         assert_eq!(
-            content_fingerprint(&first, &first_kind),
-            content_fingerprint(&retry, &retry_kind)
+            content_measurement(&first, &first_kind),
+            content_measurement(&retry, &retry_kind)
         );
     }
 
@@ -931,8 +931,8 @@ mod tests {
         let first_kind = assistant_kind(&first);
         let second_kind = assistant_kind(&second);
         assert_ne!(
-            content_fingerprint(&first, &first_kind),
-            content_fingerprint(&second, &second_kind)
+            content_measurement(&first, &first_kind),
+            content_measurement(&second, &second_kind)
         );
     }
 
@@ -946,7 +946,7 @@ mod tests {
             }]}
         });
         let kind = assistant_kind(&line);
-        assert_eq!(content_fingerprint(&line, &kind), None);
+        assert_eq!(content_measurement(&line, &kind), None);
     }
 
     #[test]

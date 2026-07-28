@@ -383,7 +383,7 @@ mod tests {
             raw_type: "x".into(),
             turn: None,
             links: EventLinks::default(),
-            content_fingerprint: None,
+            content_measurement: None,
         }
     }
 

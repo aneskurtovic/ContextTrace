@@ -6,6 +6,7 @@
 //! [`context`] holds the [`ContextSnapshot`](context::ContextSnapshot)
 //! aggregate that the whole product exists to produce.
 
+pub mod analysis;
 pub mod context;
 pub mod event;
 pub mod filter;

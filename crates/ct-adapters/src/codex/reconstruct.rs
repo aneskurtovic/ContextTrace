@@ -11,13 +11,13 @@
 //! `replacement_history`. We model that as clearing the live list and inserting
 //! a single summary item, which is what the model actually saw afterwards.
 
+use crate::tool_target::{self, CallIndex};
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{PortError, PortResult, ReconstructedContext, TokenEstimator};
 use ct_domain::{
     AgentSession, CompactionEvent, Confidence, ContextCategory, ContextItem, ContextItemId,
     ContextSource, Event, MessageRole, Provenance, TokenCount, TurnNumber,
 };
-use crate::tool_target::{self, CallIndex};
 
 pub fn reconstruct(
     session: &AgentSession,
@@ -123,7 +123,7 @@ fn to_item(
         // Its *size* is a separate question, carried by `tokens`.
         provenance: Provenance::observed(event.source),
         preview: preview_for(event),
-        content_fingerprint: event.content_fingerprint,
+        content_measurement: event.content_measurement,
     })
 }
 
@@ -174,6 +174,32 @@ fn classify(
                 tool_target::label(&name, matched.and_then(|(_, t)| *t)),
             )
         }
+        EventKind::OversizedToolResult {
+            call_id,
+            image_count,
+            image_payload_chars,
+            ..
+        } => {
+            let matched = call_id.as_deref().and_then(|id| tool_names.get(id));
+            let name = matched
+                .map(|(tool, _)| tool.to_string())
+                .or_else(|| call_id.clone())
+                .unwrap_or_else(|| "tool".into());
+            let base = tool_target::label(&name, matched.and_then(|(_, target)| *target));
+            let detail = if *image_count == 0 {
+                "oversized output; partial size".to_string()
+            } else {
+                format!(
+                    "oversized output; {image_count} inline image(s), {} payload chars excluded from text estimate",
+                    image_payload_chars
+                )
+            };
+            (
+                ContextCategory::ToolOutputs,
+                ContextSource::ToolExecution { tool: name },
+                format!("{base} [{detail}]"),
+            )
+        }
         EventKind::ContextInjection {
             mechanism, label, ..
         } => (
@@ -214,7 +240,7 @@ fn compaction_summary_item(event: &Event, estimator: &dyn TokenEstimator) -> Con
             source: Some(event.source),
         },
         preview: None,
-        content_fingerprint: event.content_fingerprint,
+        content_measurement: event.content_measurement,
     }
 }
 
@@ -268,7 +294,7 @@ mod tests {
             raw_type: "response_item".into(),
             turn,
             links: EventLinks::default(),
-            content_fingerprint: None,
+            content_measurement: None,
         }
     }
 
@@ -332,6 +358,51 @@ mod tests {
         assert_eq!(item.tokens.confidence(), Confidence::Estimated);
         // The combination is only as strong as its weakest part.
         assert_eq!(item.confidence(), Confidence::Estimated);
+    }
+
+    #[test]
+    fn oversized_tool_output_survives_with_image_cost_left_unattributed() {
+        let events = vec![
+            event(
+                1,
+                EventKind::ToolCall {
+                    tool: "shell".into(),
+                    call_id: Some("call-1".into()),
+                    target: Some("cargo test".into()),
+                    char_len: 20,
+                },
+                Some(TurnNumber::FIRST),
+            ),
+            event(
+                2,
+                EventKind::OversizedToolResult {
+                    call_id: Some("call-1".into()),
+                    non_image_chars: 80,
+                    image_count: 2,
+                    image_payload_chars: 8_000_000,
+                },
+                Some(TurnNumber::FIRST),
+            ),
+        ];
+        let s = session(events, 1, 10_000);
+        let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
+        let output = &r.items[1];
+
+        assert_eq!(output.category, ContextCategory::ToolOutputs);
+        assert_eq!(
+            output.source,
+            ContextSource::ToolExecution {
+                tool: "shell".into()
+            }
+        );
+        assert!(output.label.contains("cargo test"));
+        assert!(output.label.contains("2 inline image(s)"));
+        assert!(output.label.contains("8000000 payload chars excluded"));
+        assert!(
+            output.tokens.tokens() < 100,
+            "base64 must not be converted into text tokens"
+        );
+        assert_eq!(output.confidence(), Confidence::Estimated);
     }
 
     #[test]
