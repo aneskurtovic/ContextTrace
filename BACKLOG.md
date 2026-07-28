@@ -171,6 +171,16 @@ estimator defaulting that `SessionCalibration::effective` was written to remove.
 The refusal names the way out (`pass --turn N`), and that path gives an honest
 `10,372 [estimated]` where the default previously gave `0 [observed]`.
 
+**All six commands that default through this path were then run against an
+affected session**, because a shared refusal is only as good as its worst call
+site. Two follow-on fixes came out of it: the message said "this session" while
+`ct diff` resolves two of them, so it now names the session id — in the one
+command whose whole job is keeping two sides apart; and `ct growth` returned
+silently from drawing a chart it had no scale for, leaving a header with nothing
+under it, which reads as "flat" or as a display bug rather than as "nothing was
+measured". Neither was visible from the unit tests or from the two commands
+checked first.
+
 ### CT-022 · Context growth timeline
 `status: done` · `tier: B` · `size: S` · `source: plan`
 
