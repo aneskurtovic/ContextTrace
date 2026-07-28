@@ -16,9 +16,10 @@ use ct_domain::services::TokenCalibrator;
 use ct_domain::{
     AgentKind, AgentSession, ContextSnapshot, SessionDescriptor, SessionId, TokenCount, TurnNumber,
 };
+use std::collections::BTreeMap;
 use std::fmt;
 
-pub use diagnostics::{Diagnostics, ResidualSpike};
+pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 
@@ -394,6 +395,87 @@ impl ContextTrace {
     }
 
     /// Run read-only diagnostics over a parsed session.
+    /// Parse every discovered session and report what was not understood.
+    ///
+    /// `path_prefix` narrows the sweep to sessions whose file lives under a
+    /// directory. Narrowing by *discovered* path rather than by walking an
+    /// arbitrary directory is the point: the agent behind each file is then
+    /// known from its descriptor, so nothing has to be guessed from a file's
+    /// contents. Sniffing would mean inventing a detection rule, and a
+    /// misdetected file reports as wholesale drift -- the loudest possible way
+    /// for a guess to be wrong.
+    ///
+    /// One unreadable session never stops the sweep. Finding out that four
+    /// hundred sessions are fine and one is not is the whole point of running
+    /// this, and aborting on the first failure would report the opposite.
+    pub fn sweep_drift(&self, path_prefix: Option<&str>) -> DriftReport {
+        // Keyed by agent and raw type, because the same type name from two
+        // agents is two different findings.
+        let mut seen: BTreeMap<(AgentKind, String), (u32, usize, String)> = BTreeMap::new();
+        let mut report = DriftReport::default();
+
+        for binding in &self.bindings {
+            let agent = binding.adapter.agent();
+            let Ok(descriptors) = binding.adapter.discover() else {
+                continue;
+            };
+            let mut scanned = 0usize;
+
+            for descriptor in descriptors {
+                if !path_matches(&descriptor.path, path_prefix) {
+                    continue;
+                }
+                scanned += 1;
+
+                let session = match binding.adapter.load(&descriptor) {
+                    Ok(session) => session,
+                    Err(e) => {
+                        report.unreadable.push(UnreadableSession {
+                            id: descriptor.id.to_string(),
+                            agent,
+                            path: descriptor.path.clone(),
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                report.total_events += session.events().len();
+                report.unrecognised_events += session.unrecognised_total();
+
+                for (raw_type, count) in session.unrecognised() {
+                    let entry = seen
+                        .entry((agent, raw_type.clone()))
+                        .or_insert_with(|| (0, 0, session.id().to_string()));
+                    entry.0 += count;
+                    entry.1 += 1;
+                }
+            }
+
+            report.sessions_scanned += scanned;
+            report.scanned_by_agent.push((agent, scanned));
+        }
+
+        report.types = seen
+            .into_iter()
+            .map(|((agent, raw_type), (events, sessions, example))| DriftType {
+                agent,
+                raw_type,
+                events,
+                sessions,
+                example,
+            })
+            .collect();
+        // Spread first, then volume: a type in every session is a shipped
+        // format change, and one appearing many times in a single session is
+        // more likely one long-running experiment.
+        report
+            .types
+            .sort_by(|a, b| b.sessions.cmp(&a.sessions).then(b.events.cmp(&a.events)));
+
+        report
+    }
+
     pub fn diagnose(&self, session: &AgentSession) -> Diagnostics {
         diagnostics::diagnose(session)
     }
@@ -531,6 +613,25 @@ impl TokenEstimator for CharProbe {
     fn name(&self) -> &str {
         "characters"
     }
+}
+
+/// Is this session file under `prefix`?
+///
+/// Separators are normalised and case is folded, because on Windows a user who
+/// types the path they see in `ct roots` will mix `\` and `/` and will not match
+/// the drive letter's case. A prefix that matches nothing is reported as a
+/// swept-nothing result rather than an error -- the sweep cannot tell a typo
+/// from a directory that genuinely holds no sessions, and guessing which it was
+/// would be worse than saying zero.
+fn path_matches(path: &str, prefix: Option<&str>) -> bool {
+    let Some(prefix) = prefix.filter(|p| !p.is_empty()) else {
+        return true;
+    };
+    normalise_path(path).starts_with(&normalise_path(prefix))
+}
+
+fn normalise_path(path: &str) -> String {
+    path.replace('\\', "/").to_lowercase()
 }
 
 fn matches_filter(descriptor: &SessionDescriptor, filter: &SessionFilter) -> bool {
@@ -715,5 +816,188 @@ mod tests {
             matches_filter(&d, &f),
             "a missing field must not silently hide a session"
         );
+    }
+
+    #[test]
+    fn a_path_prefix_survives_the_separator_and_case_a_user_will_type() {
+        let path = r"C:\Users\anesk\.codex\sessions\2026\07\rollout.jsonl";
+        assert!(path_matches(path, Some("c:/users/anesk/.codex")));
+        assert!(path_matches(path, Some(r"C:\Users\anesk\.codex\sessions\2026")));
+        assert!(!path_matches(path, Some(r"C:\Users\anesk\.claude")));
+    }
+
+    #[test]
+    fn an_absent_or_empty_prefix_sweeps_everything() {
+        // `--dir` with no value means "everywhere", which clap gives us as an
+        // empty string rather than as `None`.
+        let path = "/home/x/.codex/s.jsonl";
+        assert!(path_matches(path, None));
+        assert!(path_matches(path, Some("")));
+    }
+
+    /// Serves a fixed set of sessions, so the sweep's aggregation can be tested
+    /// without a corpus on disk.
+    struct FakeAdapter {
+        agent: AgentKind,
+        sessions: Vec<(SessionDescriptor, Result<AgentSession, ()>)>,
+    }
+
+    impl ct_domain::ports::AgentAdapter for FakeAdapter {
+        fn agent(&self) -> AgentKind {
+            self.agent
+        }
+        fn roots(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn discover(&self) -> ct_domain::ports::PortResult<Vec<SessionDescriptor>> {
+            Ok(self.sessions.iter().map(|(d, _)| d.clone()).collect())
+        }
+        fn load(&self, wanted: &SessionDescriptor) -> ct_domain::ports::PortResult<AgentSession> {
+            let found = self
+                .sessions
+                .iter()
+                .find(|(d, _)| d.id == wanted.id)
+                .expect("test asked for a session it did not register");
+            match &found.1 {
+                Ok(session) => Ok(session.clone()),
+                Err(()) => Err(PortError::Io("disk on fire".into())),
+            }
+        }
+        fn reconstruct(
+            &self,
+            _: &AgentSession,
+            _: TurnNumber,
+            _: &dyn TokenEstimator,
+        ) -> ct_domain::ports::PortResult<ct_domain::ports::ReconstructedContext> {
+            unimplemented!("the sweep never reconstructs")
+        }
+    }
+
+    fn swept_session(id: &str, events: usize, unrecognised: Vec<(&str, u32)>) -> AgentSession {
+        use ct_domain::model::event::EventLinks;
+        use ct_domain::{Event, EventId, EventKind, FileId, SessionMetadata, SourceRef};
+
+        let events = (0..events)
+            .map(|i| Event {
+                id: EventId::Ordinal(i as u32),
+                sequence: i as u32,
+                timestamp: None,
+                kind: EventKind::SessionStarted,
+                source: SourceRef::new(FileId(0), 0, 0, i as u32 + 1),
+                raw_type: "x".into(),
+                turn: None,
+                links: EventLinks::default(),
+            })
+            .collect();
+
+        AgentSession::new(
+            SessionId::new(id).unwrap(),
+            AgentKind::Codex,
+            SessionMetadata::default(),
+            events,
+            vec![],
+            unrecognised
+                .into_iter()
+                .map(|(t, n)| (t.to_string(), n))
+                .collect(),
+        )
+    }
+
+    fn sweeping(
+        agent: AgentKind,
+        sessions: Vec<(SessionDescriptor, Result<AgentSession, ()>)>,
+    ) -> ContextTrace {
+        ContextTrace::new(vec![AgentBinding::new(
+            Box::new(FakeAdapter { agent, sessions }),
+            Box::new(CharProbe),
+        )])
+    }
+
+    #[test]
+    fn drift_counts_sessions_not_just_events() {
+        // The figure that separates a one-off from a shipped format change.
+        let app = sweeping(
+            AgentKind::Codex,
+            vec![
+                (
+                    descriptor("a", AgentKind::Codex, "p", 1),
+                    Ok(swept_session("a", 10, vec![("new_type", 3)])),
+                ),
+                (
+                    descriptor("b", AgentKind::Codex, "p", 2),
+                    Ok(swept_session("b", 10, vec![("new_type", 1)])),
+                ),
+                (
+                    descriptor("c", AgentKind::Codex, "p", 3),
+                    Ok(swept_session("c", 10, vec![])),
+                ),
+            ],
+        );
+
+        let report = app.sweep_drift(None);
+        assert_eq!(report.sessions_scanned, 3);
+        assert_eq!(report.total_events, 30);
+        assert_eq!(report.types.len(), 1);
+        assert_eq!(report.types[0].events, 4);
+        assert_eq!(report.types[0].sessions, 2);
+        assert!(!report.is_clean());
+    }
+
+    #[test]
+    fn one_unreadable_session_does_not_end_the_sweep() {
+        // Finding out that the rest are fine is the entire reason to run this.
+        let app = sweeping(
+            AgentKind::Codex,
+            vec![
+                (descriptor("a", AgentKind::Codex, "p", 1), Err(())),
+                (
+                    descriptor("b", AgentKind::Codex, "p", 2),
+                    Ok(swept_session("b", 5, vec![])),
+                ),
+            ],
+        );
+
+        let report = app.sweep_drift(None);
+        assert_eq!(report.sessions_scanned, 2);
+        assert_eq!(report.total_events, 5, "the readable session was still parsed");
+        assert_eq!(report.unreadable.len(), 1);
+        assert!(
+            report.types.is_empty(),
+            "an unreadable file is not an unrecognised event type"
+        );
+        assert!(!report.is_clean(), "but it is still a reason to fail CI");
+    }
+
+    #[test]
+    fn a_clean_sweep_reports_full_fidelity_rather_than_silence() {
+        let app = sweeping(
+            AgentKind::Codex,
+            vec![(
+                descriptor("a", AgentKind::Codex, "p", 1),
+                Ok(swept_session("a", 12, vec![])),
+            )],
+        );
+
+        let report = app.sweep_drift(None);
+        assert!(report.is_clean());
+        assert_eq!(report.fidelity(), 1.0);
+        assert_eq!(report.scanned_by_agent, vec![(AgentKind::Codex, 1)]);
+    }
+
+    #[test]
+    fn a_prefix_matching_nothing_sweeps_nothing_rather_than_erroring() {
+        // The sweep cannot tell a typo from a directory that holds no sessions,
+        // and guessing which it was would be worse than reporting zero.
+        let app = sweeping(
+            AgentKind::Codex,
+            vec![(
+                descriptor("a", AgentKind::Codex, "p", 1),
+                Ok(swept_session("a", 5, vec![("new_type", 1)])),
+            )],
+        );
+
+        let report = app.sweep_drift(Some("Z:/nowhere"));
+        assert_eq!(report.sessions_scanned, 0);
+        assert!(report.is_clean(), "nothing swept is not a drift finding");
     }
 }

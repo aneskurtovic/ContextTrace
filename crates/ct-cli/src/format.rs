@@ -3,8 +3,11 @@
 use ct_domain::{Confidence, TokenCount};
 
 /// Thousands-separated integer, e.g. `146820` -> `146,820`.
-pub fn thousands(n: u32) -> String {
-    let digits = n.to_string();
+///
+/// Generic over the width because a corpus sweep counts events across hundreds
+/// of sessions, which outgrows the `u32` every per-session figure fits in.
+pub fn thousands(n: impl Into<u64>) -> String {
+    let digits = n.into().to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i) % 3 == 0 {
@@ -149,11 +152,14 @@ mod tests {
 
     #[test]
     fn thousands_separates_correctly() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_000), "1,000");
-        assert_eq!(thousands(146_820), "146,820");
-        assert_eq!(thousands(1_234_567), "1,234,567");
+        assert_eq!(thousands(0u32), "0");
+        assert_eq!(thousands(999u32), "999");
+        assert_eq!(thousands(1_000u32), "1,000");
+        assert_eq!(thousands(146_820u32), "146,820");
+        assert_eq!(thousands(1_234_567u32), "1,234,567");
+        // The width that motivated making this generic: a corpus sweep counts
+        // events across hundreds of sessions.
+        assert_eq!(thousands(9_876_543_210u64), "9,876,543,210");
     }
 
     #[test]

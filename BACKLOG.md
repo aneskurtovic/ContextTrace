@@ -149,10 +149,9 @@ being asked about, in both directions, with fixture coverage. ✔
 
 ## Next
 
-### CT-019 · `ct doctor --dir` — format-drift reporting across many sessions
-`status: next` · `tier: A` · `size: S` · `source: IDEAS.md §2`
-Promoted on CT-035's completion; the entry is under **Todo** below, where its
-reasoning already sits.
+### CT-037 · Codex `web_search_call` response items are unparsed
+`status: next` · `tier: A` · `size: S` · `source: CT-019`
+Found by the first `ct doctor --dir` run; the entry is under **Todo** below.
 
 ---
 
@@ -353,16 +352,65 @@ rather than reusing the "plus whatever the estimates missed" clause, which is
 false where nothing was estimated. Those two figures are also the first clean
 measurement of Codex's schema overhead, which no other view can reach.
 
+### CT-019 · `ct doctor --dir` — format-drift reporting across many sessions
+`status: done` · `tier: A` · `size: S` · `source: IDEAS.md §2`
+**Why:** the corpus sweep already found five new event types this way; it should
+be a command rather than a scratch script.
+**Done when:** a histogram of unrecognised types across a directory, with a
+non-zero exit code when recognition drops, so it can gate CI. ✔
+
+**The gate is on presence, not on a percentage.** A fidelity threshold would
+hide the case worth catching: a new event type appearing once in half a million
+events is the same news as one appearing everywhere — an agent shipped
+something this build does not parse. So `is_clean()` is `types.is_empty() &&
+unreadable.is_empty()`, and unreadable files are counted apart from unrecognised
+types because a truncated write is not a format change.
+
+**Sessions-per-type is the figure that makes the histogram readable.** A raw
+count cannot separate a long-running experiment in one session from a change
+that has shipped to all of them, so every row carries `n/total` and one example
+id to run `ct inspect` against.
+
+**`--dir` narrows the discovered sessions rather than walking a directory.**
+The agent behind each file is then known from its descriptor and nothing has to
+be sniffed from contents. Detecting an agent from a file's first line would mean
+inventing a rule, and a misdetected file reports as wholesale drift — the
+loudest possible way for a guess to be wrong.
+
+**It found two real defects on its first run**, which is the argument for having
+built it: 774 sessions, 126,330 events, 4.3 s, 99.60% fidelity, three findings.
+Codex `web_search_call` items are unparsed (CT-037) and `journal.jsonl` is being
+discovered as a session (CT-038). Both are filed rather than fixed here, because
+a detector and the defects it detects are different commits.
+
 ---
 
 ## Todo
 
-### CT-019 · `ct doctor --dir` — format-drift reporting across many sessions
-`status: next` · `tier: A` · `size: S` · `source: IDEAS.md §2`
-**Why:** the corpus sweep already found five new event types this way; it should
-be a command rather than a scratch script.
-**Done when:** a histogram of unrecognised types across a directory, with a
-non-zero exit code when recognition drops, so it can gate CI.
+### CT-037 · Codex `web_search_call` response items are unparsed
+`status: next` · `tier: A` · `size: S` · `source: CT-019`
+**Why:** 38 events across 3 local sessions, found by the first `ct doctor --dir`
+run. `response_item/web_search_call` is a real API item that occupied context,
+so every turn containing one under-accounts. Its query text lives in
+`action.query` / `action.queries` rather than in `arguments`, so `content_chars`
+returns 0 for it even once it is recognised — parsing it and labelling it are
+two separate halves.
+**Done when:** the item is classified as a tool call, sized from its action, and
+labelled with the query it ran, following CT-034's argument-name approach rather
+than a hardcoded shape.
+
+### CT-038 · `journal.jsonl` is discovered as a Claude Code session
+`status: todo` · `tier: A` · `size: S` · `source: CT-019`
+**Why:** also found by the first `ct doctor --dir` run — 466 unrecognised events
+across 4 files. `subagents/workflows/<id>/journal.jsonl` is workflow bookkeeping
+(`{"type":"started"|"result"}`), not a conversation, and discovering it means
+`ct sessions` lists four entries called `journal`.
+**The obvious fix is wrong, which is why this is an entry and not a one-liner.**
+Requiring a UUID filename would drop 625 of the 711 local Claude Code sessions:
+subagent transcripts are named `agent-<hex>.jsonl` and *are* real sessions worth
+inspecting. The rule has to exclude the journal without excluding those.
+**Done when:** the file is not discovered as a session, by a rule stated from
+what the format actually is rather than fitted to one filename.
 
 ### CT-020 · `--format ndjson` export
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §2`

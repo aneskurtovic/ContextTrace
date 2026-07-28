@@ -6,7 +6,8 @@ use crate::format::{
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    ContextTrace, Departure, Diagnostics, ItemLifecycle, ResidualPoint, ResolvedSession,
+    ContextTrace, Departure, Diagnostics, DriftReport, ItemLifecycle, ResidualPoint,
+    ResolvedSession,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, RawEventSource};
@@ -910,6 +911,83 @@ pub fn residual(
              reconstruction began accounting for more of the prompt than before, which\n  \
              is either hidden content going away or the over-counting described in\n  \
              `ct context`. This view cannot tell those two apart."
+        );
+    }
+}
+
+/// Format drift across a swept corpus.
+///
+/// The histogram is the deliverable, so it prints on the clean path too. A
+/// sweep that finds nothing is a result — it is the evidence that this build
+/// still understands both agents — and printing nothing would make a passing
+/// CI run indistinguishable from a broken one.
+pub fn drift(report: &DriftReport, json: bool) {
+    if json {
+        print_json(report);
+        return;
+    }
+
+    println!("Format drift sweep\n");
+    println!("Sessions   {} scanned", report.sessions_scanned);
+    for (agent, count) in &report.scanned_by_agent {
+        println!("           {count} {agent}");
+    }
+    println!("Events     {} parsed", thousands(report.total_events as u64));
+
+    if report.sessions_scanned == 0 {
+        println!(
+            "\nNothing was swept. Run `ct roots` to see the directories ContextTrace\n\
+             reads, and check the path given to --dir is under one of them."
+        );
+        return;
+    }
+
+    if report.is_clean() {
+        println!(
+            "Recognised every event type in every session.\n\n\
+             That is the claim worth re-running: both agents evolve their log formats,\n\
+             and a type this build has not learned degrades every other command quietly."
+        );
+        return;
+    }
+
+    if !report.types.is_empty() {
+        println!(
+            "\nUnrecognised event types ({:.2}% fidelity)\n",
+            report.fidelity() * 100.0
+        );
+        println!(
+            "{}  {}  {}  TYPE",
+            pad("AGENT", 12),
+            rpad("EVENTS", 8),
+            rpad("SESSIONS", 9)
+        );
+        for kind in &report.types {
+            println!(
+                "{}  {}  {}  {}",
+                pad(&kind.agent.to_string(), 12),
+                rpad(&thousands(kind.events), 8),
+                rpad(&format!("{}/{}", kind.sessions, report.sessions_scanned), 9),
+                kind.raw_type
+            );
+            println!("{}  ct inspect {} --raw", " ".repeat(33), kind.example);
+        }
+        println!(
+            "\nA type in one session of many is a one-off or an aborted experiment. The\n\
+             same type in most of them is a format change that has already shipped."
+        );
+    }
+
+    if !report.unreadable.is_empty() {
+        println!("\nUnreadable sessions\n");
+        for session in &report.unreadable {
+            println!("  {}  {}", pad(&session.agent.to_string(), 12), session.path);
+            println!("                {}", session.error);
+        }
+        println!(
+            "\nThese are files that could not be parsed at all, which is a different\n\
+             failure from an event type we have not learned -- more often a truncated\n\
+             write or a permissions problem than a format change."
         );
     }
 }

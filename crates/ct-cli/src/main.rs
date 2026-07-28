@@ -141,7 +141,17 @@ enum Command {
 
     /// Report parse fidelity, context spikes and compactions for a session
     Doctor {
-        id: String,
+        /// Session id, or an unambiguous prefix of one. Omit it with --dir.
+        id: Option<String>,
+        /// Sweep every session for event types this build does not recognise
+        ///
+        /// Give a path to narrow the sweep to sessions under it, or pass the
+        /// flag alone to sweep everything `ct roots` lists. Exits non-zero when
+        /// anything was not understood, so CI can gate on it: an agent shipping
+        /// a new event type is the one change that silently degrades every
+        /// other command in this tool.
+        #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "PATH")]
+        dir: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -221,9 +231,21 @@ impl FilterArgs {
 
 fn main() {
     let cli = Cli::parse();
-    if let Err(e) = run(cli) {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    let code = match run(cli) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    };
+
+    if code != 0 {
+        // Flushed explicitly because `exit` runs no destructors, and stdout is
+        // block-buffered when piped. Without this, `ct doctor --dir --json | jq`
+        // would lose the report it is exiting non-zero *about*.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        std::process::exit(code);
     }
 }
 
@@ -255,7 +277,7 @@ fn build() -> ContextTrace {
     ])
 }
 
-fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let app = build();
 
     match cli.command {
@@ -416,13 +438,34 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             render::residual(&series, ratio, &compaction_turns, json);
         }
 
-        Command::Doctor { id, json } => {
-            let (session, resolved) = app.load(&id)?;
-            render::doctor(&app.diagnose(&session), &session, &resolved, json);
-        }
+        Command::Doctor { id, dir, json } => match (id, dir) {
+            (Some(_), Some(_)) => {
+                return Err("give a session id or --dir, not both: one reports a \
+                            session's health, the other sweeps for format drift"
+                    .into())
+            }
+            (None, None) => {
+                return Err("give a session id, or --dir to sweep every session for \
+                            unrecognised event types"
+                    .into())
+            }
+            (None, Some(prefix)) => {
+                let report = app.sweep_drift(Some(prefix.as_str()));
+                render::drift(&report, json);
+                // The report is the message, so this exits without an `error:`
+                // line. CI wants the code; a human wants the histogram.
+                if !report.is_clean() {
+                    return Ok(1);
+                }
+            }
+            (Some(id), None) => {
+                let (session, resolved) = app.load(&id)?;
+                render::doctor(&app.diagnose(&session), &session, &resolved, json);
+            }
+        },
     }
 
-    Ok(())
+    Ok(0)
 }
 
 /// The estimator to use for one session, and the measurement behind it.

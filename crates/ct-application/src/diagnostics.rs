@@ -5,7 +5,7 @@
 //! the confidence of the data it came from.
 
 use ct_domain::model::event::EventKind;
-use ct_domain::{AgentSession, TurnNumber};
+use ct_domain::{AgentKind, AgentSession, TurnNumber};
 use serde::Serialize;
 
 /// Growth between consecutive turns large enough to be worth explaining.
@@ -117,6 +117,77 @@ impl Diagnostics {
                 self.unrecognised_events,
                 self.fidelity * 100.0
             )
+        }
+    }
+}
+
+/// Format drift across many sessions.
+///
+/// The question this answers is not "is this session healthy" but "has an agent
+/// changed its log format since ContextTrace last learned it". Those need
+/// different shapes: one session's unrecognised count says nothing about
+/// whether the type is new, and a corpus-wide total says nothing about which
+/// type to go and read.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct DriftReport {
+    pub sessions_scanned: usize,
+    pub total_events: usize,
+    pub unrecognised_events: u32,
+    /// Unrecognised types, most widespread first.
+    pub types: Vec<DriftType>,
+    /// Sessions that could not be parsed at all.
+    ///
+    /// Kept separate from unrecognised *types*, because they are different
+    /// failures: one is an event shape we have not learned, the other is a file
+    /// we could not read. Folding them together would let a permissions problem
+    /// masquerade as a format change.
+    pub unreadable: Vec<UnreadableSession>,
+    /// Sessions scanned per agent, so "no drift" can be told apart from
+    /// "nothing was swept".
+    pub scanned_by_agent: Vec<(AgentKind, usize)>,
+}
+
+/// One event type the parser does not understand.
+#[derive(Debug, Clone, Serialize)]
+pub struct DriftType {
+    pub agent: AgentKind,
+    pub raw_type: String,
+    pub events: u32,
+    /// How many sessions contain it.
+    ///
+    /// The figure that separates the two stories a raw count cannot. A type in
+    /// one session of three hundred is a one-off or an aborted experiment; the
+    /// same type in all three hundred is a format change that has already
+    /// shipped.
+    pub sessions: usize,
+    /// One session holding it, so the finding can be inspected rather than
+    /// merely counted.
+    pub example: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UnreadableSession {
+    pub id: String,
+    pub agent: AgentKind,
+    pub path: String,
+    pub error: String,
+}
+
+impl DriftReport {
+    /// True when every event in every swept session was understood.
+    ///
+    /// Deliberately not a fidelity threshold. A new event type appearing once
+    /// in half a million events is the same news as one appearing everywhere --
+    /// it means an agent shipped something we do not parse -- and a percentage
+    /// gate would hide exactly the early case worth catching.
+    pub fn is_clean(&self) -> bool {
+        self.types.is_empty() && self.unreadable.is_empty()
+    }
+
+    pub fn fidelity(&self) -> f32 {
+        match self.total_events {
+            0 => 1.0,
+            total => 1.0 - (self.unrecognised_events as f32 / total as f32),
         }
     }
 }

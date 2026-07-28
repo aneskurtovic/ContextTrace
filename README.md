@@ -288,12 +288,12 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
 | `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 87 tests |
-| `ct-application` — use cases, diagnostics, item lifecycle | Implemented, 31 tests |
+| `ct-application` — use cases, diagnostics, drift sweep, item lifecycle | Implemented, 37 tests |
 | `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`trace`/`residual`/`doctor` | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-198 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+215 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -311,15 +311,63 @@ an event type from the future.
 ct roots                          # which local directories are read
 ct sessions [--agent] [--project] [--since] [--limit]
 ct inspect <id> [--raw] [--limit]
-ct context <id> [--turn N] [filters]   # defaults to the session's largest turn
-ct largest <id> [--turn N] [--limit] [filters]
+ct context <id> [--turn N] [--exact] [filters]  # defaults to the largest turn
+ct largest <id> [--turn N] [--limit] [--exact] [filters]
 ct trace   <id> --item <id-or-label>   # one item's lifecycle across the session
 ct residual <id> [--from N] [--to N]
 ct doctor  <id>
+ct doctor  --dir [PATH]                # sweep for format drift; exits 1 on any
 
 filters: --source <kind[:text]>  --category <name>
          --confidence <level>    --min-tokens <n>
 ```
+
+### Catching an agent that changed its format
+
+Both agents evolve their log formats, and a type this build has not learned
+degrades every other command quietly — the events still parse, they just stop
+being attributed. `ct doctor --dir` parses every discovered session and reports
+what was not understood, exiting non-zero if anything was:
+
+```
+$ ct doctor --dir
+Format drift sweep
+
+Sessions   774 scanned
+           711 claude-code
+           63 codex
+Events     126,330 parsed
+
+Unrecognised event types (99.60% fidelity)
+
+AGENT           EVENTS   SESSIONS  TYPE
+claude-code        369     4/774   started
+                                   ct inspect journal --raw
+claude-code         97     4/774   result
+                                   ct inspect journal --raw
+codex               38     3/774   response_item/web_search_call
+                                   ct inspect 019f4181-29a7-75d0-b60e-935e615a18f0 --raw
+```
+
+Three design points, each one a way this could have been less useful:
+
+**The gate is presence, not a percentage.** A new type appearing once in half a
+million events is the same news as one appearing everywhere. A fidelity
+threshold would hide exactly the early case worth catching.
+
+**Sessions-per-type is what makes the histogram readable.** A raw count cannot
+separate a long-running experiment in one session from a change that has shipped
+to all of them.
+
+**`--dir` narrows the discovered sessions rather than walking a directory,** so
+each file's agent is known from its descriptor. Detecting an agent from a file's
+contents would mean inventing a rule, and a misdetected file reports as
+wholesale drift — the loudest possible way for a guess to be wrong.
+
+The output above is the real first run, and both findings are real: Codex
+`web_search_call` items are unparsed, and `journal.jsonl` — workflow bookkeeping
+under `subagents/workflows/` — is being discovered as a session. They are
+[BACKLOG.md](BACKLOG.md) CT-037 and CT-038.
 
 ### Filtering without lying about the whole
 
