@@ -290,17 +290,17 @@ cheaper audit of the "nothing leaves this machine" claim.
 | Component | Status |
 |---|---|
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
-| `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
-| `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 101 tests |
+| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 101 tests |
 | `ct-application` — use cases, diagnostics, drift sweep, item lifecycle | Implemented, 37 tests |
-| `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`trace`/`residual`/`doctor` | Implemented, 17 tests |
+| `ct-cli` — the eight commands below | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
-| `ct diff`, context-growth timeline, search, SQLite index | Not started |
+| `ct diff`, context-growth timeline, search, SQLite index, desktop shell | Not started |
 
-224 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
-authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
-scheduled until it is pulled in there with a `CT-nnn` id.
+**218 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+recognises every event type across the whole local corpus. Work is queued in
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 24 done, 1 next, 11
+todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
+in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
 Committed fixtures are hand-authored synthetic sessions, never captured, each
 encoding one way the real formats mislead a reader: a rewound branch that must

@@ -58,7 +58,7 @@ This document serves as a "living backlog" of features and conceptual improvemen
   → **New:** Pre‑defined filter presets (e.g., `--filter-preset giant-tools`, `--filter-preset low-confidence`).
 
 - **DuckDB Export:** `ct export <id> --format duckdb`. Outputs a local `.duckdb` file where turns, items, token counts, and provenance are tables. Allows analysts to write SQL: `SELECT sum(tokens) FROM context_items WHERE turn > 20 AND type = 'tool_output';`  `[→ CT-032]`
-  → *Expanded:* Also support `--format parquet` and `--format ndjson` for lighter‑weight pipelines. Pre‑create useful views (`v_context_bloat`, `v_compaction_events`, `v_residual_spikes`) so analysts don't have to reinvent the joins.  
+  → *Expanded:* Also support `--format parquet` and `--format ndjson` for lighter‑weight pipelines.  `[→ CT-020]` Pre‑create useful views (`v_context_bloat`, `v_compaction_events`, `v_residual_spikes`) so analysts don't have to reinvent the joins.  
   → **New:** `ct export` with `--include-metadata` to also write session metadata (model, start/end time, total cost) into the export.
 
 - **Format Delta Reporting (`ct doctor`):** Extend the local corpus smoke test into a CLI command. `ct doctor --dir ./claude-sessions` outputs a histogram of unknown event types, warning the user: *"Claude Code updated yesterday. 3 unrecognized event types detected in your recent logs. Context reconstruction may be incomplete."*  `[→ CT-019]`

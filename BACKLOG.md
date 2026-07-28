@@ -35,6 +35,101 @@ decision to build it, and re-litigating it later is waste.
 
 ---
 
+## Next
+
+### CT-020 · `--format ndjson` export
+`status: next` · `tier: B` · `size: S` · `source: IDEAS.md §2`
+**Why:** gets most of the analytical value of a database export while keeping
+the dependency tree auditable. See CT-032, which it replaces.
+**Done when:** turns and context items stream as NDJSON with stable tagged
+types.
+
+---
+
+## Todo
+
+### CT-021 · `ct diff A..B` — compare two sessions or turn ranges
+`status: todo` · `tier: B` · `size: M` · `source: plan`
+**Why:** "it worked yesterday and fails today on the same task."
+**Done when:** structural differences in composition, tool usage and residual
+growth are reported side by side.
+
+### CT-022 · Context growth timeline
+`status: todo` · `tier: B` · `size: S` · `source: plan`
+**Done when:** per-turn prompt size renders as a sparkline with compaction
+boundaries marked.
+
+### CT-023 · Duplicate context detection
+`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+**Why:** agent retry loops re-inject identical file content, and it is invisible
+in a per-turn view.
+**Done when:** identical content appearing more than once in a turn's context is
+reported with its total cost.
+
+### CT-024 · Waste and low-entropy detection
+`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+**Done when:** large low-information blocks are ranked by compressed-size ratio.
+
+### CT-025 · Secret scanning and redacted export
+`status: todo` · `tier: B` · `size: M` · `source: brief`
+**Why:** the brief requires optional secret redaction for exports, and this is
+the one item where being wrong has consequences outside the tool.
+**Done when:** exports can be redacted, and scanning never writes findings
+anywhere outside the user's terminal.
+
+### CT-026 · Cost projection
+`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
+**Done when:** per-category cost is derived from a local pricing table, clearly
+marked as an estimate that depends on a table which will go stale.
+
+### CT-027 · Codex compaction diff engine
+`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §1`
+**Why:** Codex records `replacement_history` verbatim, so what was discarded is
+*derivable rather than inferable* — a stronger claim than anything available for
+Claude Code.
+**Done when:** the exact items dropped by a compaction are listed with sizes.
+
+### CT-028 · Session family trees
+`status: todo` · `tier: C` · `size: M` · `source: IDEAS.md §9`
+**Why:** the DAG already parsed for reconstruction contains every abandoned
+branch; showing them is nearly free and no other tool does it.
+**Done when:** branches are enumerated and each is separately inspectable.
+
+### CT-029 · `ct-index` SQLite cache
+`status: todo` · `tier: C` · `size: L` · `source: plan`
+**Why:** deliberately deferred until a command feels slow, so the access
+patterns are known before the cache is tuned. `ct context` on the largest
+session now takes ~4s because CT-014 reconstructs every turn — this is the first
+real evidence for it.
+**Done when:** derived metadata is cached, disposable and rebuildable, and no
+domain type depends on it.
+
+### CT-030 · Tauri v2 desktop shell
+`status: todo` · `tier: C` · `size: L` · `source: plan`
+**Why:** milestone 3. Blocked on toolchain, not design.
+**Done when:** the desktop app calls the same crates through `#[tauri::command]`
+with no logic duplicated. Requires switching to the MSVC toolchain first.
+
+### CT-031 · Investigate reconstruction over-count
+`status: todo` · `tier: B` · `size: M` · `source: corpus`
+**Why:** roughly one Claude Code session in seven accounts for more content than
+its prompt held, so its unlogged remainder cannot be measured. The leading
+hypothesis is that the harness drops old context without recording it — linear
+chains, no rewinds, several times more content than the reported prompt — but
+no marker for such a removal exists anywhere in the log.
+**Done when:** either a mechanism is identified from evidence, or the hypothesis
+is written up as unresolvable from logs alone and the tool's reporting of it is
+final. Inventing semantics for it is explicitly out of scope.
+
+**CT-035 supplied the instrument this needs.** Until `--exact`, an over-count
+could always have been the character ratio running high, so there was nothing to
+investigate that was not first an estimator question. With real tokenizer counts
+the two separate: on Codex the exact sum exceeds the observed total on 1 of 53
+local sessions, and that surplus cannot be estimation error. Start there — it is
+a small, exactly-measured case of the same defect.
+
+---
+
 ## Done
 
 ### CT-001 · Scaffold the Cargo workspace under ports-and-adapters
@@ -150,18 +245,6 @@ main context and nothing enforced it. No session in the corpus uses subagents,
 so no real-data check could ever have caught it.
 **Done when:** the ancestor walk keeps only events on the same side as the turn
 being asked about, in both directions, with fixture coverage. ✔
-
----
-
-## Next
-
-### CT-020 · `--format ndjson` export
-`status: next` · `tier: B` · `size: S` · `source: IDEAS.md §2`
-The entry is under **Todo** below, where its reasoning already sits.
-
----
-
-## Done (continued)
 
 ### CT-018 · `ct trace` — follow one context item's lifecycle
 `status: done` · `tier: A` · `size: M` · `source: IDEAS.md §2`
@@ -474,97 +557,6 @@ the uncertain case keeps the file.
 
 ---
 
-## Todo
-
-### CT-020 · `--format ndjson` export
-`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §2`
-**Why:** gets most of the analytical value of a database export while keeping
-the dependency tree auditable. See CT-032, which it replaces.
-**Done when:** turns and context items stream as NDJSON with stable tagged
-types.
-
-### CT-021 · `ct diff A..B` — compare two sessions or turn ranges
-`status: todo` · `tier: B` · `size: M` · `source: plan`
-**Why:** "it worked yesterday and fails today on the same task."
-**Done when:** structural differences in composition, tool usage and residual
-growth are reported side by side.
-
-### CT-022 · Context growth timeline
-`status: todo` · `tier: B` · `size: S` · `source: plan`
-**Done when:** per-turn prompt size renders as a sparkline with compaction
-boundaries marked.
-
-### CT-023 · Duplicate context detection
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
-**Why:** agent retry loops re-inject identical file content, and it is invisible
-in a per-turn view.
-**Done when:** identical content appearing more than once in a turn's context is
-reported with its total cost.
-
-### CT-024 · Waste and low-entropy detection
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
-**Done when:** large low-information blocks are ranked by compressed-size ratio.
-
-### CT-025 · Secret scanning and redacted export
-`status: todo` · `tier: B` · `size: M` · `source: brief`
-**Why:** the brief requires optional secret redaction for exports, and this is
-the one item where being wrong has consequences outside the tool.
-**Done when:** exports can be redacted, and scanning never writes findings
-anywhere outside the user's terminal.
-
-### CT-026 · Cost projection
-`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
-**Done when:** per-category cost is derived from a local pricing table, clearly
-marked as an estimate that depends on a table which will go stale.
-
-### CT-027 · Codex compaction diff engine
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §1`
-**Why:** Codex records `replacement_history` verbatim, so what was discarded is
-*derivable rather than inferable* — a stronger claim than anything available for
-Claude Code.
-**Done when:** the exact items dropped by a compaction are listed with sizes.
-
-### CT-028 · Session family trees
-`status: todo` · `tier: C` · `size: M` · `source: IDEAS.md §9`
-**Why:** the DAG already parsed for reconstruction contains every abandoned
-branch; showing them is nearly free and no other tool does it.
-**Done when:** branches are enumerated and each is separately inspectable.
-
-### CT-029 · `ct-index` SQLite cache
-`status: todo` · `tier: C` · `size: L` · `source: plan`
-**Why:** deliberately deferred until a command feels slow, so the access
-patterns are known before the cache is tuned. `ct context` on the largest
-session now takes ~4s because CT-014 reconstructs every turn — this is the first
-real evidence for it.
-**Done when:** derived metadata is cached, disposable and rebuildable, and no
-domain type depends on it.
-
-### CT-030 · Tauri v2 desktop shell
-`status: todo` · `tier: C` · `size: L` · `source: plan`
-**Why:** milestone 3. Blocked on toolchain, not design.
-**Done when:** the desktop app calls the same crates through `#[tauri::command]`
-with no logic duplicated. Requires switching to the MSVC toolchain first.
-
-### CT-031 · Investigate reconstruction over-count
-`status: todo` · `tier: B` · `size: M` · `source: corpus`
-**Why:** roughly one Claude Code session in seven accounts for more content than
-its prompt held, so its unlogged remainder cannot be measured. The leading
-hypothesis is that the harness drops old context without recording it — linear
-chains, no rewinds, several times more content than the reported prompt — but
-no marker for such a removal exists anywhere in the log.
-**Done when:** either a mechanism is identified from evidence, or the hypothesis
-is written up as unresolvable from logs alone and the tool's reporting of it is
-final. Inventing semantics for it is explicitly out of scope.
-
-**CT-035 supplied the instrument this needs.** Until `--exact`, an over-count
-could always have been the character ratio running high, so there was nothing to
-investigate that was not first an estimator question. With real tokenizer counts
-the two separate: on Codex the exact sum exceeds the observed total on 1 of 53
-local sessions, and that surplus cannot be estimation error. Start there — it is
-a small, exactly-measured case of the same defect.
-
----
-
 ## Blocked / dropped
 
 ### CT-032 · DuckDB export
@@ -580,3 +572,5 @@ practice.
 the structural form of the local-first guarantee — the property that no
 network-capable crate is present at all. That guarantee is worth more than the
 feature.
+
+---
