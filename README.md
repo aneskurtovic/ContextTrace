@@ -89,6 +89,15 @@ measurement.
 item tokens plus the unattributed residual equalling the reported total. An
 inconsistent breakdown is unrepresentable, not merely discouraged.
 
+**Exact duplicate content is named and costed.** On `ct context`'s opt-in
+analysis path, each adapter reduces model-visible content to a fixed-size
+identity, excluding retry-specific transport ids. Other commands do not pay to
+hash content they never compare. `ct context` groups equal identities, reports
+the tokens occupied by every copy and the avoidable tokens after the first, and
+includes all groups in `--json`. Content the log hides — notably Claude Code's
+redacted thinking — is not fingerprinted, because an exact-match claim cannot
+be made from it.
+
 ---
 
 ## What the format investigation established
@@ -321,16 +330,16 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 | Component | Status |
 |---|---|
-| `ct-domain` — model, ports, calibration, filtering | Implemented, 54 tests |
-| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 101 tests |
+| `ct-domain` — model, ports, calibration, filtering | Implemented, 56 tests |
+| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 111 tests |
 | `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle, diff, growth | Implemented, 61 tests |
 | `ct-cli` — the eleven commands below | Implemented, 23 tests |
-| Standalone JSONL fixture files | Implemented, 13 tests |
+| Standalone JSONL fixture files | Implemented, 14 tests |
 | Search, SQLite index, desktop shell | Not started |
 
-**252 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+**265 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 28 done, 1 next, 9
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 29 done, 1 next, 9
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 

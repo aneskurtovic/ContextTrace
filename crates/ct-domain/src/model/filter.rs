@@ -20,7 +20,8 @@
 //! a field.
 
 use super::context::{
-    CategoryBreakdown, ContextCategory, ContextItem, ContextSnapshot, ContextSource, Contributor,
+    find_duplicate_content, CategoryBreakdown, ContextCategory, ContextItem, ContextSnapshot,
+    ContextSource, Contributor, DuplicateContent,
 };
 use super::identity::{SessionId, TurnNumber};
 use super::provenance::Confidence;
@@ -390,6 +391,14 @@ impl<'a> FilteredView<'a> {
             .collect()
     }
 
+    /// Exact-content duplicate groups among the items surviving this filter.
+    pub fn duplicate_content(&self) -> Vec<DuplicateContent> {
+        find_duplicate_content(
+            self.matched.iter().copied(),
+            self.snapshot.total().tokens(),
+        )
+    }
+
     /// Distinct categories present in the *unfiltered* snapshot, with sizes.
     ///
     /// For the empty-result case: telling someone their filter matched nothing
@@ -456,6 +465,7 @@ impl<'a> FilteredView<'a> {
         CompositionReport {
             header: self.header(),
             categories: self.by_category(),
+            duplicates: self.duplicate_content(),
         }
     }
 
@@ -520,6 +530,7 @@ pub struct CompositionReport {
     #[serde(flatten)]
     pub header: ViewHeader,
     pub categories: Vec<CategoryBreakdown>,
+    pub duplicates: Vec<DuplicateContent>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -546,6 +557,7 @@ mod tests {
             first_seen_turn: None,
             provenance: Provenance::observed(SourceRef::new(FileId(0), 0, 0, 1)),
             preview: None,
+            content_fingerprint: None,
         }
     }
 

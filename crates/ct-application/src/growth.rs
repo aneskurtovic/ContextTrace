@@ -280,6 +280,7 @@ mod tests {
             raw_type: "compacted".into(),
             turn: turn.map(|t| TurnNumber::new(t).unwrap()),
             links: EventLinks::default(),
+            content_fingerprint: None,
         }
     }
 

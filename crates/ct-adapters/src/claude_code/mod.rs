@@ -127,7 +127,14 @@ impl AgentAdapter for ClaudeCodeAdapter {
     }
 
     fn load(&self, descriptor: &SessionDescriptor) -> PortResult<AgentSession> {
-        parse::load(Path::new(&descriptor.path), descriptor.id.clone())
+        parse::load(Path::new(&descriptor.path), descriptor.id.clone(), false)
+    }
+
+    fn load_with_content_fingerprints(
+        &self,
+        descriptor: &SessionDescriptor,
+    ) -> PortResult<AgentSession> {
+        parse::load(Path::new(&descriptor.path), descriptor.id.clone(), true)
     }
 
     fn reconstruct(

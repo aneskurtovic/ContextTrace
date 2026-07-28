@@ -203,6 +203,22 @@ impl ContextTrace {
         Ok((session, resolved))
     }
 
+    /// Resolve and parse a session for an analysis that compares item content.
+    ///
+    /// Kept separate from [`ContextTrace::load`] so commands that only inspect
+    /// event structure do not hash every payload and immediately discard the
+    /// result.
+    pub fn load_with_content_fingerprints(
+        &self,
+        id_or_prefix: &str,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        let resolved = self.resolve(id_or_prefix)?;
+        let session = self.bindings[resolved.binding]
+            .adapter
+            .load_with_content_fingerprints(&resolved.descriptor)?;
+        Ok((session, resolved))
+    }
+
     /// Reconstruct and calibrate the context at a turn.
     ///
     /// The two-step shape is deliberate: the adapter reconstructs (it knows its
@@ -912,6 +928,7 @@ mod tests {
                 raw_type: "x".into(),
                 turn: None,
                 links: EventLinks::default(),
+                content_fingerprint: None,
             })
             .collect();
 

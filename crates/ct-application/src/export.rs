@@ -266,6 +266,7 @@ mod tests {
             first_seen_turn: Some(TurnNumber::FIRST),
             provenance: Provenance::observed(SourceRef::new(FileId(0), 0, 0, 7)),
             preview: Some("this must not reach the export".into()),
+            content_fingerprint: None,
         }
     }
 

@@ -7,11 +7,12 @@
 
 use super::event::CompactionFacts;
 use super::filter::{FilteredView, ItemFilter};
-use super::identity::{ContextItemId, SessionId, TurnNumber};
+use super::identity::{ContentFingerprint, ContextItemId, SessionId, TurnNumber};
 use super::provenance::{Confidence, Provenance, SourceRef};
 use super::session::AgentKind;
 use super::tokens::TokenCount;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 
 /// What kind of thing a context item is. Drives the composition breakdown.
@@ -161,6 +162,10 @@ pub struct ContextItem {
     pub provenance: Provenance,
     /// Short excerpt for display. Full content is re-read via `provenance.source`.
     pub preview: Option<String>,
+    /// Exact identity of the model-visible content, when the adapter could
+    /// derive one without guessing.
+    #[serde(skip)]
+    pub content_fingerprint: Option<ContentFingerprint>,
 }
 
 impl ContextItem {
@@ -191,6 +196,31 @@ pub struct Contributor {
     pub source: ContextSource,
     pub tokens: u32,
     pub share: f32,
+    pub confidence: Confidence,
+}
+
+/// One item participating in an exact-content duplicate group.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DuplicateInstance {
+    pub id: ContextItemId,
+    pub label: String,
+    pub category: ContextCategory,
+    pub source: ContextSource,
+    pub tokens: u32,
+}
+
+/// Two or more context items carrying exactly the same model-visible content.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DuplicateContent {
+    /// Every copy, in context order. The first is the content's original
+    /// appearance; the rest are repeated injections.
+    pub items: Vec<DuplicateInstance>,
+    /// Footprint of every copy, including the first.
+    pub total_tokens: u32,
+    /// Avoidable footprint: every copy after the first.
+    pub repeated_tokens: u32,
+    pub share: f32,
+    /// Weakest confidence among the copies' token counts and membership.
     pub confidence: Confidence,
 }
 
@@ -428,6 +458,69 @@ impl ContextSnapshot {
     pub fn largest_contributors(&self, limit: usize) -> Vec<Contributor> {
         self.filtered(&ItemFilter::ALL).largest_contributors(limit)
     }
+
+    /// Exact-content duplicates in this turn, largest total footprint first.
+    ///
+    /// Items whose logs do not expose enough content to fingerprint are absent
+    /// rather than guessed into a group.
+    pub fn duplicate_content(&self) -> Vec<DuplicateContent> {
+        find_duplicate_content(self.items.iter(), self.total.tokens())
+    }
+}
+
+pub(crate) fn find_duplicate_content<'a>(
+    items: impl IntoIterator<Item = &'a ContextItem>,
+    turn_total: u32,
+) -> Vec<DuplicateContent> {
+    let mut by_content: HashMap<ContentFingerprint, Vec<&ContextItem>> = HashMap::new();
+    for item in items {
+        if let Some(fingerprint) = item.content_fingerprint {
+            by_content.entry(fingerprint).or_default().push(item);
+        }
+    }
+
+    let denominator = turn_total.max(1) as f32;
+    let mut groups: Vec<DuplicateContent> = by_content
+        .into_values()
+        .filter(|items| items.len() > 1)
+        .map(|items| {
+            let total_tokens = items
+                .iter()
+                .fold(0u32, |sum, item| sum.saturating_add(item.tokens.tokens()));
+            let repeated_tokens = items.iter().skip(1).fold(0u32, |sum, item| {
+                sum.saturating_add(item.tokens.tokens())
+            });
+            let confidence = items.iter().fold(Confidence::Observed, |confidence, item| {
+                confidence.weakest(item.confidence())
+            });
+            let items = items
+                .into_iter()
+                .map(|item| DuplicateInstance {
+                    id: item.id.clone(),
+                    label: item.label.clone(),
+                    category: item.category,
+                    source: item.source.clone(),
+                    tokens: item.tokens.tokens(),
+                })
+                .collect();
+
+            DuplicateContent {
+                items,
+                total_tokens,
+                repeated_tokens,
+                share: total_tokens as f32 / denominator,
+                confidence,
+            }
+        })
+        .collect();
+
+    groups.sort_by(|a, b| {
+        b.total_tokens
+            .cmp(&a.total_tokens)
+            .then(b.items.len().cmp(&a.items.len()))
+            .then(a.items[0].id.cmp(&b.items[0].id))
+    });
+    groups
 }
 
 #[cfg(test)]
@@ -445,6 +538,7 @@ mod tests {
             first_seen_turn: None,
             provenance: Provenance::observed(SourceRef::new(FileId(0), 0, 0, 1)),
             preview: None,
+            content_fingerprint: None,
         }
     }
 
@@ -522,6 +616,43 @@ mod tests {
         assert_eq!(top[0].label, "npm test output");
         assert_eq!(top[1].label, "schema.ts");
         assert!((top[0].share - 0.52).abs() < 1e-6);
+    }
+
+    #[test]
+    fn duplicate_content_reports_total_and_avoidable_cost() {
+        let same = ContentFingerprint::new([7; 32]);
+        let mut first = item("Read src/lib.rs", ContextCategory::ToolOutputs, 300);
+        first.content_fingerprint = Some(same);
+        let mut retry = item("Read src/lib.rs (retry)", ContextCategory::ToolOutputs, 300);
+        retry.content_fingerprint = Some(same);
+        let mut unrelated = item("cargo test", ContextCategory::ToolOutputs, 200);
+        unrelated.content_fingerprint = Some(ContentFingerprint::new([8; 32]));
+
+        let snap = assemble(vec![first, retry, unrelated], 1000, 200).unwrap();
+        let groups = snap.duplicate_content();
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].items.len(), 2);
+        assert_eq!(groups[0].total_tokens, 600);
+        assert_eq!(groups[0].repeated_tokens, 300);
+        assert!((groups[0].share - 0.6).abs() < f32::EPSILON);
+        assert_eq!(groups[0].items[0].label, "Read src/lib.rs");
+        assert_eq!(groups[0].items[1].label, "Read src/lib.rs (retry)");
+    }
+
+    #[test]
+    fn unfingerprintable_items_are_not_guessed_into_duplicate_groups() {
+        let snap = assemble(
+            vec![
+                item("opaque reasoning 1", ContextCategory::Reasoning, 100),
+                item("opaque reasoning 2", ContextCategory::Reasoning, 100),
+            ],
+            200,
+            0,
+        )
+        .unwrap();
+
+        assert!(snap.duplicate_content().is_empty());
     }
 
     #[test]

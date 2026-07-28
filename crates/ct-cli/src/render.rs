@@ -305,6 +305,67 @@ pub fn context(
         );
     }
 
+    let duplicates = view.duplicate_content();
+    if duplicates.is_empty() {
+        println!(
+            "\n  Duplicates  none detected{}.",
+            if view.filter().is_active() {
+                " among the matching items"
+            } else {
+                ""
+            }
+        );
+    } else {
+        const SHOWN_GROUPS: usize = 10;
+        let copies = duplicates.iter().map(|group| group.items.len()).sum::<usize>();
+        let total = duplicates.iter().fold(0u32, |sum, group| {
+            sum.saturating_add(group.total_tokens)
+        });
+        let repeated = duplicates.iter().fold(0u32, |sum, group| {
+            sum.saturating_add(group.repeated_tokens)
+        });
+        println!(
+            "\nExact duplicate content - {} groups, {copies} copies, {} tokens total,\n\
+             {} repeated\n",
+            duplicates.len(),
+            thousands(total),
+            thousands(repeated)
+        );
+        for group in duplicates.iter().take(SHOWN_GROUPS) {
+            println!(
+                "  {} copies  {} tokens total  {} repeated  {} {}",
+                group.items.len(),
+                thousands(group.total_tokens),
+                thousands(group.repeated_tokens),
+                percent(group.share),
+                confidence_tag(group.confidence)
+            );
+            for item in &group.items {
+                println!(
+                    "      {}  {}  {}",
+                    rpad(&thousands(item.tokens), 9),
+                    item.id,
+                    ellipsize_middle(&item.label, 62)
+                );
+            }
+        }
+        if duplicates.len() > SHOWN_GROUPS {
+            let hidden = &duplicates[SHOWN_GROUPS..];
+            let hidden_repeated = hidden.iter().fold(0u32, |sum, group| {
+                sum.saturating_add(group.repeated_tokens)
+            });
+            println!(
+                "  ... {} more groups with {} repeated tokens (all groups are in --json)",
+                hidden.len(),
+                thousands(hidden_repeated)
+            );
+        }
+        println!(
+            "\n  Total is the footprint of every copy; repeated is the avoidable cost after\n  \
+             keeping the first. Matching is byte-exact over model-visible content."
+        );
+    }
+
     // The narrative below describes the whole turn -- the unlogged remainder,
     // the fitted ratio, the calibration factor. Printed under a filter it would
     // read as commentary on the rows above, which it is not: those rows are a

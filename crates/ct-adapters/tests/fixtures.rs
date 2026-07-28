@@ -68,6 +68,36 @@ fn codex() -> (CodexAdapter, AgentSession) {
     (adapter, session)
 }
 
+#[test]
+fn content_fingerprints_are_opt_in_to_the_analysis_that_uses_them() {
+    let adapter = CodexAdapter::new();
+    let d = descriptor(
+        fixture("codex", "rollout.jsonl"),
+        AgentKind::Codex,
+        "fixture-codex-fingerprints",
+    );
+
+    let ordinary = adapter.load(&d).expect("the fixture must parse");
+    assert!(
+        ordinary
+            .events()
+            .iter()
+            .all(|event| event.content_fingerprint.is_none()),
+        "ordinary inspection and corpus sweeps must not pay to hash content"
+    );
+
+    let analysed = adapter
+        .load_with_content_fingerprints(&d)
+        .expect("the fixture must parse with fingerprints");
+    assert!(
+        analysed
+            .events()
+            .iter()
+            .any(|event| event.content_fingerprint.is_some()),
+        "the context analysis path must retain content identities"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Claude Code
 // ---------------------------------------------------------------------------

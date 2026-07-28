@@ -31,6 +31,7 @@
 
 pub mod claude_code;
 pub mod codex;
+mod fingerprint;
 pub mod jsonl;
 pub mod raw_source;
 pub mod tokenizers;

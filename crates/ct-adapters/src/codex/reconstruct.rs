@@ -123,6 +123,7 @@ fn to_item(
         // Its *size* is a separate question, carried by `tokens`.
         provenance: Provenance::observed(event.source),
         preview: preview_for(event),
+        content_fingerprint: event.content_fingerprint,
     })
 }
 
@@ -213,6 +214,7 @@ fn compaction_summary_item(event: &Event, estimator: &dyn TokenEstimator) -> Con
             source: Some(event.source),
         },
         preview: None,
+        content_fingerprint: event.content_fingerprint,
     }
 }
 
@@ -266,6 +268,7 @@ mod tests {
             raw_type: "response_item".into(),
             turn,
             links: EventLinks::default(),
+            content_fingerprint: None,
         }
     }
 

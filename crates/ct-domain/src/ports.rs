@@ -103,6 +103,19 @@ pub trait AgentAdapter: Send + Sync {
     /// Parse one session into the aggregate.
     fn load(&self, descriptor: &SessionDescriptor) -> PortResult<AgentSession>;
 
+    /// Parse a session while retaining fixed-size identities of visible
+    /// content for exact duplicate detection.
+    ///
+    /// Most use cases need event semantics but never compare payloads. Keeping
+    /// this opt-in prevents a corpus-wide format-drift sweep from hashing every
+    /// byte it parses for a result it will discard.
+    fn load_with_content_fingerprints(
+        &self,
+        descriptor: &SessionDescriptor,
+    ) -> PortResult<AgentSession> {
+        self.load(descriptor)
+    }
+
     /// Reconstruct the context present at `turn`.
     fn reconstruct(
         &self,

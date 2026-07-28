@@ -37,20 +37,29 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-023 · Duplicate context detection
+### CT-024 · Waste and low-entropy detection
 `status: next` · `tier: B` · `size: M` · `source: IDEAS.md §4`
-**Why:** agent retry loops re-inject identical file content, and it is invisible
-in a per-turn view.
-**Done when:** identical content appearing more than once in a turn's context is
-reported with its total cost.
+**Done when:** large low-information blocks are ranked by compressed-size ratio.
 
 ---
 
 ## Todo
 
-### CT-024 · Waste and low-entropy detection
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
-**Done when:** large low-information blocks are ranked by compressed-size ratio.
+### CT-040 · Preserve oversized context items
+`status: todo` · `tier: A` · `size: S` · `source: CT-023`
+
+**Why:** `jsonl::read_lines` deliberately declines to parse lines above 4 MiB,
+but both adapters then translate an oversized non-compaction line into
+`SessionEvent`, which does not occupy context. This contradicts the reader's own
+claim that the recorded byte length still feeds reconstruction. A scan of the
+readable local corpus found three live Codex
+`response_item/custom_tool_call_output` cases across two sessions (4.4 MiB, 4.7 MiB and 21.8
+MiB), all of which currently disappear from the item list and inflate the
+unattributed remainder. Two other oversized lines were non-context
+`image_generation_end` telemetry.
+**Done when:** an oversized response item remains represented in context with an
+honest size/confidence, without treating inline image base64 as text tokens or
+fully parsing the pathological line.
 
 ### CT-025 · Secret scanning and redacted export
 `status: todo` · `tier: B` · `size: M` · `source: brief`
@@ -113,6 +122,57 @@ a small, exactly-measured case of the same defect.
 ---
 
 ## Done
+
+### CT-023 · Duplicate context detection
+`status: done` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+
+**Why:** agent retry loops re-inject identical file content, and it is invisible
+in a per-turn view.
+**Done when:** identical content appearing more than once in a turn's context is
+reported with its total cost.
+
+**What building it taught.** Exact matching belongs at parse time, not as a
+second read of the session. On the content-analysis load path, both adapters
+already hold each parsed payload long enough to measure it; reducing its
+model-visible content to a SHA-256 identity there keeps the existing
+lazy-content boundary intact. A context item grows by 32 bytes rather than by a
+second copy of a tool result that may be megabytes. The domain sees only
+equality, not JSON or an agent-specific shape.
+
+That load path has to be opt-in. The first version fingerprinted every parsed
+session, making a debug `ct doctor --dir` sweep pay to hash hundreds of
+megabytes it immediately discarded: 51 seconds on this corpus. Giving the
+adapter port an explicit content-fingerprint load restored the ordinary path
+(19 seconds in the same debug build), while `ct context` alone pays for the
+analysis it prints. A fixture test keeps that boundary from collapsing later.
+
+Transport identity is not content identity. A retry gives a tool result a fresh
+`call_id`/`tool_use_id`, so hashing the whole event would miss the exact defect
+this item exists for. The adapters hash output, message text, tool arguments or
+injected attachment content and exclude those linkage fields. The terminal
+reports both the footprint of every copy and the avoidable cost after retaining
+the first; JSON includes every group. Text output shows the ten largest and
+summarises the rest, because one real Claude Code turn held 16 groups and
+printing all of their 88 members buried the context composition that found them.
+
+Refusal matters here too. Claude Code usually strips thinking text and leaves
+only an opaque signature. Equal signatures do not establish equal hidden text,
+so redacted reasoning carries no fingerprint and cannot become a false exact
+match. Near-duplicates are likewise out of scope: whitespace and JSON ordering
+remain significant.
+
+Two live peak-turn checks found real duplicates immediately: the current Codex
+session held 7 groups / 14 copies, costing 546 tokens total and 273 after the
+first copies; the largest local Claude Code session held 16 groups / 88 copies,
+costing 3,653 total and 2,716 repeated. Most were repeated tool acknowledgements
+and commands rather than spectacular single blobs. The feature is useful even
+when the bug is death by dozens of small retries.
+
+The first implementation pulled in a standard SHA-256 crate. Its transitive
+build script could not link on the pinned Windows GNU setup, contradicting the
+project's deliberately minimal toolchain. The final implementation keeps the
+small FIPS 180-4 compression function inside the adapter crate and checks it
+against standard empty, `abc`, and full-block vectors; no dependency was added.
 
 ### CT-039 · `pick_turn` presents a fallback as a peak
 `status: done` · `tier: A` · `size: S` · `source: review`

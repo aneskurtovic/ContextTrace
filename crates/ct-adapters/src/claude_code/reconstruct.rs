@@ -198,6 +198,7 @@ fn to_item(
             EventKind::Message { preview, .. } if !preview.is_empty() => Some(preview.clone()),
             _ => None,
         },
+        content_fingerprint: event.content_fingerprint,
     })
 }
 
@@ -362,6 +363,7 @@ mod tests {
                 logical_parent_uuid: None,
                 is_sidechain: false,
             },
+            content_fingerprint: None,
         }
     }
 

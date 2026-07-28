@@ -332,6 +332,7 @@ mod tests {
                 raw_type: "x".into(),
                 turn: None,
                 links: Default::default(),
+                content_fingerprint: None,
             })
             .collect();
         s = AgentSession::new(

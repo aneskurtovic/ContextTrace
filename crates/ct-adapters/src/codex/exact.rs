@@ -131,6 +131,7 @@ mod tests {
             first_seen_turn: None,
             provenance: Provenance::observed(SourceRef::new(FileId(0), 0, 0, line)),
             preview: None,
+            content_fingerprint: None,
         }
     }
 

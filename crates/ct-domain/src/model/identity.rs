@@ -126,6 +126,21 @@ impl fmt::Display for ContextItemId {
     }
 }
 
+/// A fixed-size identity for one model-visible content payload.
+///
+/// Adapters compute this while they already hold the parsed content. The
+/// domain deliberately knows neither the hash algorithm nor the agent format;
+/// it only needs equality. The bytes are never exported because the identity
+/// is an implementation detail, not session data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContentFingerprint([u8; 32]);
+
+impl ContentFingerprint {
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdentityError {
     Blank(&'static str),

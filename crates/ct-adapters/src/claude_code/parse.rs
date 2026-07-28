@@ -1,5 +1,6 @@
 //! Translating Claude Code's JSONL vocabulary into domain events.
 
+use crate::fingerprint;
 use crate::jsonl::{self, LineRecord};
 use ct_domain::model::event::{CompactionFacts, EventLinks};
 use ct_domain::ports::{PortError, PortResult};
@@ -87,7 +88,11 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
 }
 
 /// Parse a full Claude Code session.
-pub fn load(path: &Path, id: SessionId) -> PortResult<AgentSession> {
+pub fn load(
+    path: &Path,
+    id: SessionId,
+    include_content_fingerprints: bool,
+) -> PortResult<AgentSession> {
     let mut events: Vec<Event> = Vec::new();
     let mut metadata = SessionMetadata::default();
     let mut unrecognised: BTreeMap<String, u32> = BTreeMap::new();
@@ -98,7 +103,8 @@ pub fn load(path: &Path, id: SessionId) -> PortResult<AgentSession> {
     let mut extras: Vec<LineExtras> = Vec::new();
 
     jsonl::read_lines(path, |record| {
-        let (event, line_extras) = translate(&record, &mut metadata);
+        let (event, line_extras) =
+            translate(&record, &mut metadata, include_content_fingerprints);
         if matches!(event.kind, EventKind::Unrecognised) {
             *unrecognised.entry(event.raw_type.clone()).or_insert(0) += 1;
         }
@@ -134,7 +140,11 @@ struct LineExtras {
 }
 
 /// Map one line onto a domain event, plus the grouping data it carries.
-fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> (Event, LineExtras) {
+fn translate(
+    record: &LineRecord,
+    metadata: &mut SessionMetadata,
+    include_content_fingerprints: bool,
+) -> (Event, LineExtras) {
     let source = SourceRef::new(FileId(0), record.offset, record.len, record.line_no);
     let raw_type = record.type_str().unwrap_or("unknown").to_string();
     let value = record.value.as_ref();
@@ -187,6 +197,9 @@ fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> (Event, Lin
         }
     };
 
+    let content_fingerprint = include_content_fingerprints
+        .then(|| value.and_then(|value| content_fingerprint(value, &kind)))
+        .flatten();
     let event = Event {
         id: links
             .uuid
@@ -200,9 +213,99 @@ fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> (Event, Lin
         raw_type,
         turn: None,
         links,
+        content_fingerprint,
     };
 
     (event, extras)
+}
+
+/// Exact identity of the content represented by a Claude Code event.
+///
+/// UUIDs, request ids and tool-use ids are transport/linkage, not content.
+/// They are deliberately excluded so a retry that re-injects the same output
+/// under a fresh id still compares equal.
+fn content_fingerprint(
+    value: &Value,
+    kind: &EventKind,
+) -> Option<ct_domain::ContentFingerprint> {
+    match kind {
+        EventKind::ToolResult { .. } => {
+            fingerprint_blocks_without_link_id(value, "tool_use_id")
+        }
+        EventKind::ToolCall { .. } => fingerprint_blocks_without_link_id(value, "id"),
+        EventKind::Reasoning {
+            redacted: false, ..
+        } => {
+            let blocks = value.get("message")?.get("content")?.as_array()?;
+            let thinking: Vec<Value> = blocks
+                .iter()
+                .filter(|block| block_type(block) == Some("thinking"))
+                .filter_map(|block| block.get("thinking").cloned())
+                .collect();
+            (!thinking.is_empty()).then(|| fingerprint::value(&Value::Array(thinking)))
+        }
+        // Identical signatures do not establish identical hidden reasoning
+        // text, so redacted thinking is deliberately not fingerprinted.
+        EventKind::Reasoning { redacted: true, .. } => None,
+        EventKind::Message { .. } => value
+            .get("message")?
+            .get("content")
+            .filter(|content| value_has_content(content))
+            .map(fingerprint::value),
+        EventKind::ContextInjection { .. } => {
+            let attachment = value.get("attachment")?;
+            let mut content = serde_json::Map::new();
+            for key in [
+                "content",
+                "stdout",
+                "planContent",
+                "snippet",
+                "prompt",
+                "skills",
+                "addedLines",
+                "addedBlocks",
+            ] {
+                if let Some(value) = attachment.get(key) {
+                    content.insert(key.into(), value.clone());
+                }
+            }
+            if content.is_empty() {
+                return None;
+            }
+            if content.len() == 1 {
+                return content.values().next().map(fingerprint::value);
+            }
+            Some(fingerprint::value(&Value::Object(content)))
+        }
+        _ => None,
+    }
+}
+
+/// Hash the whole block group while removing only the retry-specific linkage
+/// id. A Claude line can carry explanatory text beside its tool block; hashing
+/// only the call or result would falsely group lines whose surrounding content
+/// differs.
+fn fingerprint_blocks_without_link_id(
+    value: &Value,
+    link_key: &str,
+) -> Option<ct_domain::ContentFingerprint> {
+    let mut blocks = value.get("message")?.get("content")?.as_array()?.clone();
+    for block in &mut blocks {
+        if let Some(object) = block.as_object_mut() {
+            object.remove(link_key);
+        }
+    }
+    (!blocks.is_empty()).then(|| fingerprint::value(&Value::Array(blocks)))
+}
+
+fn value_has_content(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
 }
 
 /// Classify an `assistant` line.
@@ -784,6 +887,66 @@ mod tests {
             }
             other => panic!("expected a user message, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn retried_tool_results_match_even_when_tool_use_ids_change() {
+        let first = json!({
+            "message": {"content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "the same file contents"
+            }]}
+        });
+        let retry = json!({
+            "message": {"content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_2",
+                "content": "the same file contents"
+            }]}
+        });
+
+        let first_kind = user_kind(&first);
+        let retry_kind = user_kind(&retry);
+        assert_eq!(
+            content_fingerprint(&first, &first_kind),
+            content_fingerprint(&retry, &retry_kind)
+        );
+    }
+
+    #[test]
+    fn equal_tool_calls_with_different_surrounding_text_do_not_match() {
+        let line = |text: &str| {
+            json!({
+                "message": {"content": [
+                    {"type": "text", "text": text},
+                    {"type": "tool_use", "id": "toolu_1", "name": "Read",
+                     "input": {"file_path": "src/lib.rs"}}
+                ]}
+            })
+        };
+        let first = line("I will inspect it.");
+        let second = line("Checking the file now.");
+
+        let first_kind = assistant_kind(&first);
+        let second_kind = assistant_kind(&second);
+        assert_ne!(
+            content_fingerprint(&first, &first_kind),
+            content_fingerprint(&second, &second_kind)
+        );
+    }
+
+    #[test]
+    fn redacted_reasoning_is_not_claimed_as_exactly_comparable() {
+        let line = json!({
+            "message": {"content": [{
+                "type": "thinking",
+                "thinking": "",
+                "signature": "opaque"
+            }]}
+        });
+        let kind = assistant_kind(&line);
+        assert_eq!(content_fingerprint(&line, &kind), None);
     }
 
     #[test]

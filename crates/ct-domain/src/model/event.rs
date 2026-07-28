@@ -1,6 +1,6 @@
 //! Events: the normalized unit an adapter produces per line of an agent log.
 
-use super::identity::{EventId, TurnNumber};
+use super::identity::{ContentFingerprint, EventId, TurnNumber};
 use super::provenance::SourceRef;
 use super::tokens::TokenUsage;
 use chrono::{DateTime, Utc};
@@ -41,6 +41,12 @@ pub struct Event {
     pub turn: Option<TurnNumber>,
     /// Claude Code threads its log as a DAG via these. Codex leaves them empty.
     pub links: EventLinks,
+    /// Exact identity of the model-visible payload, when the log exposed it.
+    ///
+    /// Kept out of serialized session views: it exists only to compare items
+    /// without retaining their potentially huge content.
+    #[serde(skip)]
+    pub content_fingerprint: Option<ContentFingerprint>,
 }
 
 /// Graph edges between events.
@@ -213,6 +219,7 @@ mod tests {
             raw_type: "test".into(),
             turn: None,
             links: EventLinks::default(),
+            content_fingerprint: None,
         }
     }
 

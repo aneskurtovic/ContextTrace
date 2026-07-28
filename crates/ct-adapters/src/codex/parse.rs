@@ -1,5 +1,6 @@
 //! Translating Codex's JSONL vocabulary into domain events.
 
+use crate::fingerprint;
 use crate::jsonl::{self, LineRecord};
 use ct_domain::model::event::{CompactionFacts, EventLinks};
 use ct_domain::ports::{PortError, PortResult};
@@ -48,13 +49,17 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
 }
 
 /// Parse a full Codex session.
-pub fn load(path: &Path, id: SessionId) -> PortResult<AgentSession> {
+pub fn load(
+    path: &Path,
+    id: SessionId,
+    include_content_fingerprints: bool,
+) -> PortResult<AgentSession> {
     let mut events: Vec<Event> = Vec::new();
     let mut metadata = SessionMetadata::default();
     let mut unrecognised: BTreeMap<String, u32> = BTreeMap::new();
 
     jsonl::read_lines(path, |record| {
-        let event = translate(&record, &mut metadata);
+        let event = translate(&record, &mut metadata, include_content_fingerprints);
         if matches!(event.kind, EventKind::Unrecognised) {
             *unrecognised.entry(event.raw_type.clone()).or_insert(0) += 1;
         }
@@ -83,7 +88,11 @@ pub fn load(path: &Path, id: SessionId) -> PortResult<AgentSession> {
 /// error. The event keeps its [`SourceRef`], so the raw inspector can still show
 /// it in full and the corpus smoke test can count it -- which is how we learn
 /// that Codex changed its format.
-fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> Event {
+fn translate(
+    record: &LineRecord,
+    metadata: &mut SessionMetadata,
+    include_content_fingerprints: bool,
+) -> Event {
     let source = SourceRef::new(FileId(0), record.offset, record.len, record.line_no);
     let value = record.value.as_ref();
     let raw_outer = record.type_str().unwrap_or("unknown").to_string();
@@ -111,6 +120,7 @@ fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> Event {
             raw_type: raw_outer,
             turn: None,
             links: EventLinks::default(),
+            content_fingerprint: None,
         };
     }
 
@@ -159,6 +169,13 @@ fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> Event {
         },
         _ => EventKind::Unrecognised,
     };
+    let content_fingerprint = match (include_content_fingerprints, raw_outer.as_str()) {
+        (true, "session_meta") => payload
+            .get("base_instructions")
+            .and_then(instruction_fingerprint),
+        (true, "response_item") => response_item_fingerprint(payload, inner.as_deref()),
+        _ => None,
+    };
 
     Event {
         id: EventId::Ordinal(record.line_no),
@@ -169,6 +186,77 @@ fn translate(record: &LineRecord, metadata: &mut SessionMetadata) -> Event {
         raw_type,
         turn: None,
         links: EventLinks::default(),
+        content_fingerprint,
+    }
+}
+
+/// Identity of the payload the API item contributes, excluding transport ids.
+///
+/// A retried tool result has a new `call_id` but the same `output`; comparing
+/// the whole JSON object would miss exactly the duplicate CT-023 is about.
+fn response_item_fingerprint(
+    payload: &Value,
+    inner: Option<&str>,
+) -> Option<ct_domain::ContentFingerprint> {
+    let value = match inner {
+        Some("message") | Some("agent_message") => {
+            if let Some(text) = content_text(payload) {
+                return Some(fingerprint::text(&text));
+            }
+            payload.get("content")?
+        }
+        Some("function_call_output")
+        | Some("custom_tool_call_output")
+        | Some("tool_search_output") => payload.get("output")?,
+        Some("web_search_call") => payload.get("action")?,
+        Some("reasoning") => {
+            // Both fields are replayed. Hashing the complete item would also
+            // admit non-content ids if a future format adds them.
+            let mut content = serde_json::Map::new();
+            if let Some(summary) = payload.get("summary") {
+                content.insert("summary".into(), summary.clone());
+            }
+            if let Some(encrypted) = payload.get("encrypted_content") {
+                content.insert("encrypted_content".into(), encrypted.clone());
+            }
+            return (!content.is_empty())
+                .then(|| fingerprint::value(&Value::Object(content)));
+        }
+        Some("function_call") | Some("custom_tool_call") | Some("tool_search_call") => {
+            let mut content = serde_json::Map::new();
+            if let Some(name) = payload.get("name") {
+                content.insert("name".into(), name.clone());
+            }
+            for key in ["arguments", "input"] {
+                if let Some(value) = payload.get(key) {
+                    content.insert(key.into(), value.clone());
+                }
+            }
+            return (!content.is_empty())
+                .then(|| fingerprint::value(&Value::Object(content)));
+        }
+        _ => return None,
+    };
+
+    value_has_content(value).then(|| fingerprint::value(value))
+}
+
+fn instruction_fingerprint(value: &Value) -> Option<ct_domain::ContentFingerprint> {
+    match instruction_text(value) {
+        Some(text) if !text.is_empty() => Some(fingerprint::text(&text)),
+        Some(_) => None,
+        None if value_has_content(value) => Some(fingerprint::value(value)),
+        None => None,
+    }
+}
+
+fn value_has_content(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+        Value::Bool(_) | Value::Number(_) => true,
     }
 }
 
@@ -631,6 +719,35 @@ mod tests {
                 "{kind} should map to a tool call, got {ev:?}"
             );
         }
+    }
+
+    #[test]
+    fn retried_tool_outputs_match_even_when_call_ids_change() {
+        let first = json!({
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "the same file contents"
+        });
+        let retry = json!({
+            "type": "function_call_output",
+            "call_id": "call-2",
+            "output": "the same file contents"
+        });
+
+        assert_eq!(
+            response_item_fingerprint(&first, Some("function_call_output")),
+            response_item_fingerprint(&retry, Some("function_call_output"))
+        );
+    }
+
+    #[test]
+    fn near_duplicate_tool_outputs_do_not_match() {
+        let first = json!({"output": "same"});
+        let newline = json!({"output": "same\n"});
+        assert_ne!(
+            response_item_fingerprint(&first, Some("function_call_output")),
+            response_item_fingerprint(&newline, Some("function_call_output"))
+        );
     }
 
     #[test]
