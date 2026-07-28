@@ -412,7 +412,10 @@ impl ContextTrace {
         // Keyed by agent and raw type, because the same type name from two
         // agents is two different findings.
         let mut seen: BTreeMap<(AgentKind, String), (u32, usize, String)> = BTreeMap::new();
-        let mut report = DriftReport::default();
+        let mut report = DriftReport {
+            requested_prefix: path_prefix.map(str::to_string),
+            ..Default::default()
+        };
 
         for binding in &self.bindings {
             let agent = binding.adapter.agent();
@@ -873,7 +876,12 @@ mod tests {
         }
     }
 
-    fn swept_session(id: &str, events: usize, unrecognised: Vec<(&str, u32)>) -> AgentSession {
+    fn swept_session(
+        id: &str,
+        agent: AgentKind,
+        events: usize,
+        unrecognised: Vec<(&str, u32)>,
+    ) -> AgentSession {
         use ct_domain::model::event::EventLinks;
         use ct_domain::{Event, EventId, EventKind, FileId, SessionMetadata, SourceRef};
 
@@ -892,7 +900,7 @@ mod tests {
 
         AgentSession::new(
             SessionId::new(id).unwrap(),
-            AgentKind::Codex,
+            agent,
             SessionMetadata::default(),
             events,
             vec![],
@@ -921,15 +929,15 @@ mod tests {
             vec![
                 (
                     descriptor("a", AgentKind::Codex, "p", 1),
-                    Ok(swept_session("a", 10, vec![("new_type", 3)])),
+                    Ok(swept_session("a", AgentKind::Codex, 10, vec![("new_type", 3)])),
                 ),
                 (
                     descriptor("b", AgentKind::Codex, "p", 2),
-                    Ok(swept_session("b", 10, vec![("new_type", 1)])),
+                    Ok(swept_session("b", AgentKind::Codex, 10, vec![("new_type", 1)])),
                 ),
                 (
                     descriptor("c", AgentKind::Codex, "p", 3),
-                    Ok(swept_session("c", 10, vec![])),
+                    Ok(swept_session("c", AgentKind::Codex, 10, vec![])),
                 ),
             ],
         );
@@ -952,7 +960,7 @@ mod tests {
                 (descriptor("a", AgentKind::Codex, "p", 1), Err(())),
                 (
                     descriptor("b", AgentKind::Codex, "p", 2),
-                    Ok(swept_session("b", 5, vec![])),
+                    Ok(swept_session("b", AgentKind::Codex, 5, vec![])),
                 ),
             ],
         );
@@ -974,7 +982,7 @@ mod tests {
             AgentKind::Codex,
             vec![(
                 descriptor("a", AgentKind::Codex, "p", 1),
-                Ok(swept_session("a", 12, vec![])),
+                Ok(swept_session("a", AgentKind::Codex, 12, vec![])),
             )],
         );
 
@@ -985,19 +993,32 @@ mod tests {
     }
 
     #[test]
-    fn a_prefix_matching_nothing_sweeps_nothing_rather_than_erroring() {
-        // The sweep cannot tell a typo from a directory that holds no sessions,
-        // and guessing which it was would be worse than reporting zero.
+    fn a_prefix_matching_nothing_is_reported_rather_than_read_as_clean() {
+        // The sweep cannot tell a typo from a directory that genuinely holds no
+        // sessions, so it does not try. What it must not do is let either one
+        // pass as "this format was checked and is fine".
         let app = sweeping(
             AgentKind::Codex,
             vec![(
                 descriptor("a", AgentKind::Codex, "p", 1),
-                Ok(swept_session("a", 5, vec![("new_type", 1)])),
+                Ok(swept_session("a", AgentKind::Codex, 5, vec![("new_type", 1)])),
             )],
         );
 
         let report = app.sweep_drift(Some("Z:/nowhere"));
         assert_eq!(report.sessions_scanned, 0);
         assert!(report.is_clean(), "nothing swept is not a drift finding");
+        assert!(report.matched_nothing(), "but it is not a pass either");
+
+        // Sweeping everywhere and finding nothing is a different situation: it
+        // means this machine has no sessions, not that a path was wrong.
+        let empty = ContextTrace::new(vec![AgentBinding::new(
+            Box::new(FakeAdapter {
+                agent: AgentKind::Codex,
+                sessions: vec![],
+            }),
+            Box::new(CharProbe),
+        )]);
+        assert!(!empty.sweep_drift(None).matched_nothing());
     }
 }

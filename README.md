@@ -20,9 +20,14 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 > the CLI work end to end against real sessions. Verified on a local corpus of
 > 774 sessions: the **150 largest — 126 Claude Code and 24 Codex — parse with
 > zero failures** and 100% event-recognition fidelity, reported totals match the
-> raw JSONL, and a before/after mtime check confirms nothing is written. Most
-> Claude Code sessions now report a *measured* figure for the context their agent
-> never logged. See [Current state](#current-state).
+> raw JSONL, and a before/after mtime check confirms nothing is written.
+>
+> Sweeping *all* 774 rather than the largest 150 gives **99.60%** — three event
+> types this build does not yet parse, found by `ct doctor --dir` and filed as
+> [BACKLOG.md](BACKLOG.md) CT-037 and CT-038. Both figures are real; they measure
+> different sets, and the lower one is the honest headline. Most Claude Code
+> sessions now report a *measured* figure for the context their agent never
+> logged. See [Current state](#current-state).
 
 ---
 

@@ -145,6 +145,12 @@ pub struct DriftReport {
     /// Sessions scanned per agent, so "no drift" can be told apart from
     /// "nothing was swept".
     pub scanned_by_agent: Vec<(AgentKind, usize)>,
+    /// The path prefix the caller asked for, if any.
+    ///
+    /// Recorded because a prefix the user typed that matches nothing is a
+    /// different event from sweeping everywhere and finding nothing, and only
+    /// the report knows which happened.
+    pub requested_prefix: Option<String>,
 }
 
 /// One event type the parser does not understand.
@@ -182,6 +188,20 @@ impl DriftReport {
     /// gate would hide exactly the early case worth catching.
     pub fn is_clean(&self) -> bool {
         self.types.is_empty() && self.unreadable.is_empty()
+    }
+
+    /// The caller named a directory and it held no sessions.
+    ///
+    /// Kept apart from [`DriftReport::is_clean`] because it is not a drift
+    /// finding, and reported all the same because it must not read as one
+    /// either. A typo'd `--dir` that swept nothing is a green CI run claiming
+    /// an agent's format was checked when it was not.
+    pub fn matched_nothing(&self) -> bool {
+        self.sessions_scanned == 0
+            && self
+                .requested_prefix
+                .as_deref()
+                .is_some_and(|p| !p.is_empty())
     }
 
     pub fn fidelity(&self) -> f32 {

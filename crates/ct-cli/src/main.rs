@@ -454,7 +454,11 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 render::drift(&report, json);
                 // The report is the message, so this exits without an `error:`
                 // line. CI wants the code; a human wants the histogram.
-                if !report.is_clean() {
+                //
+                // A prefix that matched nothing also fails, and for a reason
+                // worth naming: a mistyped --dir would otherwise be a green run
+                // claiming an agent's format was checked when nothing was read.
+                if !report.is_clean() || report.matched_nothing() {
                     return Ok(1);
                 }
             }

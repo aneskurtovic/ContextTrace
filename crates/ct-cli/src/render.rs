@@ -935,10 +935,17 @@ pub fn drift(report: &DriftReport, json: bool) {
     println!("Events     {} parsed", thousands(report.total_events as u64));
 
     if report.sessions_scanned == 0 {
-        println!(
-            "\nNothing was swept. Run `ct roots` to see the directories ContextTrace\n\
-             reads, and check the path given to --dir is under one of them."
-        );
+        if report.matched_nothing() {
+            println!(
+                "\nNo session lives under that path, so nothing was checked. Run `ct roots`\n\
+                 to see the directories ContextTrace reads. This exits non-zero on purpose:\n\
+                 a swept corpus of nothing must not read as a format that was verified."
+            );
+        } else {
+            println!(
+                "\nNo sessions found at all. Run `ct roots` to see where they are looked for."
+            );
+        }
         return;
     }
 

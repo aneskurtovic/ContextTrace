@@ -102,6 +102,12 @@ including an unknown event type asserting graceful degradation. ✔
 totals match raw JSONL, and an mtime check proves nothing was written.
 ✔ 150/150 (126 Claude Code, 24 Codex), zero unrecognised, read-only confirmed.
 
+**The subset mattered.** CT-019 later swept all 774 rather than the largest 150
+and found 99.60% — three types this build does not parse. Sampling the largest
+sessions is a good proxy for parse *robustness* and a poor one for format
+*coverage*, because a new event type appears wherever the feature was used, not
+wherever the file is big.
+
 ### CT-011 · Read the prompt size from one API call, not a sum across calls
 `status: done` · `tier: A` · `size: M` · `source: corpus`
 
@@ -376,6 +382,12 @@ The agent behind each file is then known from its descriptor and nothing has to
 be sniffed from contents. Detecting an agent from a file's first line would mean
 inventing a rule, and a misdetected file reports as wholesale drift — the
 loudest possible way for a guess to be wrong.
+
+**A mistyped `--dir` fails rather than passing.** Sweeping nothing and finding
+no drift is arithmetically clean and semantically useless — it would be a green
+CI run claiming an agent's format was checked when nothing was read. So a
+*named* prefix matching no session exits non-zero, kept apart from `is_clean()`
+because it is not a drift finding; having no sessions at all still exits zero.
 
 **It found two real defects on its first run**, which is the argument for having
 built it: 774 sessions, 126,330 events, 4.3 s, 99.60% fidelity, three findings.
