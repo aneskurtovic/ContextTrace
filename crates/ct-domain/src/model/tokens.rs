@@ -150,7 +150,22 @@ impl TokenUsage {
     /// calls the log lumped together in [`TokenUsage::api_calls`]. The domain
     /// cannot check this itself, which is exactly why it is written down here.
     ///
-    /// Returns `None` only when the agent reported no input figures at all.
+    /// Returns `None` when the agent reported no input figures — and also when
+    /// it reported them as all-zero, which is not the same claim as it looks.
+    ///
+    /// **A prompt of zero tokens is not a measurement.** Every model request
+    /// carries a prompt; a system prompt alone puts the floor in the thousands.
+    /// So an all-zero `usage` object is the agent writing a record without
+    /// filling it in, not an observation that nothing was sent.
+    ///
+    /// Found by charting a session: 27 turns across 3,795 in the local corpus
+    /// carry `{input: 0, cache_creation: 0, cache_read: 0, output: 0}`, always
+    /// immediately before a turn with a large `cache_creation` and no
+    /// `cache_read` — the shape of a cache reset. Treated as a measured zero
+    /// they invented a fall and a matching rise of ~288,000 tokens each, which
+    /// took three of the five largest reported changes in that session. They
+    /// would also have entered the characters-per-token fit as a sample
+    /// claiming a large body of text occupied no tokens at all.
     pub fn prompt_tokens(&self) -> Option<u32> {
         match (self.input, self.cache_creation, self.cache_read) {
             (None, None, None) => None,
@@ -158,7 +173,8 @@ impl TokenUsage {
                 i.unwrap_or(0)
                     .saturating_add(c.unwrap_or(0))
                     .saturating_add(r.unwrap_or(0)),
-            ),
+            )
+            .filter(|total| *total > 0),
         }
     }
 
@@ -201,6 +217,36 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(partial.prompt_tokens(), Some(5));
+    }
+
+    #[test]
+    fn an_all_zero_usage_record_is_not_a_prompt_of_zero_tokens() {
+        // The real shape, from 27 turns in the local corpus: a usage object
+        // written but never filled in, always just before a cache reset. Read
+        // as a measured zero it invents a fall and a rise of the session's
+        // whole context -- two of the largest "changes" a growth chart can
+        // report, neither of which happened.
+        let empty = TokenUsage {
+            input: Some(0),
+            cache_creation: Some(0),
+            cache_read: Some(0),
+            output: Some(0),
+            api_calls: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            empty.prompt_tokens(),
+            None,
+            "every request carries a prompt; a zero here is an unfilled record"
+        );
+        assert_eq!(empty.context_utilisation(), None);
+
+        // One real token is still a measurement, however implausible.
+        let tiny = TokenUsage {
+            input: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(tiny.prompt_tokens(), Some(1));
     }
 
     #[test]
