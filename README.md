@@ -298,7 +298,7 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 **236 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 26 done, 1 next, 10
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 26 done, 1 next, 11
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 

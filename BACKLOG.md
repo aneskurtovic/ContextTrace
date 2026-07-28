@@ -46,6 +46,24 @@ boundaries marked.
 
 ## Todo
 
+### CT-039 · `pick_turn` presents a fallback as a peak
+`status: todo` · `tier: A` · `size: S` · `source: review`
+**Why:** `peak_turn` is `max_by_key(|t| t.prompt_tokens().unwrap_or(0))`. Where
+no turn in a session carries a usage record every key is zero, so it returns the
+last turn and `pick_turn` hands it back as "the session's largest" — a turn
+nobody chose, described as one that was measured. The error message naming this
+condition ("no turns with recorded token usage") fires only when there are *no
+turns at all*, so the one case it names is the one case it never catches.
+
+Surfaced by `ct diff`, which prints each side's total with its provenance and so
+showed a `[estimated]` total sitting under a defaulted turn. Latent rather than
+observed: all five affected sessions in the local corpus have exactly one turn,
+where "the peak" and "the only turn" coincide, so nothing has been mis-sized yet.
+Nothing prevents it either.
+
+**Done when:** a session whose turns carry no usage record is either refused by
+name, or has its defaulted turn stated as a fallback rather than as a peak.
+
 ### CT-023 · Duplicate context detection
 `status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
 **Why:** agent retry loops re-inject identical file content, and it is invisible
@@ -157,6 +175,11 @@ comparison — which is why the axes are ordered by how instrument-free they are
 One incidental find: `heuristic:chars/2.17` and `heuristic:chars/2.18` render
 identically, because the name formats to one decimal. Comparing instruments by
 name would have called those one instrument and bounded nothing away.
+
+Running it also surfaced **CT-039**, in the way this tool is supposed to: the
+diff prints each side's total with its provenance, so a `[estimated]` total
+sitting under a defaulted turn was visible on sight. Putting provenance next to
+every number keeps finding things no assertion would have.
 
 ### CT-001 · Scaffold the Cargo workspace under ports-and-adapters
 `status: done` · `tier: A` · `size: M` · `source: plan`
