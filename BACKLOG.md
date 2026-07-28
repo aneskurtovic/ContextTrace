@@ -37,20 +37,14 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-021 · `ct diff A..B` — compare two sessions or turn ranges
-`status: next` · `tier: B` · `size: M` · `source: plan`
-**Why:** "it worked yesterday and fails today on the same task."
-**Done when:** structural differences in composition, tool usage and residual
-growth are reported side by side.
+### CT-022 · Context growth timeline
+`status: next` · `tier: B` · `size: S` · `source: plan`
+**Done when:** per-turn prompt size renders as a sparkline with compaction
+boundaries marked.
 
 ---
 
 ## Todo
-
-### CT-022 · Context growth timeline
-`status: todo` · `tier: B` · `size: S` · `source: plan`
-**Done when:** per-turn prompt size renders as a sparkline with compaction
-boundaries marked.
 
 ### CT-023 · Duplicate context detection
 `status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
@@ -124,6 +118,45 @@ a small, exactly-measured case of the same defect.
 ---
 
 ## Done
+
+### CT-021 · `ct diff A..B` — compare two sessions or turn ranges
+`status: done` · `tier: B` · `size: M` · `source: plan`
+
+**Why:** "it worked yesterday and fails today on the same task."
+**Done when:** structural differences in composition, tool usage and residual
+growth are reported side by side.
+
+**What building it taught.** A diff between two sessions is a comparison between
+two *instruments*. Claude Code item sizes come from a characters-per-token ratio
+fitted per session, and across the local corpus that ratio runs 2.00 to 2.55 —
+a 27% spread. Subtracting one session's category totals from another's mixes the
+change in content with the difference between the two scales, inseparably. The
+residual is worst hit, being `observed_total − sum(estimates)`: the axis this
+entry names third is the one most contaminated by the measurement.
+
+Neither obvious fix works. Averaging the ratios invents a third instrument that
+matches neither side. Re-sizing one side with the other's ratio makes the deltas
+clean at the cost of making that side disagree with `ct context` for its own
+session — the CT-020 defect in mirror image. What works is to *quantify* the skew
+and carry it to every row as the largest delta the instruments alone explain.
+A row above its bound is content; a row below it is measurement. This falls out
+row by row instead of being asserted once in a caption.
+
+Writing the residual test found a defect in that bound before it shipped. A ratio
+moving the items by 9% moves the residual by 9% **of the items**, not of itself,
+so bounding the remainder like an ordinary row understated it by more than half
+and would have presented a 3,000-token move as a finding. It is now bounded by
+the accounted total — which makes the most contaminated row self-flagging rather
+than the boldest one.
+
+Cross-agent is a refusal, not a wider bound: no factor relates a measured count
+to a ratio estimate, and Codex logs its own system prompt, so the two residuals
+are not the same quantity. Token deltas are withheld and the counts carry the
+comparison — which is why the axes are ordered by how instrument-free they are.
+
+One incidental find: `heuristic:chars/2.17` and `heuristic:chars/2.18` render
+identically, because the name formats to one decimal. Comparing instruments by
+name would have called those one instrument and bounded nothing away.
 
 ### CT-001 · Scaffold the Cargo workspace under ports-and-adapters
 `status: done` · `tier: A` · `size: M` · `source: plan`

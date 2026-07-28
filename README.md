@@ -291,14 +291,14 @@ cheaper audit of the "nothing leaves this machine" claim.
 |---|---|
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 101 tests |
-| `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle | Implemented, 41 tests |
-| `ct-cli` — the nine commands below | Implemented, 17 tests |
+| `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle, diff | Implemented, 49 tests |
+| `ct-cli` — the ten commands below | Implemented, 23 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
-| `ct diff`, context-growth timeline, search, SQLite index, desktop shell | Not started |
+| Context-growth timeline, search, SQLite index, desktop shell | Not started |
 
-**222 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+**236 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 25 done, 1 next, 11
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 26 done, 1 next, 10
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -320,6 +320,7 @@ ct context <id> [--turn N] [--exact] [filters]  # defaults to the largest turn
 ct largest <id> [--turn N] [--limit] [--exact] [filters]
 ct trace   <id> --item <id-or-label>   # one item's lifecycle across the session
 ct residual <id> [--from N] [--to N]
+ct diff    <id>[@turn] <id>[@turn]     # or A..B; each side defaults to its peak
 ct doctor  <id>
 ct doctor  --dir [PATH]                # sweep for format drift; exits 1 on any
 ct export  <id>                        # the whole session as NDJSON, streamed
@@ -568,6 +569,55 @@ distinction had to be built in.
 `--json` on every command, so ContextTrace is pipeable into other tooling before
 any desktop UI exists. Domain types serialise as tagged sum types
 (`{"kind":"calibrated",…}`), so downstream scripts never regex strings.
+
+### Comparing two turns without comparing two rulers
+
+`ct diff` answers "it worked yesterday and fails today on the same task". Each
+side is `<id>[@<turn>]` and defaults to that session's largest turn, which is
+always printed rather than assumed — two unstated peaks at turn 5 and turn 400
+would make depth read as difference.
+
+```
+ct diff 60c7495d@20 60c7495d@59        # two turns of one session
+ct diff 257a927b..25e27e70             # two sessions, each at its peak
+```
+
+The thing that makes this harder than subtraction: **Claude Code item sizes come
+from a characters-per-token ratio fitted to each session's own usage.** Across
+the sessions on this machine that ratio runs from 2.00 to 2.55 — a 27% spread.
+Two sessions are therefore reported on two differently graduated scales, and a
+raw subtraction carries the change in content *and* the difference between the
+instruments with no way to tell which is which. The residual is worst affected,
+being `observed_total − sum(estimates)`: every token the ratio moves in the items
+lands there with the sign flipped.
+
+So the skew is computed and carried to every row as the largest delta the
+instruments alone could explain:
+
+```
+  Instrument heuristic:chars/2.0 vs heuristic:chars/2.5 -- 20.9% apart.
+
+  CATEGORY                       LEFT       RIGHT       DELTA
+  Other                       111,151           4    -111,147  changed
+  Tool calls                   29,927      97,908     +67,981  changed
+  File contents                 2,155      38,912     +36,757  changed
+  Unattributed                 55,366      61,378      +6,012  within +-67,263
+```
+
+The last row is the point. Read naively it says this session leaves 6,012 more
+tokens unaccounted for; in fact that is under a tenth of what the two fits alone
+explain, and nothing may be concluded from it. Note also that the remainder is
+bounded by the *accounted* total, not by its own size — a ratio moving the items
+by 9% moves the residual by 9% **of the items**. Bounding it like an ordinary row
+understated it by more than half, which the test that found it now guards.
+
+Comparing a Codex session with a Claude Code one is a refusal rather than a wider
+bound. No factor relates a measured count to a ratio estimate, and Codex logs its
+own system prompt, so the two residuals are not even the same quantity. Token
+deltas are withheld and the counts — prompt totals from the agents' own usage
+records, item counts, tool-call counts — carry the comparison. That is why the
+view is ordered by how instrument-free each axis is: a reader who stops after the
+header has still read something true.
 
 ### A note on reading the numbers
 
