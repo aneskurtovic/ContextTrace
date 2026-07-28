@@ -182,6 +182,21 @@ pub trait TokenEstimator: Send + Sync {
 
     /// Identifier for display, e.g. `o200k_base` or `heuristic:chars/3.6`.
     fn name(&self) -> &str;
+
+    /// The ratio knob this instrument applies, where it has one.
+    ///
+    /// `Some(r)` is a statement about how the numbers are made: every size this
+    /// estimator produces is a character count divided by `r`. Two such
+    /// instruments differing only in `r` therefore produce figures related by a
+    /// known factor, which is what lets a comparison between two differently
+    /// fitted sessions bound its own error instead of pretending there is none.
+    ///
+    /// `None` -- the default, and what a real tokenizer returns -- means the
+    /// sizes come from measurement rather than from a ratio, so no such factor
+    /// exists and none may be invented.
+    fn chars_per_token(&self) -> Option<f32> {
+        None
+    }
 }
 
 /// A driven port: fetching original bytes behind a [`SourceRef`].

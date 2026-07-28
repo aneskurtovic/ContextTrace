@@ -8,6 +8,7 @@
 //! that does not exist yet.
 
 pub mod diagnostics;
+pub mod diff;
 pub mod export;
 pub mod lifecycle;
 
@@ -21,6 +22,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
+pub use diff::{
+    compare, CategoryDelta, Comparability, Instrument, SessionDiff, Side, SideSummary, ToolDelta,
+};
 pub use export::{ExportRecord, SCHEMA_VERSION};
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use ct_domain::services::DerivedRatio as SessionRatio;

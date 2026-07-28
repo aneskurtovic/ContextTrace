@@ -18,6 +18,38 @@ pub fn thousands(n: impl Into<u64>) -> String {
     out
 }
 
+/// A signed difference, e.g. `+36,996` or `-549`.
+///
+/// The sign is always printed. A diff column where `+400` and `400` both appear
+/// forces the reader to work out which way round the comparison ran.
+pub fn signed(n: i64) -> String {
+    format!("{}{}", if n < 0 { '-' } else { '+' }, thousands(n.unsigned_abs()))
+}
+
+/// Greedy word wrap, with every line after the first indented to `indent`.
+///
+/// Exists because the sentence explaining *why* two things cannot be compared is
+/// necessarily long, and it lives in the application layer, which must not know
+/// how wide a terminal is. So the reason is written as prose there and broken
+/// here, where line width is allowed to be a concern.
+pub fn wrap(text: &str, width: usize, indent: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines.join(&format!("\n{}", " ".repeat(indent)))
+}
+
 /// Human byte size.
 pub fn bytes(n: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
@@ -160,6 +192,33 @@ mod tests {
         // The width that motivated making this generic: a corpus sweep counts
         // events across hundreds of sessions.
         assert_eq!(thousands(9_876_543_210u64), "9,876,543,210");
+    }
+
+    #[test]
+    fn a_difference_always_carries_its_sign() {
+        assert_eq!(signed(36_996), "+36,996");
+        assert_eq!(signed(-549), "-549");
+        assert_eq!(signed(0), "+0");
+        // i64::MIN has no positive counterpart; `unsigned_abs` is why this is
+        // not a panic.
+        assert!(signed(i64::MIN).starts_with('-'));
+    }
+
+    #[test]
+    fn wrapping_indents_every_line_but_the_first() {
+        // The first line is already positioned by whatever label precedes it.
+        let out = wrap("one two three four five six", 12, 4);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines.len() > 1, "should have wrapped: {out:?}");
+        assert!(!lines[0].starts_with(' '));
+        assert!(lines[1..].iter().all(|l| l.starts_with("    ")), "{out:?}");
+        assert!(lines.iter().all(|l| l.trim().chars().count() <= 12));
+    }
+
+    #[test]
+    fn wrapping_a_word_longer_than_the_width_does_not_loop_or_split_it() {
+        let out = wrap("supercalifragilistic ok", 5, 0);
+        assert_eq!(out, "supercalifragilistic\nok");
     }
 
     #[test]

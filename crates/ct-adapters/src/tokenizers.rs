@@ -54,6 +54,12 @@ impl TokenEstimator for TiktokenEstimator {
     fn name(&self) -> &str {
         self.name
     }
+
+    // `chars_per_token` is deliberately left at the port's `None`, despite the
+    // field of that name above. The field is a fallback for the one case where
+    // the text is unavailable; this instrument's figures are otherwise measured.
+    // Publishing 3.8 here would invite a comparison to rescale exact counts by a
+    // ratio they were never produced from.
 }
 
 /// Character-ratio estimation, for models with no public tokenizer.
@@ -114,6 +120,12 @@ impl TokenEstimator for HeuristicEstimator {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Every figure this estimator produces is a character count over this
+    /// ratio, so two of them differing only here differ by a known factor.
+    fn chars_per_token(&self) -> Option<f32> {
+        Some(self.chars_per_token)
     }
 }
 

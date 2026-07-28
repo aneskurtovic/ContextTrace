@@ -1,13 +1,13 @@
 //! Presentation. The only layer allowed to know about terminals.
 
 use crate::format::{
-    bar, bytes, confidence_tag, ellipsize, ellipsize_middle, pad, percent, rpad, thousands,
-    token_count,
+    bar, bytes, confidence_tag, ellipsize, ellipsize_middle, pad, percent, rpad, signed, thousands,
+    token_count, wrap,
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    AppError, ContextTrace, Departure, Diagnostics, DriftReport, ItemLifecycle, ResidualPoint,
-    ResolvedSession,
+    AppError, Comparability, ContextTrace, Departure, Diagnostics, DriftReport, ItemLifecycle,
+    ResidualPoint, ResolvedSession, SessionDiff,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -1121,6 +1121,237 @@ fn system_prompt_is_itemised(snapshot: &ct_domain::ContextSnapshot) -> bool {
 /// A broken pipe ends the export quietly. `ct export <id> | head` is the first
 /// thing anyone tries, and it must not print an error for working exactly as
 /// asked.
+/// Two turns side by side.
+///
+/// The layout follows the honesty gradient rather than the interest gradient:
+/// the figures needing no caveat come first (prompt totals, item and call
+/// counts), then the token composition, whose deltas are only as good as the
+/// instruments behind them. A reader who stops after the header has still read
+/// something true.
+pub fn diff(diff: &SessionDiff, json: bool) {
+    if json {
+        #[derive(serde::Serialize)]
+        struct Report<'a> {
+            #[serde(flatten)]
+            diff: &'a SessionDiff,
+            /// Derived from the two totals. Emitted rather than left to the
+            /// consumer because getting the direction wrong is silent.
+            prompt_delta: i64,
+            totals_are_observed: bool,
+        }
+        print_json(&Report {
+            diff,
+            prompt_delta: diff.prompt_delta(),
+            totals_are_observed: diff.totals_are_observed(),
+        });
+        return;
+    }
+
+    println!(
+        "Diff  {} -> {}",
+        side_label(&diff.left),
+        side_label(&diff.right)
+    );
+    println!();
+    diff_side("LEFT ", &diff.left);
+    diff_side("RIGHT", &diff.right);
+
+    println!();
+    if diff.totals_are_observed() {
+        println!(
+            "  Prompt     {} tokens, both sides read from the agents' own usage records",
+            signed(diff.prompt_delta())
+        );
+    } else {
+        println!(
+            "  Prompt     {} tokens -- at least one side had no usage record and was \
+             summed from\n             our own estimates, so this figure is not a measurement",
+            signed(diff.prompt_delta())
+        );
+    }
+    instrument_note(diff);
+
+    composition_table(diff);
+    tool_table(diff);
+}
+
+fn side_label(side: &ct_application::SideSummary) -> String {
+    format!("{} @ turn {}", short_id(&side.session_id), side.turn)
+}
+
+/// Sessions are named by a prefix everywhere else in this tool, and a diff
+/// header with two full UUIDs in it wraps on any normal terminal.
+fn short_id(id: &str) -> &str {
+    id.split_once('-').map_or(id, |(head, _)| head)
+}
+
+fn diff_side(tag: &str, side: &ct_application::SideSummary) {
+    println!(
+        "  {tag}  {}  {}  {}  {}  {} items",
+        pad(short_id(&side.session_id), 10),
+        pad(side.agent.label(), 11),
+        pad(&format!("turn {}", side.turn), 9),
+        rpad(&token_count(side.total), 20),
+        thousands(side.items as u64),
+    );
+}
+
+/// State how the two sides were measured, and what that permits.
+fn instrument_note(diff: &SessionDiff) {
+    match &diff.comparability {
+        Comparability::Identical { estimator } => {
+            let why = if diff.same_session() {
+                "one session, so one instrument sized both turns"
+            } else {
+                "the same instrument sized both sides"
+            };
+            println!(
+                "  Instrument {estimator} -- {why}.\n             \
+                 Every delta below is content."
+            );
+        }
+        Comparability::Skewed { left, right, skew } => {
+            println!(
+                "  Instrument {left} vs {right} -- {} apart.\n             \
+                 Claude Code item sizes come from a ratio fitted to each session's own\n             \
+                 usage, so these two sides are reported on differently graduated scales.\n             \
+                 Each row below states how much of its delta that alone could explain.",
+                percent(*skew)
+            );
+        }
+        Comparability::Incomparable { left, right, reason } => {
+            println!(
+                "  Instrument {left} vs {right}.\n             {}\n             \
+                 The counts above and below are unaffected and are the comparison.",
+                wrap(&format!("No token delta is reported: {reason}."), 66, 13)
+            );
+        }
+    }
+}
+
+fn composition_table(diff: &SessionDiff) {
+    // A category absent from both turns is not a finding, and there are
+    // fourteen of them.
+    let rows: Vec<&ct_application::CategoryDelta> = diff
+        .categories
+        .iter()
+        .filter(|c| c.left > 0 || c.right > 0)
+        .collect();
+    if rows.is_empty() {
+        return;
+    }
+    let comparable = diff.comparability.tokens_are_comparable();
+    // A verdict column earns its width only where a delta can be both real and
+    // explainable by the measurement. Under one instrument it never can be.
+    let bounded = matches!(diff.comparability, Comparability::Skewed { .. });
+
+    println!("\nComposition");
+    let widest = rows
+        .iter()
+        .map(|c| c.category.label().chars().count())
+        .max()
+        .unwrap_or(20);
+    println!(
+        "  {}  {}  {}{}",
+        pad("CATEGORY", widest),
+        rpad("LEFT", 10),
+        rpad("RIGHT", 10),
+        if comparable { rpad("DELTA", 12) } else { String::new() }
+    );
+
+    for row in &rows {
+        let delta = if comparable {
+            let verdict = match (bounded, row.delta == 0, row.is_meaningful()) {
+                (_, true, _) => String::new(),
+                (false, _, _) => String::new(),
+                (true, _, true) => "  changed".into(),
+                (true, _, false) => format!(
+                    "  within +-{}",
+                    thousands(row.instrument_bound.unwrap_or(0))
+                ),
+            };
+            format!("{}{verdict}", rpad(&signed(row.delta), 12))
+        } else {
+            String::new()
+        };
+        println!(
+            "  {}  {}  {}{}",
+            pad(row.category.label(), widest),
+            rpad(&thousands(row.left), 10),
+            rpad(&thousands(row.right), 10),
+            delta
+        );
+    }
+
+    // Item counts are the composition axis that survives every instrument
+    // question, so where they moved it is worth saying outright.
+    let moved: Vec<&ct_application::CategoryDelta> = diff
+        .categories
+        .iter()
+        .filter(|c| c.item_delta() != 0)
+        .collect();
+    if !moved.is_empty() {
+        let summary: Vec<String> = moved
+            .iter()
+            .take(4)
+            .map(|c| format!("{} {}", signed(c.item_delta()), c.category.label().to_lowercase()))
+            .collect();
+        println!("\n  Item counts  {}", summary.join(", "));
+    }
+}
+
+fn tool_table(diff: &SessionDiff) {
+    if diff.tools.is_empty() {
+        println!("\nTool usage   neither turn had a tool result in context");
+        return;
+    }
+
+    const LIMIT: usize = 12;
+    let bounded = matches!(diff.comparability, Comparability::Skewed { .. });
+    println!("\nTool usage");
+    let widest = diff
+        .tools
+        .iter()
+        .take(LIMIT)
+        .map(|t| t.tool.chars().count().min(24))
+        .max()
+        .unwrap_or(12)
+        .max(4);
+    println!(
+        "  {}  {}  {}  {}  {}  {}",
+        pad("TOOL", widest),
+        rpad("CALLS", 6),
+        rpad("", 6),
+        rpad("DELTA", 7),
+        rpad("LEFT TOK", 10),
+        rpad("RIGHT TOK", 10),
+    );
+
+    for tool in diff.tools.iter().take(LIMIT) {
+        // Only where a bound exists to clear. Under one instrument every
+        // non-zero delta clears it, and a column reading "changed" on every row
+        // says nothing.
+        let flag = if bounded && tool.tokens_are_meaningful() {
+            "  changed"
+        } else {
+            ""
+        };
+        println!(
+            "  {}  {}  {}  {}  {}  {}{flag}",
+            pad(&ellipsize(&tool.tool, 24), widest),
+            rpad(&tool.left_calls.to_string(), 6),
+            rpad(&format!("-> {}", tool.right_calls), 6),
+            rpad(&signed(tool.call_delta()), 7),
+            rpad(&thousands(tool.left_tokens), 10),
+            rpad(&thousands(tool.right_tokens), 10),
+        );
+    }
+
+    if diff.tools.len() > LIMIT {
+        println!("  ... and {} more tool(s)", diff.tools.len() - LIMIT);
+    }
+}
+
 pub fn export_ndjson(
     app: &ContextTrace,
     session: &AgentSession,

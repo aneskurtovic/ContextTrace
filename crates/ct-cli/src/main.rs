@@ -173,8 +173,79 @@ enum Command {
         format: ExportFormat,
     },
 
+    /// Compare two turns: composition, tool usage and unattributed remainder
+    ///
+    /// For "it worked yesterday and fails today on the same task". Each side is
+    /// `<id>[@<turn>]` and defaults to that session's largest turn, which is
+    /// always printed rather than assumed:
+    ///
+    ///   ct diff 25e27e70@12 25e27e70@40   # two turns of one session
+    ///   ct diff 25e27e70..60c7495d        # two sessions, each at its peak
+    ///
+    /// Claude Code item sizes come from a characters-per-token ratio fitted to
+    /// each session separately, so two sessions are measured by two instruments.
+    /// The difference between them is computed and each row states how much of
+    /// its delta that alone could explain. Across a Codex and a Claude Code
+    /// session no such factor exists, and token deltas are withheld rather than
+    /// widened.
+    Diff {
+        /// Left side: `<id>[@<turn>]`, or `A..B` to give both at once
+        left: String,
+        /// Right side: `<id>[@<turn>]`
+        right: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Show which local directories ContextTrace reads
     Roots,
+}
+
+/// One side of a diff: which session, and which turn of it.
+#[derive(Debug, PartialEq)]
+struct TurnSpec {
+    id: String,
+    turn: Option<u32>,
+}
+
+impl TurnSpec {
+    fn parse(text: &str) -> Result<Self, String> {
+        let (id, turn) = match text.split_once('@') {
+            Some((id, turn)) => (
+                id,
+                Some(turn.parse::<u32>().map_err(|_| {
+                    format!("'{turn}' is not a turn number; write it as <id>@<turn>, e.g. abc123@40")
+                })?),
+            ),
+            None => (text, None),
+        };
+        if id.is_empty() {
+            return Err("a diff side needs a session id".into());
+        }
+        Ok(Self {
+            id: id.to_string(),
+            turn,
+        })
+    }
+}
+
+/// Accept both spellings of a two-sided argument.
+///
+/// `A..B` is what the backlog entry named and reads well for two sessions;
+/// two positionals read better once turns are attached, because `a@12..a@40`
+/// is three separators in nine characters. Both parse to the same pair rather
+/// than to two code paths. Splitting on `..` is unambiguous: neither agent's
+/// session ids contain a dot.
+fn parse_sides(left: &str, right: Option<&str>) -> Result<(TurnSpec, TurnSpec), String> {
+    match right {
+        Some(right) => Ok((TurnSpec::parse(left)?, TurnSpec::parse(right)?)),
+        None => {
+            let (a, b) = left.split_once("..").ok_or_else(|| {
+                format!("'{left}' names one side only; give a second id, or write A..B")
+            })?;
+            Ok((TurnSpec::parse(a)?, TurnSpec::parse(b)?))
+        }
+    }
 }
 
 /// Export formats.
@@ -476,6 +547,49 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             calibrated.export(&app, &session, &resolved)?;
         }
 
+        Command::Diff { left, right, json } => {
+            let (left_spec, right_spec) = parse_sides(&left, right.as_deref())?;
+
+            let (left_session, left_resolved) = app.load(&left_spec.id)?;
+            // Comparing two turns of one session is the commonest form, and
+            // loading it twice would mean parsing the file and re-fitting its
+            // ratio twice -- a sweep of every turn, seconds on a long session.
+            let right_loaded = (right_spec.id != left_spec.id)
+                .then(|| app.load(&right_spec.id))
+                .transpose()?
+                .filter(|(_, r)| r.descriptor.id != left_resolved.descriptor.id);
+            let (right_session, right_resolved) = match &right_loaded {
+                Some((session, resolved)) => (session, resolved),
+                None => (&left_session, &left_resolved),
+            };
+
+            let left_turn = pick_turn(&app, &left_session, left_spec.turn)?;
+            let right_turn = pick_turn(&app, right_session, right_spec.turn)?;
+
+            let left_cal = session_estimator(&app, &left_session, left_resolved.binding);
+            let right_cal_owned = right_loaded
+                .as_ref()
+                .map(|(session, resolved)| session_estimator(&app, session, resolved.binding));
+            let right_cal = right_cal_owned.as_ref().unwrap_or(&left_cal);
+
+            let left_snapshot =
+                left_cal.snapshot(&app, &left_session, left_resolved.binding, left_turn)?;
+            let right_snapshot =
+                right_cal.snapshot(&app, right_session, right_resolved.binding, right_turn)?;
+
+            let diff = ct_application::compare(
+                ct_application::Side {
+                    snapshot: &left_snapshot,
+                    instrument: left_cal.instrument(&app, left_resolved.binding),
+                },
+                ct_application::Side {
+                    snapshot: &right_snapshot,
+                    instrument: right_cal.instrument(&app, right_resolved.binding),
+                },
+            );
+            render::diff(&diff, json);
+        }
+
         Command::Doctor { id, dir, json } => match (id, dir) {
             (Some(_), Some(_)) => {
                 return Err("give a session id or --dir, not both: one reports a \
@@ -523,6 +637,26 @@ struct SessionCalibration {
 }
 
 impl SessionCalibration {
+    /// The instrument this session's figures actually come from.
+    ///
+    /// One accessor rather than a match at each call site, because every place
+    /// that forgets the fallback silently uses a different estimator from the
+    /// rest of the tool -- which is exactly how `ct export` came to disagree
+    /// with `ct context` about the same turn by 82%.
+    fn effective<'a>(&'a self, app: &'a ContextTrace, binding: usize) -> &'a dyn TokenEstimator {
+        match &self.estimator {
+            Some(e) => e,
+            None => app.binding_estimator(binding),
+        }
+    }
+
+    /// How this side's sizes were made, for a comparison that has to bound its
+    /// own error.
+    fn instrument(&self, app: &ContextTrace, binding: usize) -> ct_application::Instrument {
+        let estimator = self.effective(app, binding);
+        ct_application::Instrument::new(estimator.name(), estimator.chars_per_token())
+    }
+
     fn snapshot(
         &self,
         app: &ContextTrace,
@@ -530,10 +664,7 @@ impl SessionCalibration {
         binding: usize,
         turn: TurnNumber,
     ) -> Result<ct_domain::ContextSnapshot, Box<dyn std::error::Error>> {
-        Ok(match &self.estimator {
-            Some(e) => app.snapshot_with(session, binding, turn, e)?,
-            None => app.snapshot(session, binding, turn)?,
-        })
+        Ok(app.snapshot_with(session, binding, turn, self.effective(app, binding))?)
     }
 
     /// The snapshot behind a single-turn view, exactly counted on request.
@@ -555,10 +686,8 @@ impl SessionCalibration {
         }
 
         let raw = FileRawEventSource::for_session(&resolved.descriptor.path);
-        let (snapshot, recount) = match &self.estimator {
-            Some(e) => app.snapshot_exact_with(session, binding, turn, e, &raw)?,
-            None => app.snapshot_exact(session, binding, turn, &raw)?,
-        };
+        let (snapshot, recount) =
+            app.snapshot_exact_with(session, binding, turn, self.effective(app, binding), &raw)?;
         Ok((snapshot, Some(recount)))
     }
 
@@ -569,22 +698,16 @@ impl SessionCalibration {
         session: &ct_domain::AgentSession,
         resolved: &ResolvedSession,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        match &self.estimator {
-            Some(e) => render::export_ndjson(app, session, resolved, e),
-            None => render::export_ndjson(
-                app,
-                session,
-                resolved,
-                app.binding_estimator(resolved.binding),
-            ),
-        }
+        render::export_ndjson(
+            app,
+            session,
+            resolved,
+            self.effective(app, resolved.binding),
+        )
     }
 
     fn name(&self, app: &ContextTrace, binding: usize) -> String {
-        match &self.estimator {
-            Some(e) => e.name().to_string(),
-            None => app.estimator_name(binding).to_string(),
-        }
+        self.effective(app, binding).name().to_string()
     }
 }
 
@@ -687,6 +810,37 @@ mod tests {
             .expect_err("must reject an unknown source")
             .to_string();
         assert!(err.contains("compaction-summary"), "should list the kinds: {err}");
+    }
+
+    #[test]
+    fn both_spellings_of_a_diff_reach_the_same_pair() {
+        // `A..B` is what the backlog named; two positionals read better once
+        // turns are attached. They must not become two code paths.
+        let joined = parse_sides("abc..def", None).expect("A..B must parse");
+        let split = parse_sides("abc", Some("def")).expect("two positionals must parse");
+        assert_eq!(joined, split);
+        assert_eq!(joined.0.id, "abc");
+        assert_eq!(joined.1.turn, None, "no turn means that side's peak");
+    }
+
+    #[test]
+    fn a_turn_may_be_attached_to_either_side() {
+        let (left, right) = parse_sides("abc@12", Some("abc@40")).expect("must parse");
+        assert_eq!((left.id.as_str(), left.turn), ("abc", Some(12)));
+        assert_eq!((right.id.as_str(), right.turn), ("abc", Some(40)));
+    }
+
+    #[test]
+    fn a_malformed_side_says_what_the_shape_is() {
+        // A diff silently comparing the wrong turns would be worse than one that
+        // refuses, because both sides would look plausible.
+        for bad in ["abc@", "abc@last", "abc@-1"] {
+            let err = TurnSpec::parse(bad).expect_err("must reject");
+            assert!(err.contains("<id>@<turn>"), "unhelpful message for {bad}: {err}");
+        }
+        assert!(parse_sides("..def", None).is_err(), "an empty side is not a session");
+        let err = parse_sides("abc", None).expect_err("one side is not a comparison");
+        assert!(err.contains("A..B"), "should name the other spelling: {err}");
     }
 
     #[test]
