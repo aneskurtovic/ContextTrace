@@ -289,16 +289,16 @@ cheaper audit of the "nothing leaves this machine" claim.
 
 | Component | Status |
 |---|---|
-| `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
+| `ct-domain` — model, ports, calibration, filtering | Implemented, 51 tests |
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 101 tests |
-| `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle, diff | Implemented, 49 tests |
-| `ct-cli` — the ten commands below | Implemented, 23 tests |
+| `ct-application` — use cases, diagnostics, drift sweep, NDJSON export, item lifecycle, diff, growth | Implemented, 61 tests |
+| `ct-cli` — the eleven commands below | Implemented, 23 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
-| Context-growth timeline, search, SQLite index, desktop shell | Not started |
+| Search, SQLite index, desktop shell | Not started |
 
-**236 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
+**249 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
 recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 26 done, 1 next, 11
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 27 done, 1 next, 10
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -321,6 +321,7 @@ ct largest <id> [--turn N] [--limit] [--exact] [filters]
 ct trace   <id> --item <id-or-label>   # one item's lifecycle across the session
 ct residual <id> [--from N] [--to N]
 ct diff    <id>[@turn] <id>[@turn]     # or A..B; each side defaults to its peak
+ct growth  <id> [--from N] [--to N] [--width N]   # the whole session as a chart
 ct doctor  <id>
 ct doctor  --dir [PATH]                # sweep for format drift; exits 1 on any
 ct export  <id>                        # the whole session as NDJSON, streamed
@@ -618,6 +619,52 @@ deltas are withheld and the counts — prompt totals from the agents' own usage
 records, item counts, tool-call counts — carry the comparison. That is why the
 view is ordered by how instrument-free each axis is: a reader who stops after the
 header has still read something true.
+
+### The whole session at once, using only what the agent reported
+
+`ct diff` compares two turns. `ct growth` declines to pick one:
+
+```
+$ ct growth 25e27e70
+Context growth  25e27e70-…  claude-code
+  Turns      889, 4 of which the agent recorded no size for and are drawn as gaps
+  Peak       383,810 tokens at turn 778
+
+  ▃▄▅▅▆▇▇▇▃▄▄▄▅▅▅▆▆▆▇▇▇▃▃▄▄▄▅▅▆▆▄▄▄▄▅▅▂▃▃▃▄▄▅▅▆▆▆▇▇███▃▄▄▄▅▅▆▂
+         c             c       c     cc              c       c
+  turn 1                                              turn 889
+
+  Each column is 15 turns, drawn at the largest prompt among them
+  against a zero baseline. A fall within a column does not show.
+  'c' marks a column containing a compaction; there are 7.
+
+Largest changes
+  turn 779       -324,720  383,810 -> 59,090
+  turn 115       -268,935  333,079 -> 64,144
+  turn 886       -184,590  243,082 -> 58,492  (across 1 unrecorded turn(s))
+```
+
+This is the one command that touches no estimator, no calibration and no
+reconstruction. It reads `session.turns()` and nothing else, so every number on
+the chart is `Observed` — which is also why 889 turns render instantly.
+
+The caption is doing real work. At 60 columns each column is 15 turns drawn at
+their maximum, so **a fall inside a column does not appear at all**; a sparkline
+that aggregates silently invites reading a smooth line as a smooth session. The
+`c` row marks columns containing a compaction rather than pretending to mark
+turns, and a compaction the agent never placed on a turn is counted as unplaced
+instead of being attached to a plausible neighbour.
+
+Charting a whole session is also how artefacts become visible, because a single
+turn has nothing to look wrong against. This view found two vertical falls to the
+floor whose turns carried `{input: 0, cache_creation: 0, cache_read: 0}` — a
+usage record written but never filled in, always just before a cache reset. Every
+request carries a prompt and a system prompt alone puts the floor in the
+thousands, so a zero there is an absent measurement, not a measured absence.
+There are **27 such turns across 3,795, in 11 of 60 local sessions**, and read
+naively they invented a fall and a matching rise of ~288,000 tokens that took
+three of the five largest changes above. They are now gaps, counted in the header
+and named when a reported change spans one.
 
 ### A note on reading the numbers
 

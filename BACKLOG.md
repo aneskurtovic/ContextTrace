@@ -37,17 +37,8 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-022 · Context growth timeline
-`status: next` · `tier: B` · `size: S` · `source: plan`
-**Done when:** per-turn prompt size renders as a sparkline with compaction
-boundaries marked.
-
----
-
-## Todo
-
 ### CT-039 · `pick_turn` presents a fallback as a peak
-`status: todo` · `tier: A` · `size: S` · `source: review`
+`status: next` · `tier: A` · `size: S` · `source: review`
 **Why:** `peak_turn` is `max_by_key(|t| t.prompt_tokens().unwrap_or(0))`. Where
 no turn in a session carries a usage record every key is zero, so it returns the
 last turn and `pick_turn` hands it back as "the session's largest" — a turn
@@ -63,6 +54,16 @@ Nothing prevents it either.
 
 **Done when:** a session whose turns carry no usage record is either refused by
 name, or has its defaulted turn stated as a fallback rather than as a peak.
+
+**Since filed, the exposure grew.** CT-022's fix to `TokenUsage::prompt_tokens`
+makes an all-zero `usage` object return `None`, so turns that used to key as a
+measured zero now key as an absent one. That is the correct reading, but it means
+more turns reach `unwrap_or(0)` than before — 27 across the corpus that did not
+previously. Still latent, and still no reason to leave it standing.
+
+---
+
+## Todo
 
 ### CT-023 · Duplicate context detection
 `status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
@@ -136,6 +137,51 @@ a small, exactly-measured case of the same defect.
 ---
 
 ## Done
+
+### CT-022 · Context growth timeline
+`status: done` · `tier: B` · `size: S` · `source: plan`
+
+**Why:** a session's context problem is usually a shape, not a number — and the
+shape is invisible one turn at a time.
+**Done when:** per-turn prompt size renders as a sparkline with compaction
+boundaries marked.
+
+**What building it taught.** This is the first command that reads *only* what the
+agent reported about itself. No reconstruction, no estimator, no calibration —
+`session.turns()` and nothing else. That constraint is what makes charting 889
+turns cheap, and it is worth noticing that the cheapest command is also the one
+whose every number is `Observed`.
+
+Drawing a whole session at once surfaces artefacts that a per-turn view cannot,
+because a per-turn view has nothing to look wrong *against*. Three of them:
+
+*A turn with no usage record is not a turn of size zero.* Charting session
+25e27e70 showed a vertical fall to the floor and an immediate return — twice.
+The turns were real, and carried `{input: 0, cache_creation: 0, cache_read: 0,
+output: 0}`. Every model request carries a prompt and a system prompt alone puts
+the floor in the thousands, so that object is a record written but never filled
+in, always sitting just before a large `cache_creation` with no `cache_read`:
+a cache reset. A corpus sweep found **27 such turns across 3,795, in 11 of 60
+sessions**. Read as measurements they invented a fall of −287,629 and a rise of
++288,312, taking **three of the five largest reported changes in that session**.
+Fixed in the domain, where the meaning lives, so `ct context`, `ct largest` and
+the ratio fit all get it — the fit especially, which would otherwise have taken
+those turns as samples claiming a large body of text occupied no tokens at all.
+
+*A compaction the agent did not place is not one that did not happen.* Rather
+than attaching it to a plausible neighbouring turn, it is counted as unplaced and
+reported as such. A compaction naming a turn the session does not contain is
+treated the same way, which matters because a truncated or filtered session is a
+normal thing to be handed.
+
+*A column is not a turn.* At 889 turns and 60 columns, each column is 15 turns
+drawn at their maximum — so a fall inside a column does not appear at all. A
+sparkline that aggregates silently invites reading a smooth line as a smooth
+session, so the caption states the ratio and states the omission.
+
+The header also names the gap count, and a reported change spanning one says
+`(across 1 unrecorded turn(s))` rather than presenting a two-turn delta as a
+one-turn event. Widened the exposure of **CT-039**, noted in that entry.
 
 ### CT-021 · `ct diff A..B` — compare two sessions or turn ranges
 `status: done` · `tier: B` · `size: M` · `source: plan`
