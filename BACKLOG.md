@@ -155,7 +155,7 @@ being asked about, in both directions, with fixture coverage. ✔
 
 ## Next
 
-### CT-037 · Codex `web_search_call` response items are unparsed
+### CT-038 · `journal.jsonl` is discovered as a Claude Code session
 `status: next` · `tier: A` · `size: S` · `source: CT-019`
 Found by the first `ct doctor --dir` run; the entry is under **Todo** below.
 
@@ -395,24 +395,44 @@ Codex `web_search_call` items are unparsed (CT-037) and `journal.jsonl` is being
 discovered as a session (CT-038). Both are filed rather than fixed here, because
 a detector and the defects it detects are different commits.
 
+### CT-037 · Codex `web_search_call` response items are unparsed
+`status: done` · `tier: A` · `size: S` · `source: CT-019`
+**Why:** 38 events across 3 local sessions, found by the first `ct doctor --dir`
+run. `response_item/web_search_call` is a real API item that occupied context,
+so every turn containing one under-accounted.
+**Done when:** the item is classified as a tool call, sized from its action, and
+labelled with the query it ran, following CT-034's argument-name approach rather
+than a hardcoded shape. ✔ `ct doctor --dir ~/.codex` now recognises every event
+type in all 63 local sessions.
+
+**The labelling half needed no new code at all**, which is the strongest test
+CT-034's design has had. A web search carries no `name` and no `arguments`; what
+it did lives in `action`, shaped `{type: "search", query, queries}` (26 of 38) or
+`{type: "open_page", url}` (10). `tool_target`'s key list already ranks `url`
+above `query`, so `describe(&action)` names both shapes correctly without this
+module having heard of web search. The 2 remaining actions carry nothing but
+their type, and get the bare tool name rather than an invented label.
+
+**The action is sized as a proxy, not counted as text.** `query` and
+`queries[0]` are usually the same string, so counting both over-counts and
+counting one may under-count, and nothing in the log says which the API replays.
+It is therefore `Component::Opaque` — sized from its serialized length and
+excluded from `--exact`, the same rule CT-035 set for structured tool output.
+The tool name `web_search` is derived from the item type, because the payload
+carries none.
+
+**One thing found while fixing it, recorded rather than acted on:** no
+`web_search_call_output` item exists anywhere in the local corpus. The results
+the model read are not in the log, so they are real context that lands in the
+unattributed remainder. Saying more than that would be guessing at how the
+harness replays them.
+
 ---
 
 ## Todo
 
-### CT-037 · Codex `web_search_call` response items are unparsed
-`status: next` · `tier: A` · `size: S` · `source: CT-019`
-**Why:** 38 events across 3 local sessions, found by the first `ct doctor --dir`
-run. `response_item/web_search_call` is a real API item that occupied context,
-so every turn containing one under-accounts. Its query text lives in
-`action.query` / `action.queries` rather than in `arguments`, so `content_chars`
-returns 0 for it even once it is recognised — parsing it and labelling it are
-two separate halves.
-**Done when:** the item is classified as a tool call, sized from its action, and
-labelled with the query it ran, following CT-034's argument-name approach rather
-than a hardcoded shape.
-
 ### CT-038 · `journal.jsonl` is discovered as a Claude Code session
-`status: todo` · `tier: A` · `size: S` · `source: CT-019`
+`status: next` · `tier: A` · `size: S` · `source: CT-019`
 **Why:** also found by the first `ct doctor --dir` run — 466 unrecognised events
 across 4 files. `subagents/workflows/<id>/journal.jsonl` is workflow bookkeeping
 (`{"type":"started"|"result"}`), not a conversation, and discovering it means

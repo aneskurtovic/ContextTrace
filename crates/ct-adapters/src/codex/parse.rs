@@ -211,6 +211,24 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
                     }),
             }
         }
+        // A built-in web search. Unlike a function call it carries no `name`
+        // and no `arguments`: what it did lives in `action`, shaped
+        // `{type: "search", query, queries}` or `{type: "open_page", url}`.
+        // The tool name is derived from the item type rather than read, because
+        // the payload does not carry one.
+        //
+        // No `web_search_call_output` item exists anywhere in the local corpus,
+        // so the results the model read are not in the log. They are real
+        // context and they land in the unattributed remainder; saying more than
+        // that would be guessing at how the harness replays them.
+        Some("web_search_call") => EventKind::ToolCall {
+            tool: "web_search".into(),
+            call_id: str_field(payload, "id"),
+            char_len,
+            // `action` needs no special knowledge here: `tool_target`'s key list
+            // already ranks `url` above `query`, so both shapes name themselves.
+            target: payload.get("action").and_then(crate::tool_target::describe),
+        },
         Some("function_call_output") | Some("custom_tool_call_output")
         | Some("tool_search_output") => EventKind::ToolResult {
             tool: None,
@@ -420,6 +438,16 @@ fn visit_content(payload: &Value, f: &mut dyn FnMut(Component<'_>)) {
         _ => {}
     }
 
+    // A web search's `action` is what that item carries. Sized from its
+    // serialized form and marked opaque for the same reason a structured
+    // `output` is: `query` and `queries[0]` are usually the same string, so
+    // counting both over-counts and counting one may under-count, and nothing
+    // in the log says which the API replays. A declared proxy beats a guess
+    // wearing an exact label.
+    if let Some(action @ Value::Object(_)) = payload.get("action") {
+        f(Component::Opaque(Cow::Owned(action.to_string())));
+    }
+
     if let Some(summary) = payload.get("summary").and_then(Value::as_array) {
         for block in summary {
             if let Some(s) = block.get("text").and_then(Value::as_str) {
@@ -520,6 +548,70 @@ mod tests {
     fn counts_structured_tool_output_as_serialised_length() {
         let payload = json!({"output": {"stdout": "hi"}});
         assert!(content_chars(&payload) > 2);
+    }
+
+    #[test]
+    fn a_web_search_is_named_by_what_it_searched_for() {
+        let payload = json!({
+            "type": "web_search_call",
+            "id": "ws_1",
+            "status": "completed",
+            "action": {"type": "search", "query": "rust tokenizer crate", "queries": ["rust tokenizer crate"]}
+        });
+        match translate_response_item(&payload, Some("web_search_call")) {
+            EventKind::ToolCall {
+                tool,
+                call_id,
+                target,
+                char_len,
+            } => {
+                assert_eq!(tool, "web_search");
+                assert_eq!(call_id.as_deref(), Some("ws_1"));
+                assert_eq!(target.as_deref(), Some("rust tokenizer crate"));
+                assert!(char_len > 0, "the action is what this item carries");
+            }
+            other => panic!("expected a tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn opening_a_page_is_named_by_its_url_and_a_bare_action_by_neither() {
+        // `url` outranks `query` in the shared key list, so the two action
+        // shapes name themselves without this module knowing either exists.
+        let opened = json!({
+            "type": "web_search_call",
+            "action": {"type": "open_page", "url": "https://docs.rs/tiktoken-rs"}
+        });
+        match translate_response_item(&opened, Some("web_search_call")) {
+            EventKind::ToolCall { target, .. } => {
+                assert_eq!(target.as_deref(), Some("https://docs.rs/tiktoken-rs"))
+            }
+            other => panic!("expected a tool call, got {other:?}"),
+        }
+
+        // 2 of the 38 in the corpus carry an action with nothing but its type.
+        // The bare tool name is honest; an invented label would not be.
+        let bare = json!({"type": "web_search_call", "action": {"type": "open_page"}});
+        match translate_response_item(&bare, Some("web_search_call")) {
+            EventKind::ToolCall { target, .. } => assert_eq!(target, None),
+            other => panic!("expected a tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_search_action_is_sized_but_never_counted_as_exact_text() {
+        // `query` and `queries[0]` are usually the same string, so counting
+        // both over-counts and counting one may under-count. Sized from the
+        // serialized action and marked opaque, like a structured output.
+        let payload = json!({
+            "action": {"type": "search", "query": "abc", "queries": ["abc", "def"]}
+        });
+        assert!(content_chars(&payload) > 3);
+        assert_eq!(
+            content_text(&payload),
+            None,
+            "an action must not reach the tokenizer as if it were plain text"
+        );
     }
 
     #[test]

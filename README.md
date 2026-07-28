@@ -292,13 +292,13 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 50 tests |
 | `ct-adapters` — JSONL reader, tokenizers, raw source, directory walk | Implemented |
 | `ct-adapters` — Codex ACL (parse + replay reconstruction) | Implemented |
-| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 87 tests |
+| `ct-adapters` — Claude Code ACL (parse + parent-chain walk), tool targets | Implemented, 97 tests |
 | `ct-application` — use cases, diagnostics, drift sweep, item lifecycle | Implemented, 37 tests |
 | `ct-cli` — `roots`/`sessions`/`inspect`/`context`/`largest`/`trace`/`residual`/`doctor` | Implemented, 17 tests |
 | Standalone JSONL fixture files | Implemented, 13 tests |
 | `ct diff`, context-growth timeline, search, SQLite index | Not started |
 
-215 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
+220 tests passing, `clippy` clean. Work is queued in [BACKLOG.md](BACKLOG.md), which is the
 authoritative list; [IDEAS.md](IDEAS.md) is an idea pool and nothing in it is
 scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -369,10 +369,22 @@ each file's agent is known from its descriptor. Detecting an agent from a file's
 contents would mean inventing a rule, and a misdetected file reports as
 wholesale drift — the loudest possible way for a guess to be wrong.
 
-The output above is the real first run, and both findings are real: Codex
-`web_search_call` items are unparsed, and `journal.jsonl` — workflow bookkeeping
-under `subagents/workflows/` — is being discovered as a session. They are
-[BACKLOG.md](BACKLOG.md) CT-037 and CT-038.
+The output above is the real first run, and both findings were real. Codex
+`web_search_call` items were unparsed — now fixed (CT-037), and `ct doctor
+--dir ~/.codex` recognises every event type in all 63 local sessions.
+`journal.jsonl`, workflow bookkeeping under `subagents/workflows/`, is still
+being discovered as a session ([BACKLOG.md](BACKLOG.md) CT-038).
+
+The fix is worth a line because of what it did *not* need. A web search carries
+no tool name and no arguments — what it did lives in `action`, either
+`{type: "search", query}` or `{type: "open_page", url}`. The shared key list
+that names tool targets already ranks `url` above `query`, so both shapes named
+themselves with no new per-tool knowledge:
+
+```
+   100    0.2%  Tool calls   web_search site:help.instagram.…conds Instagram best practices
+                codex:70  from tool: web_search [estimated]
+```
 
 ### Filtering without lying about the whole
 
