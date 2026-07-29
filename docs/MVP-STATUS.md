@@ -21,29 +21,28 @@ acceptance. CI is green and an unsigned installer can be produced; Windows
 signing, clean-machine install/upgrade acceptance and release-candidate soak
 remain.
 
-Realistic distance from a Windows-first public desktop MVP: **two focused
-acceptance packages, roughly 2–4 engineering days plus a release-candidate
-soak**. The desktop foundation and core diagnostic view exist, so this is no
-longer a greenfield UI estimate. The range covers installed 1024/1440px visual
-acceptance and clean-machine install/upgrade/release validation. Code-signing
-certificate lead time is external to that engineering estimate; no signing
-secrets are currently configured.
+Realistic distance from a Windows-first public desktop MVP: **one focused
+acceptance pass, roughly 1–2 engineering days plus a release-candidate soak**.
+The remaining engineering work is installed 1024/1440px visual acceptance and
+clean-machine install/upgrade/release validation. Code-signing certificate lead
+time is external to that estimate; no signing secrets are currently configured,
+and certificate procurement is deferred until the production-release decision.
 
 ## Evidence checked for this assessment
 
 | Check | Result on 2026-07-29 |
 |---|---|
 | Local repository | One local branch (`main`), no changes, stashes, extra worktrees, unmerged commits or unreachable commits before this documentation update |
-| Automated tests | 293 Rust tests plus 7 frontend tests |
+| Automated tests | 298 Rust tests plus 17 frontend tests |
 | Static verification | `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass |
 | Build | `cargo build --workspace --release` passes on Rust 1.97.1, Windows/MSVC |
-| Binary smoke | `ct 0.1.0` starts and exposes all twelve documented commands |
-| Desktop slice | Tauri v2 command bridge compiles; React type-check, 7 tests and production bundle pass; 4 Rust tests cover fixture-backed IPC, caching and errors |
+| Binary smoke | `ct 0.1.0` starts and exposes all thirteen documented commands |
+| Desktop slice | Tauri v2 command bridge compiles; React type-check, 17 tests and production bundle pass; 5 Rust tests cover fixture-backed IPC, caching, errors and a 501-session search/page contract |
 | Desktop performance | Largest local Codex session: 1.43 s cold and 0.2 ms cached; two high-turn Claude sessions: 0.79–1.07 s cold and 0.4–0.5 ms cached |
 | Format-drift sweep | 792 sessions, 134,764 events, every type recognised, 2.71 seconds |
 | Privacy architecture | No application upload/telemetry code; core-only Tauri capability and local-IPC CSP; read-only adapters |
-| Desktop acceptance | Real-corpus budgets, keyboard semantics, loading/empty/error/malformed states and reduced-motion behavior pass automated checks; installed 1024/1440px visual acceptance remains |
-| Distribution | Windows CI is green; local NSIS and staged CLI ZIP/checksums pass; draft release workflow exists; signature and clean-machine acceptance remain |
+| Desktop acceptance | Real-corpus budgets, latest-request-wins behavior, measurement-limit copy, keyboard semantics, loading/empty/error/malformed states and reduced-motion behavior pass automated checks; installed 1024/1440px visual acceptance remains |
+| Distribution | Windows CI is green; local NSIS and staged CLI ZIP/checksums pass; draft release workflow validates versions and can sign/verify both executables when credentials exist; clean-machine acceptance remains |
 | Legal packaging | MIT `LICENSE` is present and included in the CLI archive |
 | crates.io packaging | `cargo package -p ct-cli --no-verify` fails because internal path dependencies have no registry version requirement |
 
@@ -67,8 +66,8 @@ evidence that one is required for the core workflow.
 
 | Gate | State | What remains |
 |---|---|---|
-| Core user workflow | Pass | The twelve-command CLI covers discovery, inspection, reconstruction, diagnosis, lifecycle, comparison and export. |
-| Desktop core workflow | Partial | Session browser, growth, turn selection, composition and contributors work; automated UX/performance gates pass; installed visual acceptance remains. |
+| Core user workflow | Pass | The thirteen-command CLI covers discovery, inspection, reconstruction, exact Codex compaction diffs, diagnosis, lifecycle, comparison and export. |
+| Desktop core workflow | Partial | Paged backend search, growth, race-safe turn selection, honest measurement limits, composition and contributors work; automated UX/performance gates pass; installed visual acceptance remains. |
 | Two-agent support | Pass | Codex CLI and Claude Code adapters work against fixtures and the current local corpus. |
 | Honest measurements | Pass with limitation | Inline-image accounting is threshold-independent. A 40-session/3,353-turn exact audit could not reproduce the historical over-count and found no generic removal marker; the tool reports such cases as unknown rather than inventing semantics. |
 | Local-first safety | Pass | Read-only roots, no application telemetry/upload code, core-only desktop capability, local-IPC CSP, secret scan and redacted export are implemented. |
@@ -82,13 +81,14 @@ evidence that one is required for the core workflow.
    IPC, malformed-state, keyboard and accessibility gates pass. Exercise the
    built installer at 1024/1440px and accept focus, contrast, scrolling and the
    discovery-to-diagnosis flow on a clean Windows machine.
-2. **CT-043 — sign and ship 0.1.0.** Provision the certificate/timestamp
-   service, verify the signature and checksums, exercise install/upgrade plus
-   CLI ZIP, soak the candidate, then publish the draft release.
+2. **CT-043 — validate and ship 0.1.0.** Exercise install/upgrade plus the CLI
+   ZIP and checksums, then soak the unsigned private candidate. Before a
+   production release, decide on and provision the certificate/timestamp
+   service; the workflow will sign and verify both executables.
 
-Cost projection (CT-026), exact compaction diffs (CT-027), family trees and
-persistent SQLite come after this sequence unless desktop acceptance produces
-evidence that one is necessary for the MVP experience.
+Cost projection (CT-026), family trees and persistent SQLite come after this
+sequence unless desktop acceptance produces evidence that one is necessary for
+the MVP experience. Exact Codex compaction diffs (CT-027) are implemented.
 
 ## Main risks
 

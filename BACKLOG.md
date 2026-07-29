@@ -58,10 +58,13 @@ failure cases. Release benchmarks on the largest local Codex session (94.6 MiB)
 and two high-turn Claude sessions put cold discovery-to-snapshot at 0.79–1.43
 seconds and cached turn switching below 1 ms. The MVP budgets are therefore
 2 seconds cold and 50 ms cached on this reference machine; SQLite is not
-required for 0.1. Seven frontend tests now cover loading, empty, error and
-malformed IPC states plus keyboard-operable chart points, focus visibility,
-live regions and reduced motion. Installed 1024/1440px visual acceptance
-remains.
+required for 0.1. Seventeen frontend tests now cover loading, empty, error and
+malformed IPC states, keyboard-operable chart points, focus visibility, live
+regions, reduced motion and out-of-order session/turn requests. Measurement
+confidence, calibration and an unmeasurable remainder are stated in the UI.
+Backend search and paging can reach an older targeted session beyond an initial
+500-session page without loading session bodies. Installed 1024/1440px visual
+acceptance remains.
 
 ---
 
@@ -83,21 +86,16 @@ been exercised on clean machines.
 **Progress:** the MIT license, current-user NSIS configuration, draft-first
 Windows release workflow, CLI ZIP, SHA-256 manifest and operator procedure now
 exist. A local unsigned NSIS build produced the expected installer. The
-workflow fails closed on partial signing configuration and only signs when a
-PFX, password and timestamp service are all provided. Certificate provisioning,
-signature verification and clean-machine install/upgrade acceptance remain.
+workflow rejects mixed workspace versions, fails closed on partial signing
+configuration and, when a PFX, password and timestamp service are provided,
+signs and verifies both the installer and companion CLI. Certificate
+provisioning is deferred until the production-release decision; clean-machine
+install/upgrade acceptance remains.
 
 ### CT-026 · Cost projection
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
 **Done when:** per-category cost is derived from a local pricing table, clearly
 marked as an estimate that depends on a table which will go stale.
-
-### CT-027 · Codex compaction diff engine
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §1`
-**Why:** Codex records `replacement_history` verbatim, so what was discarded is
-*derivable rather than inferable* — a stronger claim than anything available for
-Claude Code.
-**Done when:** the exact items dropped by a compaction are listed with sizes.
 
 ### CT-028 · Session family trees
 `status: todo` · `tier: C` · `size: M` · `source: IDEAS.md §9`
@@ -117,6 +115,27 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-027 · Codex compaction diff engine
+`status: done` · `tier: B` · `size: M` · `source: IDEAS.md §1`
+
+**Why:** Codex records `replacement_history` verbatim, so what was discarded is
+*derivable rather than inferable* — a stronger claim than anything available for
+Claude Code.
+**Done when:** the exact items dropped by a compaction are listed with sizes.
+
+**The missing boundary evidence arrived on 2026-07-28.** One retained Codex
+session compacted after turns 74 and 134, with 7 and 4 literal replacement
+entries. `ct compactions <id>` now compares the pre-compaction response items
+with each replacement list and reports dropped, preserved and replacement-only
+items without printing their content. Sizes are normalized compact JSON bytes;
+wholly textual items also receive a tokenizer measurement. Missing, malformed
+or oversized raw lines are reported as unavailable, and adapters such as Claude
+Code that do not record a literal replacement list refuse the operation rather
+than inferring it. Four focused synthetic tests cover preserved messages,
+dropped tool output, opaque replacement blobs, failed raw access and recovery
+across multiple compactions. On the two motivating boundaries the structural
+counts are 243 dropped / 2 preserved / 5 replacement-only and 175 / 3 / 1.
 
 ### CT-042 · Automate the public-MVP verification gate
 `status: done` · `tier: A` · `size: M` · `source: MVP review`

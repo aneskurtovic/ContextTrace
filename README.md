@@ -402,18 +402,19 @@ false; CI now checks 1.88 explicitly.
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 123 tests |
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
-| `ct-cli` — the twelve commands below | Implemented, 23 tests |
-| `ct-ui` — Tauri v2 + React session browser, growth, composition and contributors | Useful slice implemented, 4 Rust IPC tests plus 7 frontend tests; installed visual acceptance remains |
+| `ct-cli` — the thirteen commands below | Implemented, 23 tests |
+| `ct-ui` — Tauri v2 + React paged session search, growth, composition and contributors | Useful slice implemented, 5 Rust IPC tests plus 17 frontend tests; installed visual acceptance remains |
 | Standalone JSONL fixture files | Implemented, 14 tests |
 | Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |
-| Search and SQLite index | Deferred until measured desktop performance requires them |
+| Session metadata search | Implemented server-side with explicit paging |
+| SQLite index | Deferred until measured desktop performance requires it |
 
-**293 Rust tests and 7 frontend tests** passing, `cargo fmt --check` clean,
+**298 Rust tests and 17 frontend tests** passing, `cargo fmt --check` clean,
 `clippy` clean at zero warnings, the React production bundle and Tauri command
 bridge build, the release CLI answers `ct --help`, and `ct doctor --dir`
 recognises every event type across the current local corpus. The Windows CI
 workflow enforces these gates on stable and Rust 1.88. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 36 done, 1 next, 5
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 37 done, 1 next, 4
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -431,6 +432,7 @@ an event type from the future.
 ct roots                          # which local directories are read
 ct sessions [--agent] [--project] [--since] [--limit]
 ct inspect <id> [--raw] [--limit]
+ct compactions <id> [--json]           # exact structural Codex replacement diff
 ct context <id> [--turn N] [--exact] [filters]  # composition, duplicates, waste
 ct largest <id> [--turn N] [--limit] [--exact] [filters]
 ct trace   <id> --item <id-or-label>   # one item's lifecycle across the session
@@ -635,6 +637,25 @@ named correctly anyway; where nothing matches, the bare tool name stands, becaus
 a wrong filename is worse than no filename. There is no `Tool output:` prefix —
 the category column beside it already says that, and a label restating its own
 column spends a fifth of the width saying nothing.
+
+### Exact Codex compaction diffs, without printing prompt content
+
+Codex records the literal `replacement_history` used after a compaction.
+`ct compactions <id>` compares that list with the response items immediately
+before each boundary and labels every structural item as `dropped`, `preserved`
+or `replacement`. The report prints only item type, role, normalized compact
+JSON bytes, optional text-token size and source provenance—never prompt, source
+or tool-output content. `--json` exposes the same content-free contract.
+
+The operation is deliberately Codex-only. Claude Code does not record a literal
+replacement list, so its adapter returns `unsupported` instead of turning an
+inference into an exact claim. A missing, malformed or oversized raw line
+similarly produces an explicit unavailable result for that boundary.
+
+The first two retained boundaries that unblocked this feature reported 243
+dropped / 2 preserved / 5 replacement-only items and 175 / 3 / 1. Every
+replacement message at those boundaries structurally matched a prior item; the
+replacement-only entries are opaque Codex compaction summaries.
 
 ### One item's lifecycle, and the difference between gone and evicted
 
