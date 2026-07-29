@@ -23,17 +23,15 @@ use ct_domain::{
 use std::collections::BTreeMap;
 use std::fmt;
 
+pub use ct_domain::services::DerivedRatio as SessionRatio;
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
 pub use diff::{
     compare, CategoryDelta, Comparability, Instrument, SessionDiff, Side, SideSummary, ToolDelta,
 };
 pub use export::{ExportRecord, SCHEMA_VERSION};
-pub use secrets::{
-    ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport,
-};
 pub use growth::{timeline, Bucket, CompactionAt, GrowthPoint, GrowthTimeline, Jump};
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
-pub use ct_domain::services::DerivedRatio as SessionRatio;
+pub use secrets::{ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport};
 
 /// An agent adapter paired with the token estimator appropriate to its models.
 ///
@@ -63,7 +61,10 @@ pub enum AppError {
         matches: Vec<String>,
     },
     /// The requested turn is outside the session.
-    TurnOutOfRange { requested: u32, available: usize },
+    TurnOutOfRange {
+        requested: u32,
+        available: usize,
+    },
     Calibration(String),
 }
 
@@ -499,13 +500,15 @@ impl ContextTrace {
 
         report.types = seen
             .into_iter()
-            .map(|((agent, raw_type), (events, sessions, example))| DriftType {
-                agent,
-                raw_type,
-                events,
-                sessions,
-                example,
-            })
+            .map(
+                |((agent, raw_type), (events, sessions, example))| DriftType {
+                    agent,
+                    raw_type,
+                    events,
+                    sessions,
+                    example,
+                },
+            )
             .collect();
         // Spread first, then volume: a type in every session is a shipped
         // format change, and one appearing many times in a single session is
@@ -863,7 +866,10 @@ mod tests {
     fn a_path_prefix_survives_the_separator_and_case_a_user_will_type() {
         let path = r"C:\Users\anesk\.codex\sessions\2026\07\rollout.jsonl";
         assert!(path_matches(path, Some("c:/users/anesk/.codex")));
-        assert!(path_matches(path, Some(r"C:\Users\anesk\.codex\sessions\2026")));
+        assert!(path_matches(
+            path,
+            Some(r"C:\Users\anesk\.codex\sessions\2026")
+        ));
         assert!(!path_matches(path, Some(r"C:\Users\anesk\.claude")));
     }
 
@@ -968,11 +974,21 @@ mod tests {
             vec![
                 (
                     descriptor("a", AgentKind::Codex, "p", 1),
-                    Ok(swept_session("a", AgentKind::Codex, 10, vec![("new_type", 3)])),
+                    Ok(swept_session(
+                        "a",
+                        AgentKind::Codex,
+                        10,
+                        vec![("new_type", 3)],
+                    )),
                 ),
                 (
                     descriptor("b", AgentKind::Codex, "p", 2),
-                    Ok(swept_session("b", AgentKind::Codex, 10, vec![("new_type", 1)])),
+                    Ok(swept_session(
+                        "b",
+                        AgentKind::Codex,
+                        10,
+                        vec![("new_type", 1)],
+                    )),
                 ),
                 (
                     descriptor("c", AgentKind::Codex, "p", 3),
@@ -1006,7 +1022,10 @@ mod tests {
 
         let report = app.sweep_drift(None);
         assert_eq!(report.sessions_scanned, 2);
-        assert_eq!(report.total_events, 5, "the readable session was still parsed");
+        assert_eq!(
+            report.total_events, 5,
+            "the readable session was still parsed"
+        );
         assert_eq!(report.unreadable.len(), 1);
         assert!(
             report.types.is_empty(),
@@ -1040,7 +1059,12 @@ mod tests {
             AgentKind::Codex,
             vec![(
                 descriptor("a", AgentKind::Codex, "p", 1),
-                Ok(swept_session("a", AgentKind::Codex, 5, vec![("new_type", 1)])),
+                Ok(swept_session(
+                    "a",
+                    AgentKind::Codex,
+                    5,
+                    vec![("new_type", 1)],
+                )),
             )],
         );
 

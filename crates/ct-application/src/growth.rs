@@ -99,7 +99,10 @@ pub struct GrowthTimeline {
 impl GrowthTimeline {
     /// Turns whose size the agent actually recorded.
     pub fn measured(&self) -> usize {
-        self.points.iter().filter(|p| p.prompt_tokens.is_some()).count()
+        self.points
+            .iter()
+            .filter(|p| p.prompt_tokens.is_some())
+            .count()
     }
 
     /// Turns present in the session but absent from every figure here.
@@ -123,7 +126,10 @@ impl GrowthTimeline {
     }
 
     pub fn compactions(&self) -> usize {
-        self.points.iter().filter(|p| p.compaction.is_some()).count()
+        self.points
+            .iter()
+            .filter(|p| p.compaction.is_some())
+            .count()
     }
 
     /// Collapse the timeline to at most `width` columns.
@@ -331,7 +337,10 @@ mod tests {
         let t = timeline(&session(&[None, None, Some(500), Some(900)], vec![], None));
         let buckets = t.buckets(2);
         assert_eq!(buckets.len(), 2);
-        assert_eq!(buckets[0].peak, None, "no measurement is not a measurement of none");
+        assert_eq!(
+            buckets[0].peak, None,
+            "no measurement is not a measurement of none"
+        );
         assert_eq!(buckets[1].peak, Some(900));
     }
 
@@ -389,7 +398,11 @@ mod tests {
         ));
         let buckets = t.buckets(1);
         assert_eq!(buckets.len(), 1);
-        assert_eq!(buckets[0].peak, Some(180_000), "the dip is hidden by design");
+        assert_eq!(
+            buckets[0].peak,
+            Some(180_000),
+            "the dip is hidden by design"
+        );
         assert_eq!(buckets[0].compactions, 1, "and the mark is what carries it");
     }
 
@@ -399,7 +412,11 @@ mod tests {
         let t = timeline(&session(&prompts, vec![], None));
         let buckets = t.buckets(30);
 
-        assert!(buckets.len() <= 30, "asked for 30 columns, got {}", buckets.len());
+        assert!(
+            buckets.len() <= 30,
+            "asked for 30 columns, got {}",
+            buckets.len()
+        );
         assert_eq!(buckets[0].from_turn, 1);
         assert_eq!(buckets[buckets.len() - 1].to_turn, 100);
         for pair in buckets.windows(2) {
@@ -441,7 +458,11 @@ mod tests {
         // Ranked on magnitude: the largest single change in a compacted session
         // is the compaction, and a view of "what changed" that omitted it would
         // be answering a different question.
-        let t = timeline(&session(&[Some(150_000), Some(20_000), Some(24_000)], vec![], None));
+        let t = timeline(&session(
+            &[Some(150_000), Some(20_000), Some(24_000)],
+            vec![],
+            None,
+        ));
         let jumps = t.largest_jumps(1);
         assert_eq!(jumps[0].growth(), -130_000);
     }

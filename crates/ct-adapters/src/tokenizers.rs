@@ -183,7 +183,11 @@ mod tests {
         let count = est.count_text("hello world");
         assert!(count.is_trustworthy(), "tiktoken counts are measurements");
         assert_eq!(count.confidence(), Confidence::Derived);
-        assert!(count.tokens() >= 2 && count.tokens() <= 4, "got {}", count.tokens());
+        assert!(
+            count.tokens() >= 2 && count.tokens() <= 4,
+            "got {}",
+            count.tokens()
+        );
     }
 
     #[test]
@@ -192,7 +196,10 @@ mod tests {
         // A tool output could contain this literal string; it must be counted
         // as ordinary text rather than interpreted.
         let count = est.count_text("<|endoftext|>");
-        assert!(count.tokens() > 1, "special-token text must not collapse to one token");
+        assert!(
+            count.tokens() > 1,
+            "special-token text must not collapse to one token"
+        );
     }
 
     #[test]

@@ -28,7 +28,10 @@ pub enum PortError {
     /// Deliberately rare: unknown *event types* are not errors, they become
     /// [`EventKind::Unrecognised`](crate::model::event::EventKind::Unrecognised).
     /// This is for a file that is not a session at all.
-    Malformed { path: String, detail: String },
+    Malformed {
+        path: String,
+        detail: String,
+    },
     NotFound(String),
     /// The request was valid but this adapter cannot serve it.
     Unsupported(String),

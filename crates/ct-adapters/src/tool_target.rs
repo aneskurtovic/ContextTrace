@@ -207,7 +207,11 @@ mod tests {
     fn long_targets_are_truncated_on_a_character_boundary() {
         let long = "a".repeat(200);
         let out = describe(&json!({ "command": long })).unwrap();
-        assert_eq!(out.chars().count(), MAX_CHARS + 1, "64 chars plus an ellipsis");
+        assert_eq!(
+            out.chars().count(),
+            MAX_CHARS + 1,
+            "64 chars plus an ellipsis"
+        );
         assert!(out.ends_with('\u{2026}'));
 
         let multibyte = "é".repeat(200);

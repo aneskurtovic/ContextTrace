@@ -23,7 +23,11 @@ pub fn thousands(n: impl Into<u64>) -> String {
 /// The sign is always printed. A diff column where `+400` and `400` both appear
 /// forces the reader to work out which way round the comparison ran.
 pub fn signed(n: i64) -> String {
-    format!("{}{}", if n < 0 { '-' } else { '+' }, thousands(n.unsigned_abs()))
+    format!(
+        "{}{}",
+        if n < 0 { '-' } else { '+' },
+        thousands(n.unsigned_abs())
+    )
 }
 
 /// Greedy word wrap, with every line after the first indented to `indent`.
@@ -248,7 +252,10 @@ mod tests {
         let path = "Tool output: Read C:\\Users\\anesk\\source\\repos\\VoxMux\\docs\\HANDBOOK.md";
         let short = ellipsize_middle(path, 48);
         assert!(short.starts_with("Tool output: Read"), "got {short}");
-        assert!(short.ends_with("HANDBOOK.md"), "the filename must survive: {short}");
+        assert!(
+            short.ends_with("HANDBOOK.md"),
+            "the filename must survive: {short}"
+        );
         assert_eq!(short.chars().count(), 48);
     }
 
@@ -264,7 +271,10 @@ mod tests {
     fn calibrated_counts_disclose_their_original_estimate() {
         let text = token_count(TokenCount::calibrated(61_240, 67_800));
         assert!(text.contains("61,240"));
-        assert!(text.contains("67,800"), "the pre-scaling figure must stay visible");
+        assert!(
+            text.contains("67,800"),
+            "the pre-scaling figure must stay visible"
+        );
     }
 
     #[test]

@@ -23,13 +23,13 @@
 //! `logicalParentUuid` link is for lifecycle and diff views, which answer "what
 //! was dropped", not "what was present".
 
+use crate::tool_target::{self, CallIndex};
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{PortError, PortResult, ReconstructedContext, TokenEstimator};
 use ct_domain::{
     AgentSession, CompactionEvent, ContextCategory, ContextItem, ContextItemId, ContextSource,
     Event, MessageRole, Provenance, TokenCount, TurnNumber,
 };
-use crate::tool_target::{self, CallIndex};
 use std::collections::HashMap;
 
 /// Guard against a malformed or cyclic parent chain.
@@ -302,8 +302,14 @@ fn classify_injection(mechanism: &str, label: &str) -> (ContextCategory, Context
                 mechanism: mechanism.to_string(),
             },
         ),
-        "skill_listing" | "invoked_skills" | "dynamic_skill" | "hook_additional_context"
-        | "hook_success" | "plan_mode" | "plan_mode_exit" | "plan_mode_reentry"
+        "skill_listing"
+        | "invoked_skills"
+        | "dynamic_skill"
+        | "hook_additional_context"
+        | "hook_success"
+        | "plan_mode"
+        | "plan_mode_exit"
+        | "plan_mode_reentry"
         | "plan_file_reference" => (
             ContextCategory::DeveloperInstructions,
             ContextSource::HarnessInjection {
@@ -410,7 +416,11 @@ mod tests {
         let s = session(events, 3, 5000);
         let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
 
-        assert_eq!(r.items.len(), 3, "the abandoned branch must not be included");
+        assert_eq!(
+            r.items.len(),
+            3,
+            "the abandoned branch must not be included"
+        );
         assert!(
             r.items.iter().all(|i| i.tokens.tokens() < 1000),
             "the 9,999-char abandoned message leaked into the context"
@@ -460,7 +470,11 @@ mod tests {
         let s = session(events, 3, 20_000);
         let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
 
-        assert_eq!(r.items.len(), 1, "pre-compaction history must not be resurrected");
+        assert_eq!(
+            r.items.len(),
+            1,
+            "pre-compaction history must not be resurrected"
+        );
         let compaction = r.preceding_compaction.expect("compaction must be reported");
         assert_eq!(compaction.facts.tokens_before, Some(165_223));
         assert_eq!(compaction.reduction(), Some(147_681));
@@ -511,7 +525,11 @@ mod tests {
         let s = session(events, 2, 1_000);
         let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
 
-        assert_eq!(r.items.len(), 2, "the subagent's own two events are its context");
+        assert_eq!(
+            r.items.len(),
+            2,
+            "the subagent's own two events are its context"
+        );
         assert!(
             r.items.iter().all(|i| i.tokens.tokens() < 1_000),
             "the main thread's 900,000 characters are not in the subagent's prompt"
@@ -669,7 +687,11 @@ mod tests {
 
     #[test]
     fn tool_schema_injections_are_categorised_as_tool_definitions() {
-        for mechanism in ["deferred_tools_delta", "agent_listing_delta", "mcp_instructions_delta"] {
+        for mechanism in [
+            "deferred_tools_delta",
+            "agent_listing_delta",
+            "mcp_instructions_delta",
+        ] {
             let (category, _) = classify_injection(mechanism, "x");
             assert_eq!(
                 category,

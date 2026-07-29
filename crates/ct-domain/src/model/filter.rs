@@ -143,8 +143,10 @@ impl SourcePattern {
         }
         match &self.detail {
             None => true,
-            Some(needle) => payload_of(source)
-                .is_some_and(|p| p.to_ascii_lowercase().contains(&needle.to_ascii_lowercase())),
+            Some(needle) => payload_of(source).is_some_and(|p| {
+                p.to_ascii_lowercase()
+                    .contains(&needle.to_ascii_lowercase())
+            }),
         }
     }
 }
@@ -355,13 +357,15 @@ impl<'a> FilteredView<'a> {
         let total = self.denominator();
         let mut rows: Vec<CategoryBreakdown> = acc
             .into_iter()
-            .map(|(category, (tokens, item_count, confidence))| CategoryBreakdown {
-                category,
-                tokens,
-                share: tokens as f32 / total,
-                item_count,
-                confidence,
-            })
+            .map(
+                |(category, (tokens, item_count, confidence))| CategoryBreakdown {
+                    category,
+                    tokens,
+                    share: tokens as f32 / total,
+                    item_count,
+                    confidence,
+                },
+            )
             .collect();
 
         rows.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(a.category.cmp(&b.category)));
@@ -393,18 +397,12 @@ impl<'a> FilteredView<'a> {
 
     /// Exact-content duplicate groups among the items surviving this filter.
     pub fn duplicate_content(&self) -> Vec<DuplicateContent> {
-        find_duplicate_content(
-            self.matched.iter().copied(),
-            self.snapshot.total().tokens(),
-        )
+        find_duplicate_content(self.matched.iter().copied(), self.snapshot.total().tokens())
     }
 
     /// Large low-information blocks among the items surviving this filter.
     pub fn low_entropy_content(&self) -> Vec<LowEntropyContent> {
-        find_low_entropy_content(
-            self.matched.iter().copied(),
-            self.snapshot.total().tokens(),
-        )
+        find_low_entropy_content(self.matched.iter().copied(), self.snapshot.total().tokens())
     }
 
     /// Distinct categories present in the *unfiltered* snapshot, with sizes.
@@ -558,7 +556,12 @@ mod tests {
     use crate::model::provenance::{Provenance, SourceRef};
     use crate::model::session::AgentKind;
 
-    fn item(label: &str, category: ContextCategory, source: ContextSource, tokens: u32) -> ContextItem {
+    fn item(
+        label: &str,
+        category: ContextCategory,
+        source: ContextSource,
+        tokens: u32,
+    ) -> ContextItem {
         ContextItem {
             id: ContextItemId::new(label),
             category,
@@ -583,7 +586,9 @@ mod tests {
                 item(
                     "npm test output",
                     ContextCategory::ToolOutputs,
-                    ContextSource::ToolExecution { tool: "Bash".into() },
+                    ContextSource::ToolExecution {
+                        tool: "Bash".into(),
+                    },
                     600,
                 ),
                 item(
@@ -625,9 +630,16 @@ mod tests {
         let view = snap.filtered(&f);
 
         let sum: f32 = view.by_category().iter().map(|r| r.share).sum();
-        assert!((sum - 0.6).abs() < 1e-5, "shares must stay shares of the turn, got {sum}");
+        assert!(
+            (sum - 0.6).abs() < 1e-5,
+            "shares must stay shares of the turn, got {sum}"
+        );
         assert_eq!(view.matched_tokens(), 600);
-        assert_eq!(view.total().tokens(), 1000, "the denominator is the turn, not the subset");
+        assert_eq!(
+            view.total().tokens(),
+            1000,
+            "the denominator is the turn, not the subset"
+        );
         assert!((view.share_of_total() - 0.6).abs() < 1e-5);
     }
 
@@ -636,7 +648,10 @@ mod tests {
         let snap = snapshot();
         let view = snap.filtered(&ItemFilter::ALL);
         let sum: f32 = view.by_category().iter().map(|r| r.share).sum();
-        assert!((sum - 1.0).abs() < 1e-5, "unfiltered shares must sum to 1, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "unfiltered shares must sum to 1, got {sum}"
+        );
         assert_eq!(view.matched_tokens(), 1000);
     }
 
@@ -653,7 +668,11 @@ mod tests {
         });
         let view = snap.filtered(&f);
         assert!(!view.residual_included());
-        assert_eq!(view.matched_tokens(), 600, "the 100-token residual must not be counted");
+        assert_eq!(
+            view.matched_tokens(),
+            600,
+            "the 100-token residual must not be counted"
+        );
     }
 
     #[test]

@@ -65,10 +65,7 @@ impl LineRecord {
 /// Never fails on a bad line: malformed JSON yields a record with `value:
 /// None`, which adapters translate into an unrecognised event. A single corrupt
 /// line must not cost the user the rest of a session.
-pub fn read_lines(
-    path: &Path,
-    mut visit: impl FnMut(LineRecord, &[u8]),
-) -> PortResult<()> {
+pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord, &[u8])) -> PortResult<()> {
     let file = File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
     // 1 MiB buffer: these files are large and read strictly sequentially.
     let mut reader = BufReader::with_capacity(1024 * 1024, file);
@@ -161,10 +158,7 @@ mod tests {
 
     #[test]
     fn records_offsets_and_line_numbers() {
-        let path = temp_file(
-            "offsets.jsonl",
-            b"{\"type\":\"a\"}\n{\"type\":\"b\"}\n",
-        );
+        let path = temp_file("offsets.jsonl", b"{\"type\":\"a\"}\n{\"type\":\"b\"}\n");
         let mut seen = Vec::new();
         read_lines(&path, |r, _| {
             seen.push((r.line_no, r.offset, r.len, r.type_str().map(String::from)))
@@ -222,7 +216,12 @@ mod tests {
         let mut seen = Vec::new();
         read_lines(&path, |r, raw| {
             assert_eq!(raw.len(), r.len as usize);
-            seen.push((r.oversized, r.value.is_none(), r.type_str().map(String::from), r.len))
+            seen.push((
+                r.oversized,
+                r.value.is_none(),
+                r.type_str().map(String::from),
+                r.len,
+            ))
         })
         .unwrap();
 
@@ -230,8 +229,15 @@ mod tests {
         let (oversized, unparsed, ty, len) = &seen[0];
         assert!(oversized, "line beyond the cap must be flagged");
         assert!(unparsed, "and must not be fully parsed");
-        assert_eq!(ty.as_deref(), Some("compacted"), "but its type is still recovered");
-        assert!(*len as usize > MAX_PARSE_BYTES, "its true size is still recorded");
+        assert_eq!(
+            ty.as_deref(),
+            Some("compacted"),
+            "but its type is still recovered"
+        );
+        assert!(
+            *len as usize > MAX_PARSE_BYTES,
+            "its true size is still recorded"
+        );
         let _ = std::fs::remove_file(path);
     }
 

@@ -168,7 +168,11 @@ mod tests {
 
         assert_eq!(report.counted, 1);
         assert!(items[0].tokens.is_trustworthy());
-        assert!(items[0].tokens.tokens() < 10, "got {}", items[0].tokens.tokens());
+        assert!(
+            items[0].tokens.tokens() < 10,
+            "got {}",
+            items[0].tokens.tokens()
+        );
     }
 
     #[test]
@@ -185,7 +189,11 @@ mod tests {
 
         assert_eq!(report.opaque, 1);
         assert_eq!(report.counted, 0);
-        assert_eq!(items[0].tokens.tokens(), 9999, "the estimate must survive untouched");
+        assert_eq!(
+            items[0].tokens.tokens(),
+            9999,
+            "the estimate must survive untouched"
+        );
     }
 
     #[test]

@@ -44,7 +44,9 @@ pub enum CalibrationError {
 impl fmt::Display for CalibrationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CalibrationError::Unbalanced(e) => write!(f, "calibration produced an unbalanced snapshot: {e}"),
+            CalibrationError::Unbalanced(e) => {
+                write!(f, "calibration produced an unbalanced snapshot: {e}")
+            }
         }
     }
 }
@@ -199,7 +201,11 @@ mod tests {
             Some(1000),
         );
         assert_eq!(snap.residual(), 700);
-        assert_eq!(snap.items()[0].tokens.tokens(), 200, "estimates that fit are not rescaled");
+        assert_eq!(
+            snap.items()[0].tokens.tokens(),
+            200,
+            "estimates that fit are not rescaled"
+        );
     }
 
     #[test]
@@ -216,7 +222,10 @@ mod tests {
         assert_eq!(snap.items()[1].tokens.tokens(), 250);
         assert!(matches!(
             snap.items()[0].tokens,
-            TokenCount::Calibrated { raw_estimate: 1500, .. }
+            TokenCount::Calibrated {
+                raw_estimate: 1500,
+                ..
+            }
         ));
         assert_eq!(snap.residual(), 0);
     }

@@ -33,7 +33,9 @@ impl SessionId {
     /// Supports the CLI affordance of typing the first few characters of a
     /// session id rather than the whole UUID.
     pub fn matches_prefix(&self, prefix: &str) -> bool {
-        self.0.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase())
+        self.0
+            .to_ascii_lowercase()
+            .starts_with(&prefix.to_ascii_lowercase())
     }
 }
 
@@ -180,6 +182,9 @@ mod tests {
         assert!(TurnNumber::new(0).is_err());
         assert_eq!(TurnNumber::new(1).unwrap(), TurnNumber::FIRST);
         assert_eq!(TurnNumber::FIRST.previous(), None);
-        assert_eq!(TurnNumber::new(2).unwrap().previous(), Some(TurnNumber::FIRST));
+        assert_eq!(
+            TurnNumber::new(2).unwrap().previous(),
+            Some(TurnNumber::FIRST)
+        );
     }
 }

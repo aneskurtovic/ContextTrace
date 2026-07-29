@@ -252,7 +252,9 @@ impl TurnSpec {
             Some((id, turn)) => (
                 id,
                 Some(turn.parse::<u32>().map_err(|_| {
-                    format!("'{turn}' is not a turn number; write it as <id>@<turn>, e.g. abc123@40")
+                    format!(
+                        "'{turn}' is not a turn number; write it as <id>@<turn>, e.g. abc123@40"
+                    )
                 })?),
             ),
             None => (text, None),
@@ -325,7 +327,11 @@ struct FilterArgs {
 impl FilterArgs {
     fn build(&self) -> Result<ItemFilter, Box<dyn std::error::Error>> {
         Ok(ItemFilter {
-            source: self.source.as_deref().map(SourcePattern::parse).transpose()?,
+            source: self
+                .source
+                .as_deref()
+                .map(SourcePattern::parse)
+                .transpose()?,
             category: self
                 .category
                 .as_deref()
@@ -528,7 +534,9 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 .last_present()
                 .and_then(|t| TurnNumber::new(t).ok())
                 .and_then(|turn| {
-                    let snapshot = calibrated.snapshot(&app, &session, resolved.binding, turn).ok()?;
+                    let snapshot = calibrated
+                        .snapshot(&app, &session, resolved.binding, turn)
+                        .ok()?;
                     let contributor = snapshot.contributor(&life.id)?;
                     Some(render::ItemSize {
                         turn: turn.get(),
@@ -552,12 +560,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             render::growth(&timeline, &session, width, json);
         }
 
-        Command::Residual {
-            id,
-            from,
-            to,
-            json,
-        } => {
+        Command::Residual { id, from, to, json } => {
             let (session, resolved) = app.load(&id)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let Some(ratio) = calibrated.ratio else {
@@ -749,7 +752,8 @@ impl SessionCalibration {
         resolved: &ResolvedSession,
         turn: TurnNumber,
         exact: bool,
-    ) -> Result<(ct_domain::ContextSnapshot, Option<ExactRecount>), Box<dyn std::error::Error>> {
+    ) -> Result<(ct_domain::ContextSnapshot, Option<ExactRecount>), Box<dyn std::error::Error>>
+    {
         let binding = resolved.binding;
         if !exact {
             return Ok((self.snapshot(app, session, binding, turn)?, None));
@@ -890,13 +894,19 @@ mod tests {
             .build()
             .expect_err("must reject a near-miss")
             .to_string();
-        assert!(err.contains("tool-outputs"), "should suggest the real name: {err}");
+        assert!(
+            err.contains("tool-outputs"),
+            "should suggest the real name: {err}"
+        );
 
         let err = filter_args(&["ct", "context", "abc", "--source", "toool"])
             .build()
             .expect_err("must reject an unknown source")
             .to_string();
-        assert!(err.contains("compaction-summary"), "should list the kinds: {err}");
+        assert!(
+            err.contains("compaction-summary"),
+            "should list the kinds: {err}"
+        );
     }
 
     #[test]
@@ -923,15 +933,27 @@ mod tests {
         // refuses, because both sides would look plausible.
         for bad in ["abc@", "abc@last", "abc@-1"] {
             let err = TurnSpec::parse(bad).expect_err("must reject");
-            assert!(err.contains("<id>@<turn>"), "unhelpful message for {bad}: {err}");
+            assert!(
+                err.contains("<id>@<turn>"),
+                "unhelpful message for {bad}: {err}"
+            );
         }
-        assert!(parse_sides("..def", None).is_err(), "an empty side is not a session");
+        assert!(
+            parse_sides("..def", None).is_err(),
+            "an empty side is not a session"
+        );
         let err = parse_sides("abc", None).expect_err("one side is not a comparison");
-        assert!(err.contains("A..B"), "should name the other spelling: {err}");
+        assert!(
+            err.contains("A..B"),
+            "should name the other spelling: {err}"
+        );
     }
 
     #[test]
     fn no_filter_arguments_means_no_filtering() {
-        assert!(!filter_args(&["ct", "context", "abc"]).build().unwrap().is_active());
+        assert!(!filter_args(&["ct", "context", "abc"])
+            .build()
+            .unwrap()
+            .is_active());
     }
 }

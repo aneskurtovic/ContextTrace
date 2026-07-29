@@ -153,8 +153,8 @@ impl AgentAdapter for ClaudeCodeAdapter {
 /// `cwd` (falling back to the directory name), so listing hundreds of sessions
 /// costs one `stat` plus one short read each rather than hundreds of megabytes.
 fn describe(path: &Path) -> PortResult<SessionDescriptor> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
+    let metadata =
+        std::fs::metadata(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
 
     let stem = path
         .file_stem()
@@ -212,7 +212,11 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
 fn unslug(slug: &str) -> String {
     match slug.split_once("--") {
         Some((drive, rest)) if drive.len() == 1 => {
-            format!("{}:\\{}", drive.to_ascii_uppercase(), rest.replace('-', "\\"))
+            format!(
+                "{}:\\{}",
+                drive.to_ascii_uppercase(),
+                rest.replace('-', "\\")
+            )
         }
         _ => slug.replace('-', "/"),
     }

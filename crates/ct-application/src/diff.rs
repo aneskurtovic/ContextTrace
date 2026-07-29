@@ -415,10 +415,11 @@ fn compare_tools(
     // Ranked by the call delta, which is a count and therefore says the same
     // thing whatever sized the items.
     out.sort_by(|a, b| {
-        b.call_delta()
-            .abs()
-            .cmp(&a.call_delta().abs())
-            .then(b.right_calls.max(b.left_calls).cmp(&a.right_calls.max(a.left_calls)))
+        b.call_delta().abs().cmp(&a.call_delta().abs()).then(
+            b.right_calls
+                .max(b.left_calls)
+                .cmp(&a.right_calls.max(a.left_calls)),
+        )
     });
     out
 }
@@ -443,11 +444,14 @@ fn tool_usage(snapshot: &ContextSnapshot) -> Vec<(String, usize, u32)> {
 mod tests {
     use super::*;
     use ct_domain::model::identity::FileId;
-    use ct_domain::{
-        ContextItem, ContextItemId, Provenance, SessionId, SourceRef, TurnNumber,
-    };
+    use ct_domain::{ContextItem, ContextItemId, Provenance, SessionId, SourceRef, TurnNumber};
 
-    fn item(label: &str, category: ContextCategory, tokens: u32, source: ContextSource) -> ContextItem {
+    fn item(
+        label: &str,
+        category: ContextCategory,
+        tokens: u32,
+        source: ContextSource,
+    ) -> ContextItem {
         ContextItem {
             id: ContextItemId::new(label),
             category,
@@ -499,21 +503,50 @@ mod tests {
     fn one_session_compared_with_itself_has_no_skew_to_bound() {
         // Turn against turn inside one session is the case that needs no
         // caveats: one instrument sized both sides.
-        let a = snapshot("s", AgentKind::ClaudeCode, 3, vec![item("x", ContextCategory::ToolOutputs, 500, tool("Bash"))], 100);
-        let b = snapshot("s", AgentKind::ClaudeCode, 9, vec![item("x", ContextCategory::ToolOutputs, 900, tool("Bash"))], 100);
-
-        let diff = compare(
-            Side { snapshot: &a, instrument: heuristic(2.2) },
-            Side { snapshot: &b, instrument: heuristic(2.2) },
+        let a = snapshot(
+            "s",
+            AgentKind::ClaudeCode,
+            3,
+            vec![item("x", ContextCategory::ToolOutputs, 500, tool("Bash"))],
+            100,
+        );
+        let b = snapshot(
+            "s",
+            AgentKind::ClaudeCode,
+            9,
+            vec![item("x", ContextCategory::ToolOutputs, 900, tool("Bash"))],
+            100,
         );
 
-        assert!(matches!(diff.comparability, Comparability::Identical { .. }));
+        let diff = compare(
+            Side {
+                snapshot: &a,
+                instrument: heuristic(2.2),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.2),
+            },
+        );
+
+        assert!(matches!(
+            diff.comparability,
+            Comparability::Identical { .. }
+        ));
         assert_eq!(diff.comparability.skew(), Some(0.0));
         assert!(diff.same_session());
 
-        let row = diff.categories.iter().find(|c| c.category == ContextCategory::ToolOutputs).unwrap();
+        let row = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::ToolOutputs)
+            .unwrap();
         assert_eq!(row.delta, 400);
-        assert_eq!(row.instrument_bound, Some(0), "one instrument bounds nothing away");
+        assert_eq!(
+            row.instrument_bound,
+            Some(0),
+            "one instrument bounds nothing away"
+        );
         assert!(row.is_meaningful());
     }
 
@@ -522,18 +555,53 @@ mod tests {
         // The defect this module exists to prevent. Two Claude Code sessions
         // fitted at 2.00 and 2.55 -- the real spread on the machine this was
         // built on -- differ by 27% before any content differs at all.
-        let a = snapshot("a", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 10_000, tool("Bash"))], 5_000);
-        let b = snapshot("b", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 11_000, tool("Bash"))], 5_000);
-
-        let diff = compare(
-            Side { snapshot: &a, instrument: heuristic(2.0) },
-            Side { snapshot: &b, instrument: heuristic(2.55) },
+        let a = snapshot(
+            "a",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                10_000,
+                tool("Bash"),
+            )],
+            5_000,
+        );
+        let b = snapshot(
+            "b",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                11_000,
+                tool("Bash"),
+            )],
+            5_000,
         );
 
-        let skew = diff.comparability.skew().expect("two ratios bound each other");
+        let diff = compare(
+            Side {
+                snapshot: &a,
+                instrument: heuristic(2.0),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.55),
+            },
+        );
+
+        let skew = diff
+            .comparability
+            .skew()
+            .expect("two ratios bound each other");
         assert!((skew - 0.2157).abs() < 0.01, "skew was {skew}");
 
-        let row = diff.categories.iter().find(|c| c.category == ContextCategory::ToolOutputs).unwrap();
+        let row = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::ToolOutputs)
+            .unwrap();
         assert_eq!(row.delta, 1_000);
         assert!(
             !row.is_meaningful(),
@@ -544,17 +612,56 @@ mod tests {
 
     #[test]
     fn a_delta_larger_than_the_ratio_difference_survives_it() {
-        let a = snapshot("a", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 10_000, tool("Bash"))], 0);
-        let b = snapshot("b", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 48_000, tool("Bash"))], 0);
-
-        let diff = compare(
-            Side { snapshot: &a, instrument: heuristic(2.0) },
-            Side { snapshot: &b, instrument: heuristic(2.55) },
+        let a = snapshot(
+            "a",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                10_000,
+                tool("Bash"),
+            )],
+            0,
+        );
+        let b = snapshot(
+            "b",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                48_000,
+                tool("Bash"),
+            )],
+            0,
         );
 
-        let row = diff.categories.iter().find(|c| c.category == ContextCategory::ToolOutputs).unwrap();
-        assert!(row.is_meaningful(), "38,000 tokens is far outside the bound");
-        assert_eq!(diff.categories[0].category, ContextCategory::ToolOutputs, "biggest change first");
+        let diff = compare(
+            Side {
+                snapshot: &a,
+                instrument: heuristic(2.0),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.55),
+            },
+        );
+
+        let row = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::ToolOutputs)
+            .unwrap();
+        assert!(
+            row.is_meaningful(),
+            "38,000 tokens is far outside the bound"
+        );
+        assert_eq!(
+            diff.categories[0].category,
+            ContextCategory::ToolOutputs,
+            "biggest change first"
+        );
     }
 
     #[test]
@@ -564,22 +671,57 @@ mod tests {
         // items* -- 5,455 tokens here, not 9% of the residual's own 23,000.
         // Bounding it like an ordinary row understated it by more than half and
         // would have presented a 3,000-token move as a finding.
-        let a = snapshot("a", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 60_000, tool("Bash"))], 20_000);
-        let b = snapshot("b", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 60_000, tool("Bash"))], 23_000);
-
-        let diff = compare(
-            Side { snapshot: &a, instrument: heuristic(2.0) },
-            Side { snapshot: &b, instrument: heuristic(2.2) },
+        let a = snapshot(
+            "a",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                60_000,
+                tool("Bash"),
+            )],
+            20_000,
+        );
+        let b = snapshot(
+            "b",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                60_000,
+                tool("Bash"),
+            )],
+            23_000,
         );
 
-        let row = diff.categories.iter().find(|c| c.category == ContextCategory::Unattributed).unwrap();
+        let diff = compare(
+            Side {
+                snapshot: &a,
+                instrument: heuristic(2.0),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.2),
+            },
+        );
+
+        let row = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::Unattributed)
+            .unwrap();
         assert_eq!(row.delta, 3_000);
         let bound = row.instrument_bound.expect("two ratios bound each other");
         assert!(
             bound > 5_000,
             "the bound must come from the 60,000 accounted tokens, not the 23,000 residual; got {bound}"
         );
-        assert!(!row.is_meaningful(), "3,000 is inside what a 2.0-vs-2.2 fit explains");
+        assert!(
+            !row.is_meaningful(),
+            "3,000 is inside what a 2.0-vs-2.2 fit explains"
+        );
     }
 
     #[test]
@@ -587,19 +729,54 @@ mod tests {
         // Codex against Claude Code. No factor relates a measured count to a
         // ratio estimate, so there is no honest bound to state -- and Codex logs
         // its own system prompt, so the residuals are not even the same quantity.
-        let a = snapshot("a", AgentKind::Codex, 1, vec![item("x", ContextCategory::ToolOutputs, 10_000, tool("shell"))], 3_000);
-        let b = snapshot("b", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 40_000, tool("Bash"))], 3_000);
-
-        let diff = compare(
-            Side { snapshot: &a, instrument: tokenizer() },
-            Side { snapshot: &b, instrument: heuristic(2.2) },
+        let a = snapshot(
+            "a",
+            AgentKind::Codex,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                10_000,
+                tool("shell"),
+            )],
+            3_000,
+        );
+        let b = snapshot(
+            "b",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                40_000,
+                tool("Bash"),
+            )],
+            3_000,
         );
 
-        assert!(matches!(diff.comparability, Comparability::Incomparable { .. }));
+        let diff = compare(
+            Side {
+                snapshot: &a,
+                instrument: tokenizer(),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.2),
+            },
+        );
+
+        assert!(matches!(
+            diff.comparability,
+            Comparability::Incomparable { .. }
+        ));
         assert!(!diff.comparability.tokens_are_comparable());
         for row in &diff.categories {
             assert_eq!(row.instrument_bound, None);
-            assert!(!row.is_meaningful(), "nothing may be claimed about {:?}", row.category);
+            assert!(
+                !row.is_meaningful(),
+                "nothing may be claimed about {:?}",
+                row.category
+            );
         }
         assert_eq!(
             diff.categories[0].category,
@@ -632,16 +809,30 @@ mod tests {
         );
 
         let diff = compare(
-            Side { snapshot: &a, instrument: tokenizer() },
-            Side { snapshot: &b, instrument: heuristic(2.2) },
+            Side {
+                snapshot: &a,
+                instrument: tokenizer(),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.2),
+            },
         );
 
         assert!(diff.totals_are_observed());
         assert_eq!(diff.prompt_delta(), 700);
         let shell = diff.tools.iter().find(|t| t.tool == "shell").unwrap();
-        assert_eq!(shell.call_delta(), -1, "one fewer shell call, whatever sized it");
+        assert_eq!(
+            shell.call_delta(),
+            -1,
+            "one fewer shell call, whatever sized it"
+        );
         assert!(!shell.tokens_are_meaningful());
-        let row = diff.categories.iter().find(|c| c.category == ContextCategory::ToolOutputs).unwrap();
+        let row = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::ToolOutputs)
+            .unwrap();
         assert_eq!(row.item_delta(), -1);
     }
 
@@ -650,17 +841,48 @@ mod tests {
         // An item kind that vanished between the two turns is the most
         // interesting thing a diff can find, and a naive zip over one side's
         // rows would drop it.
-        let a = snapshot("a", AgentKind::ClaudeCode, 1, vec![item("f", ContextCategory::FileContents, 4_000, ContextSource::Unknown)], 0);
-        let b = snapshot("b", AgentKind::ClaudeCode, 1, vec![item("t", ContextCategory::ToolOutputs, 4_000, tool("Bash"))], 0);
-
-        let diff = compare(
-            Side { snapshot: &a, instrument: heuristic(2.2) },
-            Side { snapshot: &b, instrument: heuristic(2.2) },
+        let a = snapshot(
+            "a",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "f",
+                ContextCategory::FileContents,
+                4_000,
+                ContextSource::Unknown,
+            )],
+            0,
+        );
+        let b = snapshot(
+            "b",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item("t", ContextCategory::ToolOutputs, 4_000, tool("Bash"))],
+            0,
         );
 
-        let gone = diff.categories.iter().find(|c| c.category == ContextCategory::FileContents).unwrap();
+        let diff = compare(
+            Side {
+                snapshot: &a,
+                instrument: heuristic(2.2),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.2),
+            },
+        );
+
+        let gone = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::FileContents)
+            .unwrap();
         assert_eq!((gone.left, gone.right), (4_000, 0));
-        let arrived = diff.categories.iter().find(|c| c.category == ContextCategory::ToolOutputs).unwrap();
+        let arrived = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::ToolOutputs)
+            .unwrap();
         assert_eq!((arrived.left, arrived.right), (0, 4_000));
     }
 
@@ -668,16 +890,48 @@ mod tests {
     fn two_ratios_that_print_alike_are_still_compared_on_their_values() {
         // `heuristic:chars/2.2` is what both 2.17 and 2.18 render as. Comparing
         // instruments by name would call that one instrument and bound nothing.
-        let a = snapshot("a", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 100_000, tool("Bash"))], 0);
-        let b = snapshot("b", AgentKind::ClaudeCode, 1, vec![item("x", ContextCategory::ToolOutputs, 100_400, tool("Bash"))], 0);
+        let a = snapshot(
+            "a",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                100_000,
+                tool("Bash"),
+            )],
+            0,
+        );
+        let b = snapshot(
+            "b",
+            AgentKind::ClaudeCode,
+            1,
+            vec![item(
+                "x",
+                ContextCategory::ToolOutputs,
+                100_400,
+                tool("Bash"),
+            )],
+            0,
+        );
 
         let diff = compare(
-            Side { snapshot: &a, instrument: heuristic(2.17) },
-            Side { snapshot: &b, instrument: heuristic(2.18) },
+            Side {
+                snapshot: &a,
+                instrument: heuristic(2.17),
+            },
+            Side {
+                snapshot: &b,
+                instrument: heuristic(2.18),
+            },
         );
 
         assert!(matches!(diff.comparability, Comparability::Skewed { .. }));
-        let row = diff.categories.iter().find(|c| c.category == ContextCategory::ToolOutputs).unwrap();
+        let row = diff
+            .categories
+            .iter()
+            .find(|c| c.category == ContextCategory::ToolOutputs)
+            .unwrap();
         assert!(
             !row.is_meaningful(),
             "400 tokens is inside a half-percent fit difference on 100,000"

@@ -165,7 +165,11 @@ fn the_walk_stops_at_a_compaction_instead_of_reaching_through_it() {
     // back at the summarised history. Following that link would resurrect
     // content that was explicitly removed from the prompt.
     let context = adapter
-        .reconstruct(&session, TurnNumber::new(3).unwrap(), &HeuristicEstimator::for_code())
+        .reconstruct(
+            &session,
+            TurnNumber::new(3).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
         .expect("the post-compaction turn reconstructs");
 
     assert!(
@@ -186,7 +190,11 @@ fn the_walk_stops_at_a_compaction_instead_of_reaching_through_it() {
 fn injected_instructions_are_traced_to_the_file_they_came_from() {
     let (adapter, session) = claude();
     let context = adapter
-        .reconstruct(&session, TurnNumber::new(1).unwrap(), &HeuristicEstimator::for_code())
+        .reconstruct(
+            &session,
+            TurnNumber::new(1).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
         .unwrap();
 
     let memory = context
@@ -235,7 +243,10 @@ fn redacted_thinking_is_flagged_and_still_carries_weight() {
             _ => None,
         })
         .expect("the fixture has a thinking block");
-    assert!(reasoning.1, "an empty thinking block with a signature is redacted");
+    assert!(
+        reasoning.1,
+        "an empty thinking block with a signature is redacted"
+    );
     assert!(
         reasoning.0 > 0,
         "a redacted block still occupied context and must not weigh zero"
@@ -246,7 +257,11 @@ fn redacted_thinking_is_flagged_and_still_carries_weight() {
 fn a_tool_output_is_named_after_the_call_it_answers() {
     let (adapter, session) = claude();
     let context = adapter
-        .reconstruct(&session, TurnNumber::new(2).unwrap(), &HeuristicEstimator::for_code())
+        .reconstruct(
+            &session,
+            TurnNumber::new(2).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
         .unwrap();
     // Both halves matter. The tool name comes from the matching call, because
     // the result records only a `tool_use_id`; the path comes from that call's
@@ -275,13 +290,19 @@ fn codex_survives_an_unknown_event_type() {
 fn the_codex_system_prompt_is_accounted_for_rather_than_hidden() {
     let (adapter, session) = codex();
     let context = adapter
-        .reconstruct(&session, TurnNumber::new(1).unwrap(), &HeuristicEstimator::for_code())
+        .reconstruct(
+            &session,
+            TurnNumber::new(1).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
         .unwrap();
     let prompt = context
         .items
         .iter()
         .find(|i| i.source == ct_domain::ContextSource::AgentSystemPrompt)
-        .expect("session_meta.base_instructions is the literal system prompt, observable for Codex");
+        .expect(
+            "session_meta.base_instructions is the literal system prompt, observable for Codex",
+        );
     assert_eq!(prompt.category, ContextCategory::SystemInstructions);
     assert!(
         prompt.tokens.tokens() > 0,
@@ -304,7 +325,11 @@ fn codex_reads_the_per_request_usage_not_the_running_total() {
 fn a_codex_compaction_replaces_the_item_list() {
     let (adapter, session) = codex();
     let context = adapter
-        .reconstruct(&session, TurnNumber::new(2).unwrap(), &HeuristicEstimator::for_code())
+        .reconstruct(
+            &session,
+            TurnNumber::new(2).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
         .unwrap();
     assert!(
         context

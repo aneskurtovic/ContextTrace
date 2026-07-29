@@ -32,9 +32,7 @@
 
 use crate::CharProbe;
 use crate::ContextTrace;
-use ct_domain::{
-    AgentKind, AgentSession, ContextCategory, ContextItemId, ContextSource,
-};
+use ct_domain::{AgentKind, AgentSession, ContextCategory, ContextItemId, ContextSource};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -399,7 +397,11 @@ impl LifecycleSweep {
 /// Returns `None` when the following turn could not be reconstructed: a
 /// departure asserted from an unreadable turn would be an inference from missing
 /// data, which is the one thing this view exists not to do.
-fn departure_after(scanned: &[&TurnScan], last_present: u32, agent: AgentKind) -> Option<Departure> {
+fn departure_after(
+    scanned: &[&TurnScan],
+    last_present: u32,
+    agent: AgentKind,
+) -> Option<Departure> {
     let index = scanned.iter().position(|s| s.turn == last_present)?;
     let held = scanned[index].compaction.map(|c| c.line_no);
     let next = scanned.get(index + 1)?;
@@ -468,11 +470,14 @@ impl ContextTrace {
             turns.push(TurnScan {
                 turn: number,
                 sidechain,
-                compaction: context.preceding_compaction.as_ref().map(|c| CompactionMark {
-                    line_no: c.source.line_no,
-                    turn: c.turn.map(|t| t.get()),
-                    reclaimed: c.reduction(),
-                }),
+                compaction: context
+                    .preceding_compaction
+                    .as_ref()
+                    .map(|c| CompactionMark {
+                        line_no: c.source.line_no,
+                        turn: c.turn.map(|t| t.get()),
+                        reclaimed: c.reduction(),
+                    }),
                 readable: true,
             });
         }
@@ -507,7 +512,9 @@ mod tests {
             id: ContextItemId::new("claude:42"),
             label: "Read BACKLOG.md".into(),
             category: ContextCategory::ToolOutputs,
-            source: ContextSource::ToolExecution { tool: "Read".into() },
+            source: ContextSource::ToolExecution {
+                tool: "Read".into(),
+            },
             recorded_first_seen: present_in.first().copied(),
             present_in,
             sidechain: false,
@@ -606,7 +613,11 @@ mod tests {
         let life = lifecycle(&sweep(turns, vec![1, 2, 4], AgentKind::ClaudeCode));
 
         assert_eq!(life.unknown_turns, vec![3]);
-        assert_eq!(life.runs.len(), 2, "an unknown turn must not be read as continuity");
+        assert_eq!(
+            life.runs.len(),
+            2,
+            "an unknown turn must not be read as continuity"
+        );
         assert!(life.still_present);
         assert!(life.departure.is_none());
     }
@@ -623,13 +634,21 @@ mod tests {
         ];
         let life = lifecycle(&sweep(turns, vec![3, 4], AgentKind::ClaudeCode));
 
-        assert!(life.unknown_turns.is_empty(), "got {:?}", life.unknown_turns);
+        assert!(
+            life.unknown_turns.is_empty(),
+            "got {:?}",
+            life.unknown_turns
+        );
         assert_eq!(life.first_present(), Some(3));
     }
 
     #[test]
     fn a_departure_is_not_claimed_from_an_unreadable_next_turn() {
-        let turns = vec![scan(1, true, None), scan(2, true, None), scan(3, false, None)];
+        let turns = vec![
+            scan(1, true, None),
+            scan(2, true, None),
+            scan(3, false, None),
+        ];
         let life = lifecycle(&sweep(turns, vec![1, 2], AgentKind::ClaudeCode));
 
         assert!(!life.still_present);
@@ -649,7 +668,12 @@ mod tests {
         turns[3].sidechain = true;
         let life = lifecycle(&sweep(turns, vec![1, 2, 5, 6], AgentKind::ClaudeCode));
 
-        assert_eq!(life.runs.len(), 1, "expected one uninterrupted run: {:?}", life.runs);
+        assert_eq!(
+            life.runs.len(),
+            1,
+            "expected one uninterrupted run: {:?}",
+            life.runs
+        );
         assert_eq!(life.other_thread_turns, 2);
         assert!(life.still_present);
     }
@@ -659,7 +683,10 @@ mod tests {
         let s = sweep(vec![scan(1, true, None)], vec![1], AgentKind::ClaudeCode);
         assert_eq!(s.resolve("claude:42").unwrap().id.as_str(), "claude:42");
         assert_eq!(s.resolve("backlog").unwrap().id.as_str(), "claude:42");
-        assert!(matches!(s.resolve("nothing here"), Err(ResolveError::NotFound(_))));
+        assert!(matches!(
+            s.resolve("nothing here"),
+            Err(ResolveError::NotFound(_))
+        ));
     }
 
     #[test]
@@ -684,11 +711,7 @@ mod tests {
     fn the_recorded_first_turn_and_the_observed_one_are_reported_separately() {
         let turns = (1..=4).map(|t| scan(t, true, None)).collect();
         let mut s = sweep(turns, vec![3, 4], AgentKind::ClaudeCode);
-        s.items
-            .values_mut()
-            .next()
-            .unwrap()
-            .recorded_first_seen = Some(1);
+        s.items.values_mut().next().unwrap().recorded_first_seen = Some(1);
 
         let life = lifecycle(&s);
         assert_eq!(life.first_present(), Some(3));

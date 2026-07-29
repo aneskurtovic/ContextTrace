@@ -405,7 +405,11 @@ mod tests {
         None
     }
 
-    fn session(events: Vec<Event>, turns: Vec<Turn>, unrecognised: Vec<(String, u32)>) -> AgentSession {
+    fn session(
+        events: Vec<Event>,
+        turns: Vec<Turn>,
+        unrecognised: Vec<(String, u32)>,
+    ) -> AgentSession {
         AgentSession::new(
             SessionId::new("s").unwrap(),
             AgentKind::ClaudeCode,
@@ -419,7 +423,14 @@ mod tests {
     #[test]
     fn a_large_jump_is_flagged_and_attributed_to_candidates() {
         let events = vec![
-            event(1, EventKind::Message { role: ct_domain::MessageRole::User, preview: String::new(), char_len: 10 }),
+            event(
+                1,
+                EventKind::Message {
+                    role: ct_domain::MessageRole::User,
+                    preview: String::new(),
+                    char_len: 10,
+                },
+            ),
             event(
                 2,
                 EventKind::ToolResult {
@@ -505,7 +516,9 @@ mod tests {
 
     #[test]
     fn fidelity_and_headline_reflect_unrecognised_events() {
-        let events = (1..=10).map(|i| event(i, EventKind::SessionStarted)).collect();
+        let events = (1..=10)
+            .map(|i| event(i, EventKind::SessionStarted))
+            .collect();
         let d = diagnose(&session(events, vec![], vec![("new_type".into(), 2)]));
 
         assert_eq!(d.unrecognised_events, 2);
@@ -516,7 +529,9 @@ mod tests {
 
     #[test]
     fn a_clean_parse_says_so() {
-        let events = (1..=3).map(|i| event(i, EventKind::SessionStarted)).collect();
+        let events = (1..=3)
+            .map(|i| event(i, EventKind::SessionStarted))
+            .collect();
         let d = diagnose(&session(events, vec![], vec![]));
         assert!(d.is_fully_understood());
         assert_eq!(d.headline(), "3 events, all recognised");

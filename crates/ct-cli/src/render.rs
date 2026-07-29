@@ -6,8 +6,8 @@ use crate::format::{
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    AppError, Comparability, ContextTrace, Departure, Diagnostics, DriftReport, GrowthTimeline,
-    ExportRedaction, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport, SessionDiff,
+    AppError, Comparability, ContextTrace, Departure, Diagnostics, DriftReport, ExportRedaction,
+    GrowthTimeline, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport, SessionDiff,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -66,7 +66,10 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
         );
     }
 
-    println!("\n{} session(s). Inspect one with: ct inspect <id>", list.len());
+    println!(
+        "\n{} session(s). Inspect one with: ct inspect <id>",
+        list.len()
+    );
 }
 
 pub fn inspect(
@@ -176,11 +179,7 @@ fn describe_kind(event: &ct_domain::Event) -> String {
             format!("injected: {}", ellipsize(label, 32))
         }
         EventKind::Compacted(facts) => match (facts.tokens_before, facts.tokens_after) {
-            (Some(b), Some(a)) => format!(
-                "COMPACTION {} -> {}",
-                thousands(b),
-                thousands(a)
-            ),
+            (Some(b), Some(a)) => format!("COMPACTION {} -> {}", thousands(b), thousands(a)),
             _ => "COMPACTION".into(),
         },
         EventKind::TokenReport(usage) => match usage.prompt_tokens() {
@@ -280,7 +279,11 @@ pub fn context(
         };
         println!(
             "Compaction earlier in session ({}), {detail}",
-            compaction.facts.trigger.as_deref().unwrap_or("unknown trigger")
+            compaction
+                .facts
+                .trigger
+                .as_deref()
+                .unwrap_or("unknown trigger")
         );
     }
     coverage(view);
@@ -320,13 +323,16 @@ pub fn context(
         );
     } else {
         const SHOWN_GROUPS: usize = 10;
-        let copies = duplicates.iter().map(|group| group.items.len()).sum::<usize>();
-        let total = duplicates.iter().fold(0u32, |sum, group| {
-            sum.saturating_add(group.total_tokens)
-        });
-        let repeated = duplicates.iter().fold(0u32, |sum, group| {
-            sum.saturating_add(group.repeated_tokens)
-        });
+        let copies = duplicates
+            .iter()
+            .map(|group| group.items.len())
+            .sum::<usize>();
+        let total = duplicates
+            .iter()
+            .fold(0u32, |sum, group| sum.saturating_add(group.total_tokens));
+        let repeated = duplicates
+            .iter()
+            .fold(0u32, |sum, group| sum.saturating_add(group.repeated_tokens));
         println!(
             "\nExact duplicate content - {} groups, {copies} copies, {} tokens total,\n\
              {} repeated\n",
@@ -354,9 +360,9 @@ pub fn context(
         }
         if duplicates.len() > SHOWN_GROUPS {
             let hidden = &duplicates[SHOWN_GROUPS..];
-            let hidden_repeated = hidden.iter().fold(0u32, |sum, group| {
-                sum.saturating_add(group.repeated_tokens)
-            });
+            let hidden_repeated = hidden
+                .iter()
+                .fold(0u32, |sum, group| sum.saturating_add(group.repeated_tokens));
             println!(
                 "  ... {} more groups with {} repeated tokens (all groups are in --json)",
                 hidden.len(),
@@ -978,9 +984,7 @@ pub fn residual(
     );
 
     if steps.is_empty() {
-        println!(
-            "\nNo sustained change in the unlogged remainder."
-        );
+        println!("\nNo sustained change in the unlogged remainder.");
         return;
     }
 
@@ -992,9 +996,7 @@ pub fn residual(
         // obvious cause already in the log. Attributing it to an unrecorded
         // harness change would be inventing a second explanation for something
         // the session already accounts for.
-        let near_compaction = compaction_turns
-            .iter()
-            .any(|t| t.abs_diff(step.turn) <= 5);
+        let near_compaction = compaction_turns.iter().any(|t| t.abs_diff(step.turn) <= 5);
         if !near_compaction {
             any_unexplained = true;
         }
@@ -1046,7 +1048,10 @@ pub fn drift(report: &DriftReport, json: bool) {
     for (agent, count) in &report.scanned_by_agent {
         println!("           {count} {agent}");
     }
-    println!("Events     {} parsed", thousands(report.total_events as u64));
+    println!(
+        "Events     {} parsed",
+        thousands(report.total_events as u64)
+    );
 
     if report.sessions_scanned == 0 {
         if report.matched_nothing() {
@@ -1102,7 +1107,11 @@ pub fn drift(report: &DriftReport, json: bool) {
     if !report.unreadable.is_empty() {
         println!("\nUnreadable sessions\n");
         for session in &report.unreadable {
-            println!("  {}  {}", pad(&session.agent.to_string(), 12), session.path);
+            println!(
+                "  {}  {}",
+                pad(&session.agent.to_string(), 12),
+                session.path
+            );
             println!("                {}", session.error);
         }
         println!(
@@ -1165,7 +1174,10 @@ pub fn doctor(
 
     println!("Compaction {} event(s)", diagnostics.compactions);
     if let Some(reduction) = diagnostics.compaction_reduction {
-        println!("           {} tokens reclaimed [observed]", thousands(reduction));
+        println!(
+            "           {} tokens reclaimed [observed]",
+            thousands(reduction)
+        );
     }
 
     if !diagnostics.unrecognised_types.is_empty() {
@@ -1288,9 +1300,7 @@ pub fn growth(timeline: &GrowthTimeline, session: &AgentSession, width: usize, j
             // Named rather than quietly excluded: these turns are on the chart
             // as blanks, and a reader counting bars would otherwise come up
             // short with no explanation.
-            n => format!(
-                ", {n} of which the agent recorded no size for and are drawn as gaps"
-            ),
+            n => format!(", {n} of which the agent recorded no size for and are drawn as gaps"),
         }
     );
 
@@ -1306,7 +1316,10 @@ pub fn growth(timeline: &GrowthTimeline, session: &AgentSession, width: usize, j
                     )
                 })
                 .unwrap_or_default();
-            println!("  Peak       {} tokens at turn {turn}{share}", thousands(tokens));
+            println!(
+                "  Peak       {} tokens at turn {turn}{share}",
+                thousands(tokens)
+            );
         }
         None => println!("  Peak       not known -- no turn in this range recorded its size"),
     }
@@ -1317,7 +1330,10 @@ pub fn growth(timeline: &GrowthTimeline, session: &AgentSession, width: usize, j
 
 /// The chart itself, plus the two lines that say what it means.
 fn sparkline(timeline: &GrowthTimeline, width: usize) {
-    const LEVELS: [char; 8] = ['\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}'];
+    const LEVELS: [char; 8] = [
+        '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
+        '\u{2588}',
+    ];
     /// A turn whose size the agent never recorded. Deliberately not the shortest
     /// bar: the shortest bar is a small prompt, and this is not a prompt size.
     const GAP: char = '\u{00b7}';
@@ -1365,7 +1381,10 @@ fn sparkline(timeline: &GrowthTimeline, width: usize) {
     let end = format!("turn {last}");
     println!(
         "  {}{}",
-        pad(&axis, buckets.len().saturating_sub(end.chars().count()).max(1)),
+        pad(
+            &axis,
+            buckets.len().saturating_sub(end.chars().count()).max(1)
+        ),
         end
     );
 
@@ -1517,7 +1536,11 @@ fn instrument_note(diff: &SessionDiff) {
                 percent(*skew)
             );
         }
-        Comparability::Incomparable { left, right, reason } => {
+        Comparability::Incomparable {
+            left,
+            right,
+            reason,
+        } => {
             println!(
                 "  Instrument {left} vs {right}.\n             {}\n             \
                  The counts above and below are unaffected and are the comparison.",
@@ -1554,7 +1577,11 @@ fn composition_table(diff: &SessionDiff) {
         pad("CATEGORY", widest),
         rpad("LEFT", 10),
         rpad("RIGHT", 10),
-        if comparable { rpad("DELTA", 12) } else { String::new() }
+        if comparable {
+            rpad("DELTA", 12)
+        } else {
+            String::new()
+        }
     );
 
     for row in &rows {
@@ -1592,7 +1619,13 @@ fn composition_table(diff: &SessionDiff) {
         let summary: Vec<String> = moved
             .iter()
             .take(4)
-            .map(|c| format!("{} {}", signed(c.item_delta()), c.category.label().to_lowercase()))
+            .map(|c| {
+                format!(
+                    "{} {}",
+                    signed(c.item_delta()),
+                    c.category.label().to_lowercase()
+                )
+            })
             .collect();
         println!("\n  Item counts  {}", summary.join(", "));
     }
@@ -1750,7 +1783,10 @@ fn is_pipe_gone(e: &std::io::Error) -> bool {
     const ERROR_BROKEN_PIPE: i32 = 109;
     const ERROR_NO_DATA: i32 = 232;
     e.kind() == std::io::ErrorKind::BrokenPipe
-        || matches!(e.raw_os_error(), Some(ERROR_BROKEN_PIPE) | Some(ERROR_NO_DATA))
+        || matches!(
+            e.raw_os_error(),
+            Some(ERROR_BROKEN_PIPE) | Some(ERROR_NO_DATA)
+        )
 }
 
 fn print_json<T: serde::Serialize + ?Sized>(value: &T) {

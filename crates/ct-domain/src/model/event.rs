@@ -200,7 +200,9 @@ impl Event {
             | EventKind::ToolCall { char_len, .. }
             | EventKind::ToolResult { char_len, .. }
             | EventKind::ContextInjection { char_len, .. } => Some(*char_len),
-            EventKind::OversizedToolResult { non_image_chars, .. } => Some(*non_image_chars),
+            EventKind::OversizedToolResult {
+                non_image_chars, ..
+            } => Some(*non_image_chars),
             _ => None,
         }
     }

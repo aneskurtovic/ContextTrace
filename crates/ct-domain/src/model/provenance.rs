@@ -178,7 +178,11 @@ mod tests {
 
     #[test]
     fn aggregate_takes_the_weakest_member() {
-        let mixed = [Confidence::Observed, Confidence::Derived, Confidence::Estimated];
+        let mixed = [
+            Confidence::Observed,
+            Confidence::Derived,
+            Confidence::Estimated,
+        ];
         assert_eq!(Confidence::weakest_of(mixed), Confidence::Estimated);
     }
 }

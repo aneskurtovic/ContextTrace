@@ -138,8 +138,8 @@ impl AgentAdapter for CodexAdapter {
 /// the body, so listing hundreds of sessions costs kilobytes instead of
 /// hundreds of megabytes.
 fn describe(path: &Path) -> PortResult<SessionDescriptor> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
+    let metadata =
+        std::fs::metadata(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
 
     let header = parse::read_header(path)?;
     let stem = path

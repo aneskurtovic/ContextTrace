@@ -217,7 +217,9 @@ mod tests {
             "got {}",
             d.chars_per_token
         );
-        let overhead = d.unlogged_overhead.expect("a positive constant is measurable");
+        let overhead = d
+            .unlogged_overhead
+            .expect("a positive constant is measurable");
         assert!(
             overhead.abs_diff(40_000) < 500,
             "got {overhead}, expected about 40,000"

@@ -353,10 +353,7 @@ mod tests {
     }
 
     fn items_of(records: &[Value]) -> Vec<&Value> {
-        records
-            .iter()
-            .filter(|r| r["type"] == "item")
-            .collect()
+        records.iter().filter(|r| r["type"] == "item").collect()
     }
 
     #[test]
