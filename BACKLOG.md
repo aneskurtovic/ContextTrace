@@ -58,58 +58,34 @@ failure cases. Release benchmarks on the largest local Codex session (94.6 MiB)
 and two high-turn Claude sessions put cold discovery-to-snapshot at 0.79–1.43
 seconds and cached turn switching below 1 ms. The MVP budgets are therefore
 2 seconds cold and 50 ms cached on this reference machine; SQLite is not
-required for 0.1. Visual, keyboard, malformed-state and installed-app
-acceptance remain.
+required for 0.1. Seven frontend tests now cover loading, empty, error and
+malformed IPC states plus keyboard-operable chart points, focus visibility,
+live regions and reduced motion. Installed 1024/1440px visual acceptance
+remains.
 
 ---
 
 ## Todo
 
-### CT-031 · Investigate reconstruction over-count
-`status: todo` · `tier: A` · `size: M` · `source: corpus`
-**Why:** roughly one Claude Code session in seven accounts for more content than
-its prompt held, so its unlogged remainder cannot be measured. The leading
-hypothesis is that the harness drops old context without recording it — linear
-chains, no rewinds, several times more content than the reported prompt — but
-no marker for such a removal exists anywhere in the log.
-**Done when:** either a mechanism is identified from evidence, or the hypothesis
-is written up as unresolvable from logs alone and the tool's reporting of it is
-final. Inventing semantics for it is explicitly out of scope.
-
-**CT-035 supplied the instrument this needs.** Until `--exact`, an over-count
-could always have been the character ratio running high, so there was nothing to
-investigate that was not first an estimator question. With real tokenizer counts
-the two separate: on Codex the exact sum exceeds the observed total on 1 of 53
-local sessions, and that surplus cannot be estimation error. Start there — it is
-a small, exactly-measured case of the same defect.
-
-### CT-042 · Automate the public-MVP verification gate
-`status: todo` · `tier: A` · `size: M` · `source: MVP review`
-
-**Why:** 293 Rust tests, 2 frontend tests, formatting, clippy, both production
-builds and the corpus sweep pass locally. A Windows workflow now covers the
-stable and 1.88 toolchains, frontend, desktop compilation, release builds and
-fixture smoke flows, but it has not yet passed on GitHub. Tauri's dependency
-graph raised the declared minimum from Rust 1.85 to 1.88, which must stay
-continuously tested.
-**Done when:** CI runs formatting, clippy, all workspace/all-target tests,
-frontend type/build/tests, desktop compilation, release builds and process-level
-fixture smoke flows on the supported release hosts, including either the
-declared minimum Rust version or a deliberately raised one.
-
 ### CT-043 · Ship an installable 0.1.0
 `status: todo` · `tier: A` · `size: L` · `source: MVP review`
 
 **Why:** the CLI and desktop app work for a developer with the repository, but
-there is no license file, release workflow, signed desktop installer,
-downloadable CLI archive, checksum, installation path, upgrade guidance or
-clean-machine acceptance result. The CLI crate also cannot currently be
-packaged for crates.io because its internal path dependencies have no registry
-version requirements.
+the locally built installer is unsigned and has not passed a clean-machine
+acceptance run. There is still no public downloadable artifact or signing
+certificate. Publishing to crates.io remains outside 0.1 because the CLI's
+internal path dependencies have no registry version requirements.
 **Done when:** the intended license is present, the chosen release channels are
 explicit, the desktop installer and checksummed CLI artifacts install on every
 supported host, and the README's install/upgrade/known-limitations steps have
 been exercised on clean machines.
+
+**Progress:** the MIT license, current-user NSIS configuration, draft-first
+Windows release workflow, CLI ZIP, SHA-256 manifest and operator procedure now
+exist. A local unsigned NSIS build produced the expected installer. The
+workflow fails closed on partial signing configuration and only signs when a
+PFX, password and timestamp service are all provided. Certificate provisioning,
+signature verification and clean-machine install/upgrade acceptance remain.
 
 ### CT-026 · Cost projection
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
@@ -132,15 +108,53 @@ branch; showing them is nearly free and no other tool does it.
 ### CT-029 · `ct-index` SQLite cache
 `status: todo` · `tier: C` · `size: L` · `source: plan`
 **Why:** deliberately deferred until a command feels slow, so the access
-patterns are known before the cache is tuned. `ct context` on the largest
-session now takes ~4s because CT-014 reconstructs every turn — this is the first
-real evidence for it.
+patterns are known before the cache is tuned. Desktop-path release benchmarks
+now complete the largest local cold load in 1.43 seconds and cached turn
+switches below 1 ms, so 0.1 has no evidence that a persistent index is needed.
 **Done when:** derived metadata is cached, disposable and rebuildable, and no
 domain type depends on it.
 
 ---
 
 ## Done
+
+### CT-042 · Automate the public-MVP verification gate
+`status: done` · `tier: A` · `size: M` · `source: MVP review`
+
+**Why:** local verification alone could not prevent a broken main branch or a
+Windows-only dependency regression. Tauri also raised the real minimum Rust
+version from the previously claimed 1.85 to 1.88.
+**Done when:** CI runs formatting, clippy, all workspace/all-target tests,
+frontend type/build/tests, desktop compilation, release builds and process-level
+fixture smoke flows on the supported release hosts, including the declared
+minimum Rust version.
+
+**The first main-branch run passed the complete gate.** Windows jobs exercise
+stable and Rust 1.88, all 293 Rust tests, all frontend tests and production
+build, Tauri compilation, a release workspace build, and process-level Codex
+plus Claude fixture smoke flows. The workflow uses locked npm dependencies and
+shared Rust caches without reading the private corpus.
+
+### CT-031 · Investigate reconstruction over-count
+`status: done` · `tier: A` · `size: M` · `source: corpus`
+
+**Why:** some historical Claude Code sessions and one historical exact Codex
+case accounted for more content than the observed prompt held. A hidden
+harness removal was plausible, but inventing an unlogged mechanism would make
+the reconstruction less honest rather than more useful.
+**Done when:** either a mechanism is identified from evidence, or the hypothesis
+is written up as unresolvable from logs alone and the tool's reporting of it is
+final.
+
+**The retained evidence establishes the ceiling, not a mechanism.** A fresh
+read-only audit covered 40 Codex sessions and 3,353 turns. Exact recounts at
+every session maximum and every observed prompt drop checked 74 boundary turns
+with zero current over-counts. The logs contain 24 compactions, all with
+recorded replacements, but no generic rewind, removal, lineage link or event
+kind that could explain the historical cases. The affected historical artifact
+is no longer retained, so the cause is not recoverable from available logs.
+Existing calibration tests and output already treat content above the observed
+prompt as an unknown remainder rather than zero or a fabricated explanation.
 
 ### CT-041 · Make inline-image accounting threshold-independent
 `status: done` · `tier: A` · `size: S` · `source: review`

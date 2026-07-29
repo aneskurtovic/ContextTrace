@@ -24,8 +24,10 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 >
 > On 2026-07-29, `ct doctor --dir` parsed **792 local sessions** (715 Claude Code
 > and 77 Codex), recognised all **134,764 events**, and finished in 2.71
-> seconds. The remaining work is desktop hardening and acceptance, two bounded
-> accounting questions, CI, and installer/release work. See
+> seconds. CI, bounded accounting defects, desktop performance, accessibility
+> states and installer generation are now closed. The remaining public-release
+> work is installed visual acceptance, Windows signing, a clean-machine pass
+> and release-candidate soak. See
 > [MVP status and release plan](docs/MVP-STATUS.md) for the evidence, gates and
 > realistic distance.
 
@@ -328,6 +330,36 @@ to *write*; they do not make a bad value hard to *derive*.
 
 ---
 
+## Installing a release candidate
+
+There is no public 0.1 download yet. Each `v<version>` tag produces a **draft**
+GitHub release containing:
+
+- `ContextTrace-<version>-windows-x64-setup.exe` — the per-user desktop
+  installer;
+- `ContextTrace-<version>-windows-x64-cli.zip` — the companion `ct.exe` and
+  license;
+- `SHA256SUMS.txt` — SHA-256 hashes for both downloads.
+
+Before running a candidate, compare its hash with `SHA256SUMS.txt`:
+
+```powershell
+Get-FileHash .\ContextTrace-<version>-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\ContextTrace-<version>-windows-x64-cli.zip -Algorithm SHA256
+```
+
+The desktop installer targets the current user and does not require
+administrator access. To upgrade, run the newer installer over the existing
+version; ContextTrace does not own or modify the Codex/Claude session
+directories it reads. The CLI ZIP is portable: extract it and run
+`.\ct.exe --help`.
+
+Until a release candidate has a verified Windows signature, expect SmartScreen
+to warn about the unsigned installer. The supported release surface is Windows
+x64, and reconstruction remains bounded by what the agent logs; see
+[MVP status](docs/MVP-STATUS.md) for the current evidence ceiling and
+[the release procedure](docs/RELEASING.md) for operator checks.
+
 ## Building
 
 Requires Rust 1.88+. `rust-toolchain.toml` selects stable Rust for the host
@@ -371,17 +403,17 @@ false; CI now checks 1.88 explicitly.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the twelve commands below | Implemented, 23 tests |
-| `ct-ui` — Tauri v2 + React session browser, growth, composition and contributors | First useful slice implemented, 4 Rust IPC tests plus 2 frontend tests; visual acceptance and packaging remain |
+| `ct-ui` — Tauri v2 + React session browser, growth, composition and contributors | Useful slice implemented, 4 Rust IPC tests plus 7 frontend tests; installed visual acceptance remains |
 | Standalone JSONL fixture files | Implemented, 14 tests |
-| Reproducible CI, installable release artifacts, release documentation | Windows CI implemented pending its first green run; packaging remains |
+| Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |
 | Search and SQLite index | Deferred until measured desktop performance requires them |
 
-**293 Rust tests and 2 frontend tests** passing, `cargo fmt --check` clean,
+**293 Rust tests and 7 frontend tests** passing, `cargo fmt --check` clean,
 `clippy` clean at zero warnings, the React production bundle and Tauri command
 bridge build, the release CLI answers `ct --help`, and `ct doctor --dir`
 recognises every event type across the current local corpus. The Windows CI
-workflow now mirrors these gates and is awaiting its first GitHub run. Work is
-queued in [BACKLOG.md](BACKLOG.md), which is the authoritative list: 34 done, 1 next, 7
+workflow enforces these gates on stable and Rust 1.88. Work is queued in
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 36 done, 1 next, 5
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
