@@ -28,9 +28,10 @@ from the extracted CLI ZIP, and complete the desktop acceptance checks.
 
 ## Optional Windows code signing
 
-The workflow is unsigned by default. If all three repository secrets below are set,
-it imports the certificate only on the Windows runner and passes its discovered
-thumbprint to Tauri for that build:
+Both the desktop installer and portable `ct.exe` are unsigned by default. If
+all three repository secrets below are set, the workflow imports the certificate
+only on the Windows runner, passes its discovered thumbprint to Tauri, and signs
+`ct.exe` before it is zipped:
 
 - `WINDOWS_CERTIFICATE_BASE64`: base64-encoded PFX certificate;
 - `WINDOWS_CERTIFICATE_PASSWORD`: PFX password.
@@ -38,7 +39,9 @@ thumbprint to Tauri for that build:
   certificate provider.
 
 Partial signing configuration fails the release instead of falling back to an
-unsigned artifact. No certificate, thumbprint, or signing command is committed.
-An unsigned browser download can show Windows SmartScreen warnings; do not
-publish a release as signed unless the release artifact has been independently
-verified with the chosen signing service.
+unsigned artifact. In signing mode, the workflow fails unless both executables
+have a `Valid` Authenticode signature from the imported certificate and a
+timestamp. No certificate, thumbprint, or signing command is committed. An
+unsigned browser download can show Windows SmartScreen warnings; do not publish
+a release as signed unless the release artifact has been independently verified
+with the chosen signing service.
