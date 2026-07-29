@@ -228,6 +228,21 @@ mod tests {
     }
 
     #[test]
+    fn inline_image_base64_is_not_sent_to_the_bpe_tokenizer() {
+        let lines = Lines(vec![
+            r#"{"type":"response_item","payload":{"type":"function_call_output",
+               "call_id":"c1","output":[{"type":"input_text","text":"ok"},
+               {"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}}"#,
+        ]);
+        let mut items = vec![item(1)];
+        let report = recount(&mut items, &lines, &tiktoken());
+
+        assert_eq!(report.opaque, 1);
+        assert_eq!(report.counted, 0);
+        assert_eq!(items[0].tokens.tokens(), 9999);
+    }
+
+    #[test]
     fn lines_that_are_not_replayed_items_are_never_counted() {
         // A compaction item is sized from its line's byte length as a declared
         // proxy. Tokenizing `replacement_history` would quietly swap that proxy

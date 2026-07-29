@@ -101,8 +101,8 @@ fn translate(
     let payload = value.and_then(|v| v.get("payload")).unwrap_or(&Value::Null);
 
     // Oversized response items are not materialised as JSON trees. Recover only
-    // the fields reconstruction needs, and measure structured output with image
-    // URL values excluded so base64 is never mistaken for text tokens.
+    // the fields reconstruction needs, and apply the same inline-image policy
+    // used for parsed tool outputs: base64 data URLs are not text-token input.
     if record.oversized {
         let payload_start = find_field_value(raw, b"payload", 0);
         let inner = payload_start.and_then(|start| string_field(raw, b"type", start));
@@ -359,17 +359,18 @@ fn parse_hex_quad(bytes: &[u8]) -> Option<u16> {
     })
 }
 
-/// Size an oversized output while excluding every `image_url` string value.
+/// Size an oversized output while excluding inline-image URL string values.
 ///
 /// Plain strings are measured as decoded text. Arrays/objects retain their
 /// serialised structural cost, matching the ordinary parser's opaque-output
-/// proxy, but subtract image URL values in full.
+/// proxy, but subtract inline-image URL values in full. This is deliberately
+/// the same policy as [`parsed_tool_output_facts`]: image patches remain
+/// observed but unattributed, never converted from base64 into BPE text.
 fn oversized_output_facts(raw: &[u8], payload_start: usize) -> Option<(u32, u32, u32)> {
     let start = find_field_value(raw, b"output", payload_start)?;
     if raw.get(start) == Some(&b'"') {
         let token = scan_json_string(raw, start)?;
-        let is_image = !token.escaped
-            && raw[token.content_start..token.content_end].starts_with(b"data:image");
+        let is_image = scanned_string_starts_with_inline_image(raw, token);
         return Some(if is_image {
             (0, 1, saturating_u32(token.chars))
         } else {
@@ -407,14 +408,17 @@ fn oversized_output_facts(raw: &[u8], payload_start: usize) -> Option<(u32, u32,
                 {
                     let value_start = skip_ascii_space(raw, after + 1);
                     let value = scan_json_string(raw, value_start)?;
-                    image_count = image_count.checked_add(1)?;
-                    image_payload_chars = image_payload_chars.checked_add(value.chars)?;
-                    excluded_raw_chars = excluded_raw_chars.checked_add(
-                        std::str::from_utf8(&raw[value_start..value.end])
-                            .ok()?
-                            .chars()
-                            .count(),
-                    )?;
+                    let is_image = scanned_string_starts_with_inline_image(raw, value);
+                    if is_image {
+                        image_count = image_count.checked_add(1)?;
+                        image_payload_chars = image_payload_chars.checked_add(value.chars)?;
+                        excluded_raw_chars = excluded_raw_chars.checked_add(
+                            std::str::from_utf8(&raw[value_start..value.end])
+                                .ok()?
+                                .chars()
+                                .count(),
+                        )?;
+                    }
                     i = value.end;
                 } else {
                     i = key.end;
@@ -430,6 +434,137 @@ fn oversized_output_facts(raw: &[u8], payload_start: usize) -> Option<(u32, u32,
         saturating_u32(image_count),
         saturating_u32(image_payload_chars),
     ))
+}
+
+/// Check the first decoded bytes of a scanned JSON string without allocating
+/// its (potentially multi-megabyte) base64 payload. JSON writers may escape the
+/// colon in `data:image`, and that transport choice must not change accounting
+/// at the parse cap.
+fn scanned_string_starts_with_inline_image(raw: &[u8], token: ScannedString) -> bool {
+    let mut at = token.content_start;
+    for expected in b"data:image" {
+        let Some((byte, next)) = decoded_ascii_byte(raw, at, token.content_end) else {
+            return false;
+        };
+        if byte != *expected {
+            return false;
+        }
+        at = next;
+    }
+    true
+}
+
+fn decoded_ascii_byte(raw: &[u8], at: usize, end: usize) -> Option<(u8, usize)> {
+    let byte = *raw.get(at)?;
+    if at >= end {
+        return None;
+    }
+    if byte != b'\\' {
+        return Some((byte, at + 1));
+    }
+
+    let escape = *raw.get(at + 1)?;
+    let decoded = match escape {
+        b'"' | b'\\' | b'/' => escape,
+        b'b' => 0x08,
+        b'f' => 0x0c,
+        b'n' => b'\n',
+        b'r' => b'\r',
+        b't' => b'\t',
+        b'u' => u8::try_from(parse_hex_quad(raw.get(at + 2..at + 6)?)?).ok()?,
+        _ => return None,
+    };
+    Some((decoded, if escape == b'u' { at + 6 } else { at + 2 }))
+}
+
+/// Account for one parsed tool output under the inline-image policy.
+///
+/// Both parser paths preserve the output's non-image representation: a plain
+/// output is decoded text, while a structured output is a serialization proxy.
+/// Every `data:image...` value is reported separately and excluded from that
+/// proxy. The API charges image patches by their visual representation, so
+/// base64 is neither a heuristic-text input nor eligible for exact BPE counts.
+///
+/// `None` means the output is not image-bearing and can use the ordinary
+/// [`EventKind::ToolResult`] representation.
+fn parsed_tool_output_facts(output: &Value) -> Option<(u32, u32, u32)> {
+    match output {
+        Value::String(text) if is_inline_image_url(text) => {
+            Some((0, 1, saturating_u32(text.chars().count())))
+        }
+        Value::String(_) => None,
+        Value::Array(_) | Value::Object(_) => {
+            let mut image_count = 0usize;
+            let mut image_payload_chars = 0usize;
+            let mut excluded_serialized_chars = 0usize;
+            visit_inline_images(
+                output,
+                &mut image_count,
+                &mut image_payload_chars,
+                &mut excluded_serialized_chars,
+            );
+
+            (image_count > 0).then(|| {
+                let serialized_chars = output.to_string().chars().count();
+                (
+                    saturating_u32(serialized_chars.saturating_sub(excluded_serialized_chars)),
+                    saturating_u32(image_count),
+                    saturating_u32(image_payload_chars),
+                )
+            })
+        }
+        _ => None,
+    }
+}
+
+fn visit_inline_images(
+    value: &Value,
+    image_count: &mut usize,
+    image_payload_chars: &mut usize,
+    excluded_serialized_chars: &mut usize,
+) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                visit_inline_images(
+                    value,
+                    image_count,
+                    image_payload_chars,
+                    excluded_serialized_chars,
+                );
+            }
+        }
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                if key == "image_url" {
+                    if let Some(url) = value.as_str() {
+                        if is_inline_image_url(url) {
+                            *image_count = image_count.saturating_add(1);
+                            *image_payload_chars =
+                                image_payload_chars.saturating_add(url.chars().count());
+                            // `Value::to_string` is also the normal structured-output
+                            // proxy, so subtract the exact JSON string representation,
+                            // including its quotes and escapes.
+                            *excluded_serialized_chars = excluded_serialized_chars.saturating_add(
+                                Value::String(url.to_string()).to_string().chars().count(),
+                            );
+                        }
+                    }
+                }
+                visit_inline_images(
+                    value,
+                    image_count,
+                    image_payload_chars,
+                    excluded_serialized_chars,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_inline_image_url(value: &str) -> bool {
+    value.starts_with("data:image")
 }
 
 fn saturating_u32(value: usize) -> u32 {
@@ -563,12 +698,28 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
         },
         Some("function_call_output")
         | Some("custom_tool_call_output")
-        | Some("tool_search_output") => EventKind::ToolResult {
-            tool: None,
-            call_id: str_field(payload, "call_id"),
-            char_len,
-            is_error: str_field(payload, "status").as_deref() == Some("failed"),
-        },
+        | Some("tool_search_output") => {
+            // The image-aware event is not a size classification: it is the
+            // common accounting representation for any tool output carrying
+            // inline images, including a fully parsed line below the 4 MiB cap.
+            if let Some((non_image_chars, image_count, image_payload_chars)) =
+                payload.get("output").and_then(parsed_tool_output_facts)
+            {
+                EventKind::OversizedToolResult {
+                    call_id: str_field(payload, "call_id"),
+                    non_image_chars,
+                    image_count,
+                    image_payload_chars,
+                }
+            } else {
+                EventKind::ToolResult {
+                    tool: None,
+                    call_id: str_field(payload, "call_id"),
+                    char_len,
+                    is_error: str_field(payload, "status").as_deref() == Some("failed"),
+                }
+            }
+        }
         Some("agent_message") => EventKind::Message {
             role: MessageRole::Assistant,
             preview: preview_of(payload, 160),
@@ -861,6 +1012,7 @@ fn preview_of(payload: &Value, max: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     fn oversized_record() -> LineRecord {
         LineRecord {
@@ -935,6 +1087,126 @@ mod tests {
             }
             other => panic!("expected an oversized tool result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn oversized_output_recognises_an_escaped_inline_image_url() {
+        let raw = br#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"c2","output":[{"image_url":"data\u003aimage/png;base64,AAAA"}]}}"#;
+        let event = translate(
+            &oversized_record(),
+            raw,
+            &mut SessionMetadata::default(),
+            false,
+        );
+
+        assert!(matches!(
+            event.kind,
+            EventKind::OversizedToolResult {
+                image_count: 1,
+                image_payload_chars: 26,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parsed_structured_output_uses_the_same_inline_image_policy() {
+        let first = "data:image/png;base64,AAAA";
+        let second = "data:image/jpeg;base64,BBBBBB";
+        let payload = json!({
+            "type": "custom_tool_call_output",
+            "call_id": "c2",
+            "output": [
+                {"type": "input_text", "text": "small result"},
+                {"type": "input_image", "image_url": first},
+                {"type": "input_image", "image_url": second}
+            ]
+        });
+
+        match translate_response_item(&payload, Some("custom_tool_call_output")) {
+            EventKind::OversizedToolResult {
+                non_image_chars,
+                image_count,
+                image_payload_chars,
+                ..
+            } => {
+                assert_eq!(image_count, 2);
+                assert_eq!(
+                    image_payload_chars,
+                    (first.chars().count() + second.chars().count()) as u32
+                );
+                let expected = payload["output"].to_string().chars().count()
+                    - Value::String(first.to_string()).to_string().chars().count()
+                    - Value::String(second.to_string())
+                        .to_string()
+                        .chars()
+                        .count();
+                assert_eq!(
+                    non_image_chars, expected as u32,
+                    "the parsed path must remove the same base64 JSON strings as the oversized path"
+                );
+            }
+            other => panic!("expected image-aware tool result, got {other:?}"),
+        }
+    }
+
+    fn inline_image_fixture(filler_len: usize) -> String {
+        format!(
+            r#"{{"type":"response_item","payload":{{"type":"function_call_output","call_id":"cap","output":[{{"type":"input_text","text":"small result"}},{{"type":"input_image","image_url":"data:image/png;base64,{}"}}]}}}}"#,
+            "A".repeat(filler_len)
+        )
+    }
+
+    fn parse_inline_image_fixture(filler_len: usize, suffix: &str) -> Event {
+        let line = inline_image_fixture(filler_len);
+        let path = std::env::temp_dir().join(format!(
+            "ct-codex-inline-image-{suffix}-{}.jsonl",
+            std::process::id()
+        ));
+        fs::write(&path, line).unwrap();
+        let session = load(
+            &path,
+            SessionId::new(format!("inline-image-{suffix}")).unwrap(),
+            false,
+        )
+        .unwrap();
+        let _ = fs::remove_file(path);
+        session.events()[0].clone()
+    }
+
+    fn image_facts(event: &Event) -> (u32, u32, u32) {
+        match &event.kind {
+            EventKind::OversizedToolResult {
+                non_image_chars,
+                image_count,
+                image_payload_chars,
+                ..
+            } => (*non_image_chars, *image_count, *image_payload_chars),
+            other => panic!("expected image-aware tool result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inline_image_accounting_does_not_change_at_the_four_mib_parse_cap() {
+        let overhead = inline_image_fixture(0).len();
+        let below_filler = jsonl::MAX_PARSE_BYTES - overhead;
+        let above_filler = below_filler + 1;
+
+        let below = parse_inline_image_fixture(below_filler, "below-cap");
+        let above = parse_inline_image_fixture(above_filler, "above-cap");
+        assert_eq!(below.source.byte_len as usize, jsonl::MAX_PARSE_BYTES);
+        assert_eq!(above.source.byte_len as usize, jsonl::MAX_PARSE_BYTES + 1);
+
+        let below_facts = image_facts(&below);
+        let above_facts = image_facts(&above);
+        assert_eq!(below_facts.0, above_facts.0);
+        assert_eq!(below_facts.1, 1);
+        assert_eq!(above_facts.1, 1);
+        assert_eq!(
+            above_facts.2,
+            below_facts.2 + 1,
+            "only observed image payload metadata changes across the cap"
+        );
     }
 
     #[test]

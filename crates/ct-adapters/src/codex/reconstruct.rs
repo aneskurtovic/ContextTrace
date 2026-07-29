@@ -196,7 +196,7 @@ fn classify(
                 "oversized output; partial size".to_string()
             } else {
                 format!(
-                    "oversized output; {image_count} inline image(s), {} payload chars excluded from text estimate",
+                    "tool output; {image_count} inline image(s), {} payload chars excluded from text estimate",
                     image_payload_chars
                 )
             };
