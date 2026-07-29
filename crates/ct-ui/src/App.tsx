@@ -21,8 +21,9 @@ import type {
 type AgentFilter = "all" | Agent;
 
 function AgentMark({ agent }: { agent: Agent }) {
+  const label = agent === "codex" ? "Codex" : "Claude Code";
   return (
-    <span className={`agent-mark ${agent}`} aria-label={agent}>
+    <span className={`agent-mark ${agent}`} aria-label={label}>
       {agent === "codex" ? "CX" : "CC"}
     </span>
   );
@@ -30,8 +31,8 @@ function AgentMark({ agent }: { agent: Agent }) {
 
 function Spinner({ label }: { label: string }) {
   return (
-    <div className="loading" role="status">
-      <span className="spinner" />
+    <div className="loading" role="status" aria-live="polite" aria-atomic="true">
+      <span className="spinner" aria-hidden="true" />
       <span>{label}</span>
     </div>
   );
@@ -70,7 +71,8 @@ function SessionListItem({
     <button
       className={`session-row ${selected ? "selected" : ""}`}
       onClick={onSelect}
-      aria-pressed={selected}
+      aria-current={selected ? "true" : undefined}
+      aria-label={`${agentLabel(session.agent)} session: ${projectName(session.project)}, ${shortId(session.id)}`}
     >
       <AgentMark agent={session.agent} />
       <span className="session-copy">
@@ -82,6 +84,10 @@ function SessionListItem({
       <span className="session-activity">{formatActivity(session.lastActivity)}</span>
     </button>
   );
+}
+
+function agentLabel(agent: Agent) {
+  return agent === "codex" ? "Codex" : "Claude Code";
 }
 
 function GrowthChart({
@@ -98,7 +104,7 @@ function GrowthChart({
       point.promptTokens != null,
   );
   if (measured.length < 2) {
-    return <div className="chart-empty">Not enough measured turns to chart.</div>;
+    return <p className="chart-empty">Not enough measured turns to chart.</p>;
   }
 
   const width = 900;
@@ -155,11 +161,17 @@ function GrowthChart({
             cy={y(point.promptTokens)}
             r={point.turn === selectedTurn ? 5 : 2.5}
             onClick={() => onTurn(point.turn)}
-          >
-            <title>
-              Turn {point.turn}: {point.promptTokens.toLocaleString()} tokens
-            </title>
-          </circle>
+            role="button"
+            tabIndex={0}
+            aria-pressed={point.turn === selectedTurn}
+            aria-label={`Inspect turn ${point.turn}: ${point.promptTokens.toLocaleString()} prompt tokens`}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onTurn(point.turn);
+              }
+            }}
+          />
         ))}
       </svg>
       <div className="chart-axis">
@@ -172,37 +184,42 @@ function GrowthChart({
 }
 
 function ContextComposition({ context }: { context: ContextDetail }) {
+  const categories = Array.isArray(context.categories) ? context.categories : [];
   return (
-    <section className="panel composition-panel">
+    <section className="panel composition-panel" aria-labelledby="composition-heading">
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Composition</span>
-          <h2>What filled the prompt</h2>
+          <h2 id="composition-heading">What filled the prompt</h2>
         </div>
         <span className="panel-total">{context.totalTokens.toLocaleString()} tokens</span>
       </div>
       <div className="composition-list">
-        {context.categories.map((category) => (
-          <div className="composition-row" key={category.category}>
-            <div className="composition-label">
-              <span>{category.label}</span>
-              <small>
-                {category.itemCount} {category.itemCount === 1 ? "item" : "items"} ·{" "}
-                {category.confidence}
-              </small>
+        {categories.length ? (
+          categories.map((category) => (
+            <div className="composition-row" key={category.category}>
+              <div className="composition-label">
+                <span>{category.label}</span>
+                <small>
+                  {category.itemCount} {category.itemCount === 1 ? "item" : "items"} ·{" "}
+                  {category.confidence}
+                </small>
+              </div>
+              <div className="composition-bar-track">
+                <span
+                  className={`composition-bar category-${category.category}`}
+                  style={{ width: `${Math.max(category.share * 100, 0.8)}%` }}
+                />
+              </div>
+              <div className="composition-value">
+                <strong>{formatTokens(category.tokens)}</strong>
+                <span>{formatPercent(category.share)}</span>
+              </div>
             </div>
-            <div className="composition-bar-track">
-              <span
-                className={`composition-bar category-${category.category}`}
-                style={{ width: `${Math.max(category.share * 100, 0.8)}%` }}
-              />
-            </div>
-            <div className="composition-value">
-              <strong>{formatTokens(category.tokens)}</strong>
-              <span>{formatPercent(category.share)}</span>
-            </div>
-          </div>
-        ))}
+          ))
+        ) : (
+          <p className="empty-inline">No context categories were reported for this turn.</p>
+        )}
       </div>
       {context.residualIsMeaningful && context.residualTokens > 0 && (
         <p className="callout">
@@ -217,34 +234,39 @@ function ContextComposition({ context }: { context: ContextDetail }) {
 }
 
 function Contributors({ context }: { context: ContextDetail }) {
+  const contributors = Array.isArray(context.contributors) ? context.contributors : [];
   return (
-    <section className="panel contributors-panel">
+    <section className="panel contributors-panel" aria-labelledby="contributors-heading">
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Largest contributors</span>
-          <h2>Where to look first</h2>
+          <h2 id="contributors-heading">Where to look first</h2>
         </div>
-        <span className="count-pill">{context.contributors.length} shown</span>
+        <span className="count-pill">{contributors.length} shown</span>
       </div>
       <div className="contributor-list">
-        {context.contributors.map((item, index) => (
-          <div className="contributor-row" key={item.id}>
-            <span className="rank">{String(index + 1).padStart(2, "0")}</span>
-            <div className="contributor-copy">
-              <strong title={item.label}>{item.label}</strong>
-              <span>
-                {item.category} · {item.source}
+        {contributors.length ? (
+          contributors.map((item, index) => (
+            <div className="contributor-row" key={item.id}>
+              <span className="rank">{String(index + 1).padStart(2, "0")}</span>
+              <div className="contributor-copy">
+                <strong title={item.label}>{item.label}</strong>
+                <span>
+                  {item.category} · {item.source}
+                </span>
+              </div>
+              <span className={`confidence confidence-${item.confidence}`}>
+                {item.confidence}
               </span>
+              <div className="contributor-number">
+                <strong>{formatTokens(item.tokens)}</strong>
+                <span>{formatPercent(item.share)}</span>
+              </div>
             </div>
-            <span className={`confidence confidence-${item.confidence}`}>
-              {item.confidence}
-            </span>
-            <div className="contributor-number">
-              <strong>{formatTokens(item.tokens)}</strong>
-              <span>{formatPercent(item.share)}</span>
-            </div>
-          </div>
-        ))}
+          ))
+        ) : (
+          <p className="empty-inline">No individual contributors were reported for this turn.</p>
+        )}
       </div>
     </section>
   );
@@ -261,7 +283,8 @@ function SessionWorkspace({
   contextLoading: boolean;
   onTurn: (turn: number) => void;
 }) {
-  const measuredTurns = detail.growth.filter((point) => point.promptTokens != null);
+  const growth = Array.isArray(detail.growth) ? detail.growth : [];
+  const measuredTurns = growth.filter((point) => point.promptTokens != null);
   const selectedIndex = Math.max(
     0,
     measuredTurns.findIndex((point) => point.turn === context?.turn),
@@ -272,7 +295,7 @@ function SessionWorkspace({
       : null;
 
   return (
-    <main className="workspace">
+    <main className="workspace" aria-busy={contextLoading}>
       <header className="workspace-header">
         <div>
           <div className="title-line">
@@ -326,11 +349,11 @@ function SessionWorkspace({
         />
       </section>
 
-      <section className="panel timeline-panel">
+      <section className="panel timeline-panel" aria-labelledby="timeline-heading">
         <div className="panel-heading">
           <div>
             <span className="eyebrow">Prompt growth</span>
-            <h2>Session timeline</h2>
+            <h2 id="timeline-heading">Session timeline</h2>
           </div>
           <div className="legend">
             <span><i className="legend-growth" /> prompt size</span>
@@ -338,7 +361,7 @@ function SessionWorkspace({
           </div>
         </div>
         <GrowthChart
-          points={detail.growth}
+          points={growth}
           selectedTurn={context?.turn ?? detail.peakTurn}
           onTurn={onTurn}
         />
@@ -356,7 +379,9 @@ function SessionWorkspace({
               onChange={(event) => onTurn(measuredTurns[Number(event.target.value)].turn)}
             />
             <span>
-              {context ? `${context.totalTokens.toLocaleString()} tokens` : "Loading context"}
+              <output aria-live="polite">
+                {context ? `${context.totalTokens.toLocaleString()} tokens` : "Loading context"}
+              </output>
             </span>
           </div>
         )}
@@ -370,7 +395,7 @@ function SessionWorkspace({
           <Contributors context={context} />
         </div>
       ) : (
-        <div className="empty-inline">This session has no reconstructable prompt turn.</div>
+        <p className="empty-inline">This session has no reconstructable prompt turn.</p>
       )}
     </main>
   );
@@ -500,27 +525,33 @@ export default function App() {
           )}
         </div>
 
-        <div className="filter-row">
+        <div className="filter-row" role="group" aria-label="Filter sessions by agent">
           {(["all", "codex", "claude-code"] as AgentFilter[]).map((agent) => (
             <button
               key={agent}
               className={agentFilter === agent ? "active" : ""}
               onClick={() => setAgentFilter(agent)}
+              aria-pressed={agentFilter === agent}
             >
               {agent === "all" ? "All" : agent === "codex" ? "Codex" : "Claude"}
             </button>
           ))}
-          <button className="refresh" onClick={refreshSessions} aria-label="Refresh sessions">
+          <button
+            className="refresh"
+            onClick={refreshSessions}
+            aria-label="Refresh sessions"
+            disabled={loadingSessions}
+          >
             ↻
           </button>
         </div>
 
-        <div className="session-list-heading">
+        <div className="session-list-heading" aria-live="polite" aria-atomic="true">
           <span>Recent sessions</span>
           <span>{visibleSessions.length}</span>
         </div>
 
-        <nav className="session-list" aria-label="Sessions">
+        <nav className="session-list" aria-label="Sessions" aria-busy={loadingSessions}>
           {loadingSessions ? (
             <Spinner label="Discovering local sessions…" />
           ) : visibleSessions.length ? (
@@ -533,7 +564,7 @@ export default function App() {
               />
             ))
           ) : (
-            <div className="empty-list">
+            <div className="empty-list" role="status">
               <strong>No matching sessions</strong>
               <span>Try another project name or agent.</span>
             </div>
@@ -541,7 +572,11 @@ export default function App() {
         </nav>
 
         <footer className="sidebar-footer">
-          <button onClick={() => setShowRoots((value) => !value)}>
+          <button
+            onClick={() => setShowRoots((value) => !value)}
+            aria-expanded={showRoots}
+            aria-controls="local-log-roots"
+          >
             <span className="shield">✓</span>
             <span>
               <strong>Private by design</strong>
@@ -550,7 +585,7 @@ export default function App() {
             <span>{showRoots ? "⌃" : "⌄"}</span>
           </button>
           {showRoots && startup && (
-            <div className="roots">
+            <div className="roots" id="local-log-roots">
               {startup.roots.map((root) => (
                 <div key={root.agent}>
                   <strong>{root.agent}</strong>
@@ -564,16 +599,16 @@ export default function App() {
         </footer>
       </aside>
 
-      <div className="main-area">
+      <div className="main-area" aria-busy={loadingDetail}>
         {error && (
-          <div className="error-banner" role="alert">
-            <span>!</span>
+          <div className="error-banner" role="alert" aria-atomic="true">
+            <span aria-hidden="true">!</span>
             <p><strong>ContextTrace couldn’t complete that view.</strong>{error}</p>
             <button onClick={() => setError(null)}>Dismiss</button>
           </div>
         )}
         {startup?.warnings.map((warning) => (
-          <div className="warning-banner" key={warning}>{warning}</div>
+          <div className="warning-banner" key={warning} role="status">{warning}</div>
         ))}
         {loadingDetail && !detail ? (
           <div className="workspace-centered">

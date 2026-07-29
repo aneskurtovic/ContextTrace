@@ -38,6 +38,18 @@ button {
   color: inherit;
 }
 
+button:focus-visible,
+input:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #91b8ff;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 326px minmax(0, 1fr);
@@ -603,6 +615,13 @@ h2 {
   fill: #a5c3ff;
 }
 
+.chart-point:focus-visible {
+  fill: #d2e1ff;
+  outline: none;
+  stroke: #d2e1ff;
+  stroke-width: 4;
+}
+
 .compaction-line {
   stroke: var(--orange);
   stroke-width: 1;
@@ -988,6 +1007,17 @@ h2 {
   border-color: #654b2d;
   background: #261d13;
   color: #d6a566;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 @media (max-width: 1180px) {
