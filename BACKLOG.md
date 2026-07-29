@@ -52,20 +52,18 @@ empty, malformed and very large sessions have usable states; keyboard and
 1024/1440px layouts pass visual acceptance; and an end-to-end test covers the
 Rust IPC contract without reading private corpus data.
 
+**Progress:** fixture-backed Rust tests now cover the full desktop
+list-to-inspect-to-context IPC contract for both agents, cache refresh and
+failure cases. Release benchmarks on the largest local Codex session (94.6 MiB)
+and two high-turn Claude sessions put cold discovery-to-snapshot at 0.79–1.43
+seconds and cached turn switching below 1 ms. The MVP budgets are therefore
+2 seconds cold and 50 ms cached on this reference machine; SQLite is not
+required for 0.1. Visual, keyboard, malformed-state and installed-app
+acceptance remain.
+
 ---
 
 ## Todo
-
-### CT-041 · Make inline-image accounting threshold-independent
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** ordinary Codex tool outputs currently include inline `image_url`
-payloads in their serialized-character estimate, while outputs above the 4 MiB
-parse cap exclude them. The same content therefore gets a different accounting
-policy solely because it crossed an implementation threshold.
-**Done when:** ordinary and oversized outputs use one documented image policy,
-image base64 is never presented as BPE text, and fixtures cover both sides of
-the parse cap.
 
 ### CT-031 · Investigate reconstruction over-count
 `status: todo` · `tier: A` · `size: M` · `source: corpus`
@@ -88,10 +86,12 @@ a small, exactly-measured case of the same defect.
 ### CT-042 · Automate the public-MVP verification gate
 `status: todo` · `tier: A` · `size: M` · `source: MVP review`
 
-**Why:** 286 Rust tests, 2 frontend tests, formatting, clippy, both production
-builds and the corpus sweep pass locally, but no repository automation prevents
-a broken main branch or a platform-only build. The declared Rust 1.85 minimum
-is not continuously tested.
+**Why:** 293 Rust tests, 2 frontend tests, formatting, clippy, both production
+builds and the corpus sweep pass locally. A Windows workflow now covers the
+stable and 1.88 toolchains, frontend, desktop compilation, release builds and
+fixture smoke flows, but it has not yet passed on GitHub. Tauri's dependency
+graph raised the declared minimum from Rust 1.85 to 1.88, which must stay
+continuously tested.
 **Done when:** CI runs formatting, clippy, all workspace/all-target tests,
 frontend type/build/tests, desktop compilation, release builds and process-level
 fixture smoke flows on the supported release hosts, including either the
@@ -141,6 +141,24 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-041 · Make inline-image accounting threshold-independent
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** ordinary Codex tool outputs included inline `image_url` payloads in
+their serialized-character estimate, while outputs above the 4 MiB parse cap
+excluded them. The same content therefore received a different accounting
+policy solely because it crossed an implementation threshold.
+**Done when:** ordinary and oversized outputs use one documented image policy,
+image base64 is never presented as BPE text, and fixtures cover both sides of
+the parse cap.
+
+**One policy now spans both parsers.** Inline data-image payloads are removed
+from the text proxy and reported as image count plus excluded payload
+characters whether the surrounding output is parsed normally or scanned above
+the cap. Exact recount refuses image-bearing items instead of tokenizing
+base64. Regression fixtures exercise parsed JSON, escaped data URLs, and real
+lines at exactly 4 MiB and one byte above it.
 
 ### CT-030 · Build the Tauri v2 desktop vertical slice
 `status: done` · `tier: A` · `size: L` · `source: plan`

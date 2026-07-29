@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# This workflow only needs to read source and dependency metadata.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.toolchain }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep the declared 1.88 MSRV honest while the stable lane supplies the
+        # formatter, lint and release-build gate used by contributors.
+        toolchain: [stable, 1.88.0]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-${{ matrix.toolchain }}
+
+      - name: Check formatting
+        if: matrix.toolchain == 'stable'
+        run: cargo +stable fmt --all -- --check
+
+      - name: Lint workspace
+        if: matrix.toolchain == 'stable'
+        run: cargo +stable clippy --workspace --all-targets -- -D warnings
+
+      - name: Test workspace
+        # `rust-toolchain.toml` selects stable, so use Cargo's explicit
+        # toolchain syntax to make the minimum-version lane real.
+        run: cargo +${{ matrix.toolchain }} test --workspace --all-targets
+
+      - name: Build release workspace
+        if: matrix.toolchain == 'stable'
+        run: cargo +stable build --workspace --release
+
+  frontend:
+    name: Frontend
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: crates/ct-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/ct-ui/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+  desktop:
+    name: Desktop (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: crates/ct-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/ct-ui/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      # Bundling/signing belongs to the release workflow. This still executes
+      # Tauri's production frontend build and compiles the Windows desktop app.
+      - name: Compile Tauri desktop app
+        run: npm run tauri build -- --no-bundle
+
+  cli-smoke:
+    name: CLI fixture smoke
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-stable
+
+      - name: Arrange committed synthetic sessions
+        shell: pwsh
+        run: |
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP 'contexttrace-fixtures'
+          $codexSessions = Join-Path $fixtureRoot 'codex\sessions\2026\07\29'
+          $claudeProjects = Join-Path $fixtureRoot 'claude\projects\ci-fixtures'
+          New-Item -ItemType Directory -Force -Path $codexSessions, $claudeProjects | Out-Null
+          Copy-Item tests/fixtures/codex/rollout.jsonl (Join-Path $codexSessions 'rollout.jsonl')
+          Copy-Item tests/fixtures/claude_code/session.jsonl (Join-Path $claudeProjects 'session.jsonl')
+          "CODEX_HOME=$($fixtureRoot)\codex" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CLAUDE_CONFIG_DIR=$($fixtureRoot)\claude" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build release CLI
+        run: cargo build --release -p ct-cli
+
+      - name: Discover and inspect fixture sessions
+        shell: pwsh
+        run: |
+          $sessions = & .\target\release\ct.exe sessions --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (@($sessions).Count -ne 2) { throw "Expected two fixture sessions, found $(@($sessions).Count)." }
+
+          $codex = @($sessions | Where-Object { $_.agent -eq 'codex' })
+          $claude = @($sessions | Where-Object { $_.agent -eq 'claude-code' })
+          if ($codex.Count -ne 1 -or $claude.Count -ne 1) { throw 'Both fixture agents must be discovered.' }
+
+          $inspection = & .\target\release\ct.exe inspect $codex[0].id --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($null -eq $inspection) { throw 'Codex fixture inspection produced no JSON.' }
+
+          $context = & .\target\release\ct.exe context $codex[0].id --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($null -eq $context) { throw 'Codex fixture context analysis produced no JSON.' }

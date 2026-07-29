@@ -202,11 +202,11 @@ payload characters were excluded, and no visual-token charge is assigned a
 base64-derived text estimate during observed-total reconciliation. Exact mode
 refuses these lines from their recorded size before fetching them.
 
-The ordinary (sub-4 MiB) parser still uses its established serialized-character
-proxy, which includes inline image data URLs because those bytes occupy the
-replayed request. Image accounting is therefore currently threshold-dependent:
-oversized output excludes image payloads from the text proxy, while ordinary
-output does not. Unifying those policies is tracked separately as CT-041.
+The ordinary (sub-4 MiB) and oversized parsers now use the same policy:
+inline data-image payloads are excluded from the text proxy and reported as an
+image count plus excluded payload characters. Exact mode refuses image-bearing
+items rather than presenting base64 to the tokenizer. Fixtures cover parsed
+JSON, escaped data URLs, exactly 4 MiB and one byte above the parse cap.
 
 **It is far cheaper than the design implied.** `SourceRef` seeks to a byte
 offset, so this is one seek per item, not a scan. On the largest local Codex
@@ -330,7 +330,7 @@ to *write*; they do not make a bad value hard to *derive*.
 
 ## Building
 
-Requires Rust 1.85+. `rust-toolchain.toml` selects stable Rust for the host
+Requires Rust 1.88+. `rust-toolchain.toml` selects stable Rust for the host
 platform and includes `rustfmt` and `clippy`. The desktop frontend additionally
 requires Node.js 20.19+ and npm.
 
@@ -356,9 +356,9 @@ Tauri necessarily adds the native window/webview stack; it is isolated in
 `ct-ui`, and both interfaces share their concrete adapter and tokenizer choices
 through `ct-runtime`.
 
-The 2026-07-29 verification used Rust 1.97.1 on Windows/MSVC. The declared
-1.85 minimum and the other host platforms still need to become CI jobs before
-the public MVP can call its build reproducible.
+The 2026-07-29 verification used Rust 1.97.1 on Windows/MSVC. The minimum was
+raised from 1.85 to 1.88 when the Tauri dependency graph made the old claim
+false; CI now checks 1.88 explicitly.
 
 ---
 
@@ -367,21 +367,21 @@ the public MVP can call its build reproducible.
 | Component | Status |
 |---|---|
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 61 tests |
-| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 119 tests |
+| `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 123 tests |
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the twelve commands below | Implemented, 23 tests |
-| `ct-ui` — Tauri v2 + React session browser, growth, composition and contributors | First useful slice implemented; acceptance and packaging remain |
+| `ct-ui` — Tauri v2 + React session browser, growth, composition and contributors | First useful slice implemented, 4 Rust IPC tests plus 2 frontend tests; visual acceptance and packaging remain |
 | Standalone JSONL fixture files | Implemented, 14 tests |
-| Reproducible CI, installable release artifacts, release documentation | Not started |
+| Reproducible CI, installable release artifacts, release documentation | Windows CI implemented pending its first green run; packaging remains |
 | Search and SQLite index | Deferred until measured desktop performance requires them |
 
-**286 Rust tests and 2 frontend tests** passing, `cargo fmt --check` clean,
+**293 Rust tests and 2 frontend tests** passing, `cargo fmt --check` clean,
 `clippy` clean at zero warnings, the React production bundle and Tauri command
 bridge build, the release CLI answers `ct --help`, and `ct doctor --dir`
-recognises every event type across the current local corpus. These checks are
-still local rather than CI-enforced. Work is queued in [BACKLOG.md](BACKLOG.md),
-which is the authoritative list: 33 done, 1 next, 8
+recognises every event type across the current local corpus. The Windows CI
+workflow now mirrors these gates and is awaiting its first GitHub run. Work is
+queued in [BACKLOG.md](BACKLOG.md), which is the authoritative list: 34 done, 1 next, 7
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
