@@ -13,8 +13,8 @@ use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
-    AgentKind, AgentSession, ContextSnapshot, Contributor, FilteredView, SessionDescriptor,
-    TokenCount,
+    AgentKind, AgentSession, CompactionDiff, CompactionItemDisposition, ContextSnapshot,
+    Contributor, FilteredView, SessionDescriptor, TokenCount,
 };
 
 pub fn roots(app: &ContextTrace) {
@@ -141,6 +141,77 @@ pub fn inspect(
         println!("\n... {} more events (use --limit)", events.len() - limit);
     }
     Ok(())
+}
+
+/// Render a content-free structural accounting of Codex replacement histories.
+pub fn compactions(report: &[CompactionDiff], json: bool) {
+    if json {
+        print_json(report);
+        return;
+    }
+    if report.is_empty() {
+        println!("No compactions recorded.");
+        return;
+    }
+
+    for diff in report {
+        match diff {
+            CompactionDiff::Unavailable {
+                source,
+                turn,
+                reason,
+            } => {
+                let turn = turn.map(|t| format!(" turn {t}")).unwrap_or_default();
+                println!(
+                    "Compaction at line {}{turn}: unavailable ({reason:?})",
+                    source.line_no
+                );
+            }
+            CompactionDiff::Available {
+                source,
+                turn,
+                items,
+            } => {
+                let turn = turn.map(|t| format!(" turn {t}")).unwrap_or_default();
+                let dropped = items
+                    .iter()
+                    .filter(|item| item.disposition == CompactionItemDisposition::Dropped)
+                    .count();
+                println!(
+                    "Compaction at line {}{turn}: {dropped} item(s) dropped [derived]",
+                    source.line_no
+                );
+                println!(
+                    "  STATE      TYPE                      ROLE       JSON BYTES  TEXT TOKENS"
+                );
+                for item in items {
+                    let state = match item.disposition {
+                        CompactionItemDisposition::Dropped => "dropped",
+                        CompactionItemDisposition::Preserved => "preserved",
+                        CompactionItemDisposition::AddedByReplacement => "replacement",
+                    };
+                    let role = item
+                        .role
+                        .as_ref()
+                        .map(|role| format!("{role:?}").to_ascii_lowercase())
+                        .unwrap_or_else(|| "-".into());
+                    let tokens = item
+                        .text_tokens
+                        .map(|tokens| format!("{} [derived]", tokens.tokens()))
+                        .unwrap_or_else(|| "opaque / structured".into());
+                    println!(
+                        "  {}  {}  {}  {:>10}  {}",
+                        pad(state, 11),
+                        pad(&item.item_type, 24),
+                        pad(&role, 9),
+                        item.normalized_json_bytes,
+                        tokens
+                    );
+                }
+                println!("  JSON bytes are normalized compact item bytes [derived]; text tokens are measured only for wholly textual items.");
+            }
+        }
+    }
 }
 
 fn describe_kind(event: &ct_domain::Event) -> String {

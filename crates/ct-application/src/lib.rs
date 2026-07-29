@@ -18,7 +18,8 @@ use ct_domain::ports::{AgentAdapter, ExactRecount, PortError, RawEventSource, To
 use ct_domain::services::ratio::{self, DerivedRatio, TurnSample};
 use ct_domain::services::TokenCalibrator;
 use ct_domain::{
-    AgentKind, AgentSession, ContextSnapshot, SessionDescriptor, SessionId, TokenCount, TurnNumber,
+    AgentKind, AgentSession, CompactionDiff, ContextSnapshot, SessionDescriptor, SessionId,
+    TokenCount, TurnNumber,
 };
 use std::collections::BTreeMap;
 use std::fmt;
@@ -340,6 +341,19 @@ impl ContextTrace {
                 .map_err(|e| AppError::Calibration(e.to_string()))?;
 
         Ok((snapshot, report))
+    }
+
+    /// Structurally account for the literal history a supported agent replaced.
+    /// Raw bytes are fetched only for this explicit request.
+    pub fn compaction_diffs(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        raw: &dyn RawEventSource,
+    ) -> Result<Vec<CompactionDiff>, AppError> {
+        let adapter = &self.bindings[binding].adapter;
+        let estimator = self.bindings[binding].estimator.as_ref();
+        Ok(adapter.compaction_diffs(session, raw, estimator)?)
     }
 
     /// Per-turn history of what the log could and could not account for.

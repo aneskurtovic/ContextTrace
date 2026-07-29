@@ -64,6 +64,18 @@ enum Command {
         json: bool,
     },
 
+    /// Show which literal Codex history items each compaction dropped
+    ///
+    /// Reads raw lines only for this request. The report contains item types,
+    /// roles and sizes, never the item content. Claude Code does not record a
+    /// literal replacement list, so this command reports that as unsupported.
+    Compactions {
+        /// Session id, or an unambiguous prefix of one
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Break down the context at a turn by category
     Context {
         id: String,
@@ -439,6 +451,13 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         } => {
             let (session, resolved) = app.load(&id)?;
             render::inspect(&session, &resolved, limit, raw, json)?;
+        }
+
+        Command::Compactions { id, json } => {
+            let (session, resolved) = app.load(&id)?;
+            let raw = FileRawEventSource::for_session(&resolved.descriptor.path);
+            let report = app.compaction_diffs(&session, resolved.binding, &raw)?;
+            render::compactions(&report, json);
         }
 
         Command::Context {

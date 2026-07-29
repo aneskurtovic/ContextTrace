@@ -28,6 +28,9 @@ pub mod ports;
 pub mod services;
 
 pub use model::analysis::ContentMeasurement;
+pub use model::compaction_diff::{
+    CompactionDiff, CompactionDiffItem, CompactionDiffUnavailable, CompactionItemDisposition,
+};
 pub use model::context::{
     CategoryBreakdown, CompactionEvent, ContextCategory, ContextItem, ContextSnapshot,
     ContextSource, Contributor, DuplicateContent, DuplicateInstance, LowEntropyContent,

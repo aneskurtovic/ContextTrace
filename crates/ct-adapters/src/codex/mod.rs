@@ -18,6 +18,7 @@
 //!   list in full. Discarded content is therefore *derivable by diffing*, which
 //!   is stronger than the original brief assumed was possible.
 
+mod compaction;
 mod exact;
 mod parse;
 mod reconstruct;
@@ -129,6 +130,15 @@ impl AgentAdapter for CodexAdapter {
         estimator: &dyn TokenEstimator,
     ) -> PortResult<ExactRecount> {
         Ok(exact::recount(items, raw, estimator))
+    }
+
+    fn compaction_diffs(
+        &self,
+        session: &AgentSession,
+        raw: &dyn RawEventSource,
+        estimator: &dyn TokenEstimator,
+    ) -> PortResult<Vec<ct_domain::CompactionDiff>> {
+        Ok(compaction::diff(session, raw, estimator))
     }
 }
 

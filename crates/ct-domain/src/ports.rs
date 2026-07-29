@@ -11,6 +11,7 @@
 //! out of adapter hands so a future agent integration cannot accidentally
 //! publish numbers that do not add up.
 
+use crate::model::compaction_diff::CompactionDiff;
 use crate::model::context::{CompactionEvent, ContextItem};
 use crate::model::identity::TurnNumber;
 use crate::model::provenance::SourceRef;
@@ -150,6 +151,21 @@ pub trait AgentAdapter: Send + Sync {
         Err(PortError::Unsupported(format!(
             "exact token counting for {}: its models ship no public tokenizer, \
              so re-reading the text would yield a slower estimate, not a measurement",
+            self.agent()
+        )))
+    }
+
+    /// Diff each compaction's literal replacement history against the history
+    /// it replaced. Only agents that record that literal list can implement
+    /// this; the default refuses rather than inferring an eviction.
+    fn compaction_diffs(
+        &self,
+        _session: &AgentSession,
+        _raw: &dyn RawEventSource,
+        _estimator: &dyn TokenEstimator,
+    ) -> PortResult<Vec<CompactionDiff>> {
+        Err(PortError::Unsupported(format!(
+            "compaction item diff for {}: this agent does not record a literal replacement history",
             self.agent()
         )))
     }
