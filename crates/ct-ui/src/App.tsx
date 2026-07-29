@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
 import {
   errorMessage,
@@ -221,12 +221,32 @@ function ContextComposition({ context }: { context: ContextDetail }) {
           <p className="empty-inline">No context categories were reported for this turn.</p>
         )}
       </div>
-      {context.residualIsMeaningful && context.residualTokens > 0 && (
+      <p className="callout">
+        <span aria-hidden="true">i</span>
+        Confidence labels: observed = logged, derived = reconstructed, estimated = modelled.
+        {context.calibrationScale != null && (
+          <> Estimated items calibrated {context.calibrationScale.toFixed(2)}× to the reported total.</>
+        )}
+      </p>
+      {context.residualIsMeaningful ? (
+        context.residualTokens > 0 ? (
+          <p className="callout">
+            <span aria-hidden="true">?</span>
+            {context.residualTokens.toLocaleString()} tokens are present in the reported total but
+            not attributable from the session log—usually hidden system instructions, tool
+            schemas, or request framing.
+          </p>
+        ) : (
+          <p className="callout">
+            <span aria-hidden="true">✓</span>
+            Unattributed remainder: 0 tokens for this reconstruction.
+          </p>
+        )
+      ) : (
         <p className="callout">
-          <span>?</span>
-          {context.residualTokens.toLocaleString()} tokens are present in the reported total but
-          not attributable from the session log—usually hidden system instructions, tool schemas,
-          or request framing.
+          <span aria-hidden="true">?</span>
+          Unattributed remainder: not measurable. Rows are proportions of the reported total, not
+          a complete inventory.
         </p>
       )}
     </section>
@@ -404,40 +424,98 @@ function SessionWorkspace({
 export default function App() {
   const [startup, setStartup] = useState<StartupSummary | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessionTotal, setSessionTotal] = useState(0);
+  const [hasMoreSessions, setHasMoreSessions] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
+  const [detailForId, setDetailForId] = useState<string | null>(null);
   const [context, setContext] = useState<ContextDetail | null>(null);
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [loadingSessions, setLoadingSessions] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
+  const sessionRequest = useRef(0);
+  const turnRequest = useRef(0);
+  const catalogRequest = useRef(0);
 
   const refreshSessions = useCallback(async () => {
+    const request = ++catalogRequest.current;
     setLoadingSessions(true);
+    setLoadingMore(false);
     setError(null);
     try {
-      const found = await api.listSessions(
+      const page = await api.searchSessions(
         agentFilter === "all" ? undefined : agentFilter,
+        debouncedQuery,
+        0,
+        200,
       );
-      setSessions(found);
+      if (request !== catalogRequest.current) return;
+      setSessions(page.sessions);
+      setSessionTotal(page.total);
+      setHasMoreSessions(page.hasMore);
       setSelectedId((current) =>
-        current && found.some((session) => session.id === current)
+        current && page.sessions.some((session) => session.id === current)
           ? current
-          : found[0]?.id ?? null,
+          : page.sessions[0]?.id ?? null,
       );
     } catch (loadError) {
-      setError(errorMessage(loadError));
+      if (request === catalogRequest.current) setError(errorMessage(loadError));
     } finally {
-      setLoadingSessions(false);
+      if (request === catalogRequest.current) setLoadingSessions(false);
     }
-  }, [agentFilter]);
+  }, [agentFilter, debouncedQuery]);
+
+  const loadMoreSessions = useCallback(async () => {
+    if (loadingMore || !hasMoreSessions) return;
+    const request = ++catalogRequest.current;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const page = await api.searchSessions(
+        agentFilter === "all" ? undefined : agentFilter,
+        debouncedQuery,
+        sessions.length,
+        200,
+      );
+      if (request !== catalogRequest.current) return;
+      setSessions((current) => {
+        const existing = new Set(current.map((session) => `${session.agent}:${session.id}`));
+        return [
+          ...current,
+          ...page.sessions.filter(
+            (session) => !existing.has(`${session.agent}:${session.id}`),
+          ),
+        ];
+      });
+      setSessionTotal(page.total);
+      setHasMoreSessions(page.hasMore);
+    } catch (loadError) {
+      if (request === catalogRequest.current) setError(errorMessage(loadError));
+    } finally {
+      if (request === catalogRequest.current) setLoadingMore(false);
+    }
+  }, [
+    agentFilter,
+    debouncedQuery,
+    hasMoreSessions,
+    loadingMore,
+    sessions.length,
+  ]);
 
   useEffect(() => {
     api.getStartup().then(setStartup).catch((loadError) => setError(errorMessage(loadError)));
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 200);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   useEffect(() => {
     refreshSessions();
@@ -445,54 +523,65 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedId) {
+      sessionRequest.current += 1;
+      turnRequest.current += 1;
       setDetail(null);
+      setDetailForId(null);
       setContext(null);
+      setLoadingDetail(false);
+      setLoadingContext(false);
       return;
     }
-    let cancelled = false;
+    const request = ++sessionRequest.current;
+    turnRequest.current += 1;
+    setDetail(null);
+    setDetailForId(null);
+    setContext(null);
     setLoadingDetail(true);
+    setLoadingContext(false);
     setError(null);
     Promise.all([api.inspectSession(selectedId), api.getContext(selectedId)])
       .then(([nextDetail, nextContext]) => {
-        if (cancelled) return;
+        if (request !== sessionRequest.current) return;
         setDetail(nextDetail);
+        setDetailForId(selectedId);
         setContext(nextContext);
       })
       .catch((loadError) => {
-        if (!cancelled) setError(errorMessage(loadError));
+        if (request === sessionRequest.current) setError(errorMessage(loadError));
       })
       .finally(() => {
-        if (!cancelled) setLoadingDetail(false);
+        if (request === sessionRequest.current) setLoadingDetail(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [selectedId]);
 
   const selectTurn = useCallback(
     async (turn: number) => {
       if (!selectedId || turn === context?.turn) return;
+      const request = ++turnRequest.current;
+      const session = selectedId;
+      setContext(null);
       setLoadingContext(true);
+      setError(null);
       try {
-        setContext(await api.getContext(selectedId, turn));
+        const nextContext = await api.getContext(session, turn);
+        if (request === turnRequest.current && session === selectedId) {
+          setContext(nextContext);
+        }
       } catch (loadError) {
-        setError(errorMessage(loadError));
+        if (request === turnRequest.current && session === selectedId) {
+          setError(errorMessage(loadError));
+        }
       } finally {
-        setLoadingContext(false);
+        if (request === turnRequest.current && session === selectedId) {
+          setLoadingContext(false);
+        }
       }
     },
     [context?.turn, selectedId],
   );
 
-  const visibleSessions = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    if (!needle) return sessions;
-    return sessions.filter((session) =>
-      [session.project, session.id, session.path, session.agent]
-        .filter(Boolean)
-        .some((value) => value!.toLocaleLowerCase().includes(needle)),
-    );
-  }, [query, sessions]);
+  const visibleDetail = detailForId === selectedId ? detail : null;
 
   return (
     <div className="app-shell">
@@ -548,21 +637,36 @@ export default function App() {
 
         <div className="session-list-heading" aria-live="polite" aria-atomic="true">
           <span>Recent sessions</span>
-          <span>{visibleSessions.length}</span>
+          <span>
+            {sessions.length === sessionTotal
+              ? sessionTotal
+              : `${sessions.length} / ${sessionTotal}`}
+          </span>
         </div>
 
         <nav className="session-list" aria-label="Sessions" aria-busy={loadingSessions}>
           {loadingSessions ? (
             <Spinner label="Discovering local sessions…" />
-          ) : visibleSessions.length ? (
-            visibleSessions.map((session) => (
-              <SessionListItem
-                key={`${session.agent}-${session.id}`}
-                session={session}
-                selected={selectedId === session.id}
-                onSelect={() => setSelectedId(session.id)}
-              />
-            ))
+          ) : sessions.length ? (
+            <>
+              {sessions.map((session) => (
+                <SessionListItem
+                  key={`${session.agent}-${session.id}`}
+                  session={session}
+                  selected={selectedId === session.id}
+                  onSelect={() => setSelectedId(session.id)}
+                />
+              ))}
+              {hasMoreSessions && (
+                <button
+                  className="load-more"
+                  onClick={loadMoreSessions}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? "Loading…" : `Load more (${sessionTotal - sessions.length})`}
+                </button>
+              )}
+            </>
           ) : (
             <div className="empty-list" role="status">
               <strong>No matching sessions</strong>
@@ -610,13 +714,13 @@ export default function App() {
         {startup?.warnings.map((warning) => (
           <div className="warning-banner" key={warning} role="status">{warning}</div>
         ))}
-        {loadingDetail && !detail ? (
+        {loadingDetail && !visibleDetail ? (
           <div className="workspace-centered">
             <Spinner label="Reading session…" />
           </div>
-        ) : detail ? (
+        ) : visibleDetail ? (
           <SessionWorkspace
-            detail={detail}
+            detail={visibleDetail}
             context={context}
             contextLoading={loadingContext}
             onTurn={selectTurn}

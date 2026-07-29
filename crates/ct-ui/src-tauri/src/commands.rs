@@ -6,6 +6,9 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
+const MAX_SESSION_PAGE_SIZE: usize = 1_000;
+
 pub struct AppState {
     app: ContextTrace,
     warnings: Vec<String>,
@@ -83,6 +86,24 @@ impl AppState {
         project: Option<String>,
         limit: Option<usize>,
     ) -> Result<Vec<SessionSummary>, String> {
+        Ok(self
+            .search_sessions(agent, project, Some(0), limit)?
+            .sessions)
+    }
+
+    /// Search the complete local catalog before taking a page.
+    ///
+    /// The older list command remains for existing desktop clients, but it
+    /// deliberately has no way to say whether a caller's fixed limit hid a
+    /// result. New clients should use this page contract so a narrow query can
+    /// find a session that falls after an unfiltered first page.
+    fn search_sessions(
+        &self,
+        agent: Option<String>,
+        query: Option<String>,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> Result<SessionPage, String> {
         self.sessions
             .lock()
             .map_err(|_| "the in-memory session cache is unavailable".to_string())?
@@ -96,16 +117,42 @@ impl AppState {
         };
         let filter = SessionFilter {
             agent: parsed_agent,
-            project: project.filter(|value| !value.trim().is_empty()),
+            // Search below intentionally includes stable ids and local source
+            // paths as well as projects. Do not pre-filter by `project` here:
+            // doing so would make an id/path search silently incomplete.
+            project: None,
             since: None,
-            limit: Some(limit.unwrap_or(200).min(1_000)),
+            limit: None,
         };
-        Ok(self
+        let query = query
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let mut sessions: Vec<SessionSummary> = self
             .app
             .list_sessions(&filter)
             .into_iter()
+            .filter(|descriptor| session_matches_query(descriptor, query.as_deref()))
             .map(SessionSummary::from)
-            .collect())
+            .collect();
+        let total = sessions.len();
+        let offset = offset.unwrap_or(0).min(total);
+        let limit = limit
+            .unwrap_or(DEFAULT_SESSION_PAGE_SIZE)
+            .clamp(1, MAX_SESSION_PAGE_SIZE);
+        let page_end = offset.saturating_add(limit).min(total);
+        let has_more = page_end < total;
+        sessions = sessions
+            .into_iter()
+            .skip(offset)
+            .take(page_end.saturating_sub(offset))
+            .collect();
+
+        Ok(SessionPage {
+            sessions,
+            total,
+            offset,
+            has_more,
+        })
     }
 
     fn inspect_session(&self, id: &str) -> Result<SessionDetail, String> {
@@ -224,6 +271,19 @@ pub struct SessionSummary {
     last_activity: Option<String>,
 }
 
+/// A bounded, searchable page of locally discovered sessions.
+///
+/// `total` is the number of matches before paging, so a desktop client can
+/// never mistake a first page for the entire catalog.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPage {
+    sessions: Vec<SessionSummary>,
+    total: usize,
+    offset: usize,
+    has_more: bool,
+}
+
 impl From<SessionDescriptor> for SessionSummary {
     fn from(value: SessionDescriptor) -> Self {
         Self {
@@ -338,6 +398,21 @@ pub fn list_sessions(
     state.list_sessions(agent, project, limit)
 }
 
+/// Search session metadata on the backend and return explicit paging facts.
+///
+/// Kept separate from `list_sessions` for IPC compatibility with already
+/// released clients that expect an array response.
+#[tauri::command]
+pub fn search_sessions(
+    agent: Option<String>,
+    query: Option<String>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    state: tauri::State<'_, AppState>,
+) -> Result<SessionPage, String> {
+    state.search_sessions(agent, query, offset, limit)
+}
+
 #[tauri::command]
 pub fn inspect_session(
     id: String,
@@ -357,6 +432,26 @@ pub fn get_context(
 
 fn format_source(source: &ContextSource) -> String {
     source.to_string()
+}
+
+fn session_matches_query(descriptor: &SessionDescriptor, query: Option<&str>) -> bool {
+    let Some(query) = query else {
+        return true;
+    };
+    let needle = query.to_lowercase();
+    let agent = match descriptor.agent {
+        AgentKind::Codex => "codex",
+        AgentKind::ClaudeCode => "claude-code",
+    };
+    let matches = [
+        descriptor.id.as_str(),
+        descriptor.project.as_deref().unwrap_or_default(),
+        descriptor.path.as_str(),
+        agent,
+    ]
+    .into_iter()
+    .any(|value| value.to_lowercase().contains(&needle));
+    matches
 }
 
 #[cfg(test)]
@@ -447,6 +542,69 @@ mod tests {
             .clone()
     }
 
+    /// Discovery-only catalog used to exercise paging without creating hundreds
+    /// of on-disk JSONL files. The page endpoint must not parse a body merely
+    /// to make an older session searchable.
+    struct CatalogAdapter {
+        sessions: Vec<SessionDescriptor>,
+    }
+
+    impl ct_domain::ports::AgentAdapter for CatalogAdapter {
+        fn agent(&self) -> AgentKind {
+            AgentKind::Codex
+        }
+
+        fn roots(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn discover(&self) -> ct_domain::ports::PortResult<Vec<SessionDescriptor>> {
+            Ok(self.sessions.clone())
+        }
+
+        fn load(
+            &self,
+            _descriptor: &SessionDescriptor,
+        ) -> ct_domain::ports::PortResult<ct_domain::AgentSession> {
+            Err(ct_domain::ports::PortError::Unsupported(
+                "catalog test only supports discovery".into(),
+            ))
+        }
+
+        fn reconstruct(
+            &self,
+            _session: &ct_domain::AgentSession,
+            _turn: TurnNumber,
+            _estimator: &dyn ct_domain::ports::TokenEstimator,
+        ) -> ct_domain::ports::PortResult<ct_domain::ports::ReconstructedContext> {
+            Err(ct_domain::ports::PortError::Unsupported(
+                "catalog test only supports discovery".into(),
+            ))
+        }
+    }
+
+    fn catalog_descriptor(index: usize, project: &str) -> SessionDescriptor {
+        SessionDescriptor {
+            id: ct_domain::SessionId::new(format!("catalog-{index:04}")).unwrap(),
+            agent: AgentKind::Codex,
+            path: format!("C:/catalog/session-{index:04}.jsonl"),
+            size_bytes: 1,
+            project: Some(project.to_string()),
+            started_at: None,
+            last_activity: None,
+        }
+    }
+
+    fn catalog_state(sessions: Vec<SessionDescriptor>) -> AppState {
+        AppState::from_parts(
+            ContextTrace::new(vec![AgentBinding::new(
+                Box::new(CatalogAdapter { sessions }),
+                Box::new(HeuristicEstimator::for_code()),
+            )]),
+            Vec::new(),
+        )
+    }
+
     fn assert_context_contract(state: &AppState, id: &str, agent: &str, model: &str) {
         let detail = state.inspect_session(id).expect("inspect fixture session");
         assert_eq!(detail.session.agent, agent);
@@ -506,6 +664,53 @@ mod tests {
 
         assert_context_contract(&state, &codex_id, "codex", "gpt-5-codex");
         assert_context_contract(&state, &claude_id, "claude-code", "claude-opus-4-8");
+    }
+
+    #[test]
+    fn backend_search_reaches_a_targeted_session_after_the_first_500() {
+        let sessions = (0..501)
+            .map(|index| {
+                let project = if index == 500 {
+                    "Targeted older project"
+                } else {
+                    "Ordinary project"
+                };
+                catalog_descriptor(index, project)
+            })
+            .collect();
+        let state = catalog_state(sessions);
+
+        let first_page = state
+            .search_sessions(Some("codex".into()), None, Some(0), Some(500))
+            .expect("list the first page");
+        assert_eq!(first_page.total, 501);
+        assert_eq!(first_page.sessions.len(), 500);
+        assert!(
+            first_page.has_more,
+            "the first page must not impersonate the catalog"
+        );
+
+        let targeted = state
+            .search_sessions(None, Some("  TARGETED older  ".into()), Some(0), Some(50))
+            .expect("search the complete catalog before paging");
+        assert_eq!(targeted.total, 1);
+        assert_eq!(targeted.sessions.len(), 1);
+        assert!(!targeted.has_more);
+        assert_eq!(targeted.sessions[0].id, "catalog-0500");
+
+        let final_page = state
+            .search_sessions(None, None, Some(500), Some(50))
+            .expect("page beyond the legacy 500-item cutoff");
+        assert_eq!(final_page.total, 501);
+        assert_eq!(final_page.offset, 500);
+        assert_eq!(final_page.sessions.len(), 1);
+        assert!(!final_page.has_more);
+
+        let json = serde_json::to_value(targeted).expect("page serializes for IPC");
+        assert_eq!(json["total"], 1);
+        assert_eq!(json["offset"], 0);
+        assert_eq!(json["hasMore"], false);
+        assert!(json["sessions"].is_array());
     }
 
     #[test]

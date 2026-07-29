@@ -240,6 +240,25 @@ button:disabled {
   box-shadow: inset 2px 0 #4f8cff;
 }
 
+.load-more {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 8px 10px 2px;
+  padding: 9px;
+  border: 1px solid #293751;
+  border-radius: 7px;
+  background: #111a29;
+  color: #9db7df;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.load-more:hover {
+  border-color: #3d5d8c;
+  background: #17243a;
+}
+
 .agent-mark {
   display: inline-grid;
   width: 29px;

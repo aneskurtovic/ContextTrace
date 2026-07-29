@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ContextDetail,
   SessionDetail,
+  SessionPage,
   SessionSummary,
   StartupSummary,
 } from "./types";
@@ -75,6 +76,24 @@ function asSessions(value: unknown): SessionSummary[] {
     throw malformed("session list");
   }
   return value;
+}
+
+function asSessionPage(value: unknown): SessionPage {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.sessions) ||
+    !value.sessions.every(isSession) ||
+    typeof value.total !== "number" ||
+    !Number.isInteger(value.total) ||
+    value.total < 0 ||
+    typeof value.offset !== "number" ||
+    !Number.isInteger(value.offset) ||
+    value.offset < 0 ||
+    typeof value.hasMore !== "boolean"
+  ) {
+    throw malformed("session search");
+  }
+  return value as unknown as SessionPage;
 }
 
 function asDetail(value: unknown): SessionDetail {
@@ -178,6 +197,38 @@ export function listSessions(
     project: project || null,
     limit: 500,
   }).then(asSessions);
+}
+
+export function searchSessions(
+  agent?: string,
+  query?: string,
+  offset = 0,
+  limit = 200,
+): Promise<SessionPage> {
+  if (!inTauri()) {
+    const needle = query?.trim().toLocaleLowerCase();
+    const matches = demoSessions.filter(
+      (session) =>
+        (!agent || session.agent === agent) &&
+        (!needle ||
+          [session.project, session.id, session.path, session.agent]
+            .filter(Boolean)
+            .some((value) => value!.toLocaleLowerCase().includes(needle))),
+    );
+    const sessions = matches.slice(offset, offset + limit);
+    return Promise.resolve({
+      sessions,
+      total: matches.length,
+      offset,
+      hasMore: offset + sessions.length < matches.length,
+    });
+  }
+  return invoke<unknown>("search_sessions", {
+    agent: agent || null,
+    query: query?.trim() || null,
+    offset,
+    limit,
+  }).then(asSessionPage);
 }
 
 export function inspectSession(id: string): Promise<SessionDetail> {

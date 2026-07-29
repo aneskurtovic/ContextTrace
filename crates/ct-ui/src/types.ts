@@ -20,6 +20,13 @@ export interface SessionSummary {
   lastActivity: string | null;
 }
 
+export interface SessionPage {
+  sessions: SessionSummary[];
+  total: number;
+  offset: number;
+  hasMore: boolean;
+}
+
 export interface CompactionSummary {
   turn: number | null;
   reclaimed: number | null;
