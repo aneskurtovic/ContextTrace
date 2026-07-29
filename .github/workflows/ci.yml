@@ -105,7 +105,7 @@ jobs:
       # Bundling/signing belongs to the release workflow. This still executes
       # Tauri's production frontend build and compiles the Windows desktop app.
       - name: Compile Tauri desktop app
-        run: npm run tauri build -- --no-bundle
+        run: .\node_modules\.bin\tauri.cmd build --no-bundle
 
   cli-smoke:
     name: CLI fixture smoke

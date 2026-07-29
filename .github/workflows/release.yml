@@ -1,0 +1,161 @@
+name: Release Windows artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v<version> tag to package (must match tauri.conf.json)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package-windows:
+    name: Package Windows x64
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-release-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/ct-ui/package-lock.json
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content crates/ct-ui/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne "v$version") {
+            throw "Release tag '$env:RELEASE_TAG' must match the desktop version 'v$version'."
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ASSET_PREFIX=ContextTrace-$version-windows-x64" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install locked frontend dependencies
+        working-directory: crates/ct-ui
+        run: npm ci
+
+      # With all three secrets set, use Tauri's normal Windows signtool path.
+      # With none set, the release remains intentionally unsigned; no credential
+      # names, thumbprints, or signing command are committed to source.
+      - name: Import optional Windows signing certificate
+        id: signing
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $signingValues = @(
+            $env:WINDOWS_CERTIFICATE_BASE64,
+            $env:WINDOWS_CERTIFICATE_PASSWORD,
+            $env:WINDOWS_TIMESTAMP_URL
+          )
+          $configured = @($signingValues | Where-Object { $_ }).Count
+          if ($configured -eq 0) {
+            "thumbprint=" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+          if ($configured -ne $signingValues.Count) {
+            throw 'Set all three Windows signing secrets or none of them.'
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'contexttrace-signing.pfx'
+          try {
+            [System.IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+            $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $certificate = @(
+              Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            ) | Where-Object HasPrivateKey | Select-Object -First 1
+            if (-not $certificate) { throw 'The imported signing certificate has no private key.' }
+            "thumbprint=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+          finally {
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Build NSIS installer
+        shell: pwsh
+        working-directory: crates/ct-ui
+        env:
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $tauriArgs = @('build', '--bundles', 'nsis')
+          $thumbprint = '${{ steps.signing.outputs.thumbprint }}'
+          if ($thumbprint) {
+            $signingConfig = @{
+              bundle = @{
+                windows = @{
+                  certificateThumbprint = $thumbprint
+                  digestAlgorithm = 'sha256'
+                  timestampUrl = $env:WINDOWS_TIMESTAMP_URL
+                }
+              }
+            } | ConvertTo-Json -Depth 4 -Compress
+            $tauriArgs += @('--config', $signingConfig)
+          }
+          & .\node_modules\.bin\tauri.cmd @tauriArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build release CLI
+        run: cargo build --release -p ct-cli
+
+      - name: Stage installer, CLI archive, and checksums
+        shell: pwsh
+        run: |
+          $assets = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
+          New-Item -ItemType Directory -Force -Path $assets | Out-Null
+
+          $installer = @(Get-ChildItem target/release/bundle/nsis -File -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw "Expected one NSIS installer, found $($installer.Count)." }
+          Copy-Item $installer[0].FullName (Join-Path $assets "$env:ASSET_PREFIX-setup.exe")
+
+          $cliDirectory = Join-Path $env:GITHUB_WORKSPACE 'release-cli'
+          New-Item -ItemType Directory -Force -Path $cliDirectory | Out-Null
+          Copy-Item target/release/ct.exe (Join-Path $cliDirectory 'ct.exe')
+          Copy-Item LICENSE (Join-Path $cliDirectory 'LICENSE')
+          Compress-Archive -Path (Join-Path $cliDirectory '*') -DestinationPath (Join-Path $assets "$env:ASSET_PREFIX-cli.zip")
+
+          $checksums = Get-ChildItem $assets -File | Sort-Object Name | ForEach-Object {
+            "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.Name
+          }
+          Set-Content -Path (Join-Path $assets 'SHA256SUMS.txt') -Value $checksums -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # Drafts keep a pushed tag from becoming a public download before a human
+      # verifies checksums, signing status, and clean-machine installation.
+      - name: Create draft GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: ContextTrace ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release-assets/*
