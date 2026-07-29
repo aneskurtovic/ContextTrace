@@ -94,8 +94,8 @@ describe("desktop accessibility and state handling", () => {
   });
 
   it("labels an empty but valid context response instead of leaving blank panels", async () => {
-    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
-    mockedApi.getContext.mockResolvedValueOnce({
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getContext.mockResolvedValue({
       ...demoContext(),
       categories: [],
       contributors: [],
