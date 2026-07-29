@@ -1,5 +1,11 @@
 # ContextTrace — DevTools for AI Coding-Agent Context
 
+> Historical design plan, written before implementation. It explains the
+> architecture and original Milestone 1 scope, but its crate names, counts and
+> work order are not the current plan. Use [../BACKLOG.md](../BACKLOG.md) for
+> scheduled work and [MVP-STATUS.md](MVP-STATUS.md) for the current release
+> assessment.
+
 ## Context
 
 `C:\Users\anesk\source\repos\ContextTrace` is an empty git repo (initialized, zero commits). We are building a

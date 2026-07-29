@@ -16,18 +16,16 @@ It is not a chat-history viewer. The workflow it exists for is:
 
 Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 
-> **Status: milestone 1 complete.** Both adapters, the reconstruction engine and
-> the CLI work end to end against real sessions. Verified on a local corpus of
-> 774 sessions: the **150 largest — 126 Claude Code and 24 Codex — parse with
-> zero failures** and 100% event-recognition fidelity, reported totals match the
-> raw JSONL, and a before/after mtime check confirms nothing is written.
+> **Status: the functional CLI MVP is complete; a public 0.1 release is not.**
+> Both adapters, reconstruction, analysis and all twelve CLI commands work end
+> to end. On 2026-07-29, `ct doctor --dir` parsed **792 local sessions** (715
+> Claude Code and 77 Codex), recognised all **134,764 events**, and finished in
+> 2.71 seconds. The workspace has 285 passing tests and a clean release build.
 >
-> A full sweep of all 770 — not just the largest 150 — reports **100%
-> event-recognition fidelity** in 2.8 seconds. It did not at first: it found
-> three unrecognised types, which is what `ct doctor --dir` exists for, and both
-> underlying defects are now fixed (CT-037, CT-038). Most Claude Code
-> sessions now report a *measured* figure for the context their agent never
-> logged. See [Current state](#current-state).
+> The remaining public-MVP work is release work plus two explicitly bounded
+> accounting questions, not another feature milestone. See
+> [MVP status and release plan](docs/MVP-STATUS.md) for the evidence, gates and
+> realistic distance.
 
 ---
 
@@ -329,13 +327,14 @@ to *write*; they do not make a bad value hard to *derive*.
 
 ## Building
 
-Requires Rust 1.85+. The toolchain is pinned in `rust-toolchain.toml` to
-`stable-x86_64-pc-windows-gnu`, because this development machine has no MSVC
-"C++ build tools" workload installed.
+Requires Rust 1.85+. `rust-toolchain.toml` selects stable Rust for the host
+platform and includes `rustfmt` and `clippy`.
 
 ```bash
-cargo build --workspace
-cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+cargo build --workspace --release
 ```
 
 Dependencies are kept deliberately few — `walkdir` and `clap`'s default features
@@ -343,9 +342,9 @@ were both dropped to avoid `windows-sys`, which needs mingw's `dlltool` on
 `PATH` and which this project does not otherwise need. Fewer crates also means a
 cheaper audit of the "nothing leaves this machine" claim.
 
-> Before starting the Tauri desktop shell, install the Visual Studio C++ build
-> tools and switch the toolchain to `stable-x86_64-pc-windows-msvc` —
-> Tauri/WebView2 on Windows is far better trodden on MSVC.
+The 2026-07-29 verification used Rust 1.97.1 on Windows/MSVC. The declared
+1.85 minimum and the other host platforms still need to become CI jobs before
+the public MVP can call its build reproducible.
 
 ---
 
@@ -358,11 +357,14 @@ cheaper audit of the "nothing leaves this machine" claim.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
 | `ct-cli` — the twelve commands below | Implemented, 23 tests |
 | Standalone JSONL fixture files | Implemented, 14 tests |
-| Search, SQLite index, desktop shell | Not started |
+| Reproducible CI, installable release artifacts, release documentation | Not started |
+| Search, SQLite index, desktop shell | Deferred beyond the CLI MVP |
 
-**285 tests** passing, `clippy` clean at zero warnings, and `ct doctor --dir`
-recognises every event type across the whole local corpus. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 32 done, 1 next, 6
+**285 tests** passing, `cargo fmt --check` clean, `clippy` clean at zero
+warnings, a release binary builds and answers `ct --help`, and `ct doctor --dir`
+recognises every event type across the current local corpus. These checks are
+still local rather than CI-enforced. Work is queued in
+[BACKLOG.md](BACKLOG.md), which is the authoritative list: 32 done, 1 next, 8
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 

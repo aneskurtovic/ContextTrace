@@ -1,9 +1,7 @@
 [toolchain]
-# Pinned to the GNU toolchain: this machine has no MSVC "C++ build tools"
-# workload installed, so the msvc target cannot link. GNU links out of the box.
-#
-# Before starting the Tauri desktop shell (milestone 3), install the Visual
-# Studio C++ build tools and switch this to stable-x86_64-pc-windows-msvc --
-# Tauri/WebView2 on Windows is far better trodden on msvc.
-channel = "stable-x86_64-pc-windows-gnu"
+# Use the stable toolchain for the host platform. A host-neutral channel keeps
+# the repository buildable on Windows, macOS and Linux; rustup selects the
+# native target. The previous Windows-GNU pin stopped linking when the local
+# LLVM-MinGW installation no longer supplied GCC runtime libraries.
+channel = "stable"
 components = ["rustfmt", "clippy"]

@@ -37,14 +37,67 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-026 · Cost projection
-`status: next` · `tier: B` · `size: S` · `source: IDEAS.md §4`
-**Done when:** per-category cost is derived from a local pricing table, clearly
-marked as an estimate that depends on a table which will go stale.
+### CT-041 · Make inline-image accounting threshold-independent
+`status: next` · `tier: A` · `size: S` · `source: review`
+
+**Why:** ordinary Codex tool outputs currently include inline `image_url`
+payloads in their serialized-character estimate, while outputs above the 4 MiB
+parse cap exclude them. The same content therefore gets a different accounting
+policy solely because it crossed an implementation threshold.
+**Done when:** ordinary and oversized outputs use one documented image policy,
+image base64 is never presented as BPE text, and fixtures cover both sides of
+the parse cap.
 
 ---
 
 ## Todo
+
+### CT-031 · Investigate reconstruction over-count
+`status: todo` · `tier: A` · `size: M` · `source: corpus`
+**Why:** roughly one Claude Code session in seven accounts for more content than
+its prompt held, so its unlogged remainder cannot be measured. The leading
+hypothesis is that the harness drops old context without recording it — linear
+chains, no rewinds, several times more content than the reported prompt — but
+no marker for such a removal exists anywhere in the log.
+**Done when:** either a mechanism is identified from evidence, or the hypothesis
+is written up as unresolvable from logs alone and the tool's reporting of it is
+final. Inventing semantics for it is explicitly out of scope.
+
+**CT-035 supplied the instrument this needs.** Until `--exact`, an over-count
+could always have been the character ratio running high, so there was nothing to
+investigate that was not first an estimator question. With real tokenizer counts
+the two separate: on Codex the exact sum exceeds the observed total on 1 of 53
+local sessions, and that surplus cannot be estimation error. Start there — it is
+a small, exactly-measured case of the same defect.
+
+### CT-042 · Automate the public-MVP verification gate
+`status: todo` · `tier: A` · `size: M` · `source: MVP review`
+
+**Why:** 285 tests, formatting, clippy, a release build and the corpus sweep pass
+locally, but no repository automation prevents a broken main branch or a
+platform-only build. The declared Rust 1.85 minimum is not continuously tested.
+**Done when:** CI runs formatting, clippy, all workspace/all-target tests,
+release builds and process-level fixture smoke flows on the supported release
+hosts, including either the declared minimum Rust version or a deliberately
+raised one.
+
+### CT-043 · Ship an installable 0.1.0
+`status: todo` · `tier: A` · `size: M` · `source: MVP review`
+
+**Why:** the binary works for a developer with the repository, but there is no
+license file, release workflow, downloadable archive, checksum, installation
+path, upgrade guidance or clean-machine acceptance result. The CLI crate also
+cannot currently be packaged for crates.io because its internal path
+dependencies have no registry version requirements.
+**Done when:** the intended license is present, the chosen release channels are
+explicit, signed or checksummed artifacts install on every supported host, and
+the README's install/upgrade/known-limitations steps have been exercised on a
+clean machine.
+
+### CT-026 · Cost projection
+`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
+**Done when:** per-category cost is derived from a local pricing table, clearly
+marked as an estimate that depends on a table which will go stale.
 
 ### CT-027 · Codex compaction diff engine
 `status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §1`
@@ -70,27 +123,9 @@ domain type depends on it.
 
 ### CT-030 · Tauri v2 desktop shell
 `status: todo` · `tier: C` · `size: L` · `source: plan`
-**Why:** milestone 3. Blocked on toolchain, not design.
+**Why:** milestone 3, deliberately outside the CLI MVP.
 **Done when:** the desktop app calls the same crates through `#[tauri::command]`
-with no logic duplicated. Requires switching to the MSVC toolchain first.
-
-### CT-031 · Investigate reconstruction over-count
-`status: todo` · `tier: B` · `size: M` · `source: corpus`
-**Why:** roughly one Claude Code session in seven accounts for more content than
-its prompt held, so its unlogged remainder cannot be measured. The leading
-hypothesis is that the harness drops old context without recording it — linear
-chains, no rewinds, several times more content than the reported prompt — but
-no marker for such a removal exists anywhere in the log.
-**Done when:** either a mechanism is identified from evidence, or the hypothesis
-is written up as unresolvable from logs alone and the tool's reporting of it is
-final. Inventing semantics for it is explicitly out of scope.
-
-**CT-035 supplied the instrument this needs.** Until `--exact`, an over-count
-could always have been the character ratio running high, so there was nothing to
-investigate that was not first an estimator question. With real tokenizer counts
-the two separate: on Codex the exact sum exceeds the observed total on 1 of 53
-local sessions, and that surplus cannot be estimation error. Start there — it is
-a small, exactly-measured case of the same defect.
+with no logic duplicated.
 
 ---
 

@@ -1,5 +1,10 @@
 # IDEAS.md — Living Backlog (Updated)
 
+> This is the unscheduled idea pool. It is intentionally broader than the MVP
+> and may describe work that has since shipped, changed shape or been dropped.
+> [BACKLOG.md](BACKLOG.md) is the authoritative work queue;
+> [docs/MVP-STATUS.md](docs/MVP-STATUS.md) defines the current release gates.
+
 > **This file is an idea pool, not a plan.** Nothing here is scheduled until it
 > is pulled into [`BACKLOG.md`](BACKLOG.md) and given a `CT-nnn` id. Items that
 > have been pulled in carry a `[→ CT-nnn]` marker — follow it to `BACKLOG.md`
