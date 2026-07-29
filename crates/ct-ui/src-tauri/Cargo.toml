@@ -25,5 +25,9 @@ ct-runtime.workspace = true
 serde.workspace = true
 tauri = { version = "2.11.5", features = [] }
 
+[dev-dependencies]
+ct-adapters.workspace = true
+serde_json.workspace = true
+
 [lints]
 workspace = true

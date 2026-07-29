@@ -577,10 +577,12 @@ dependencies = [
 name = "ct-ui"
 version = "0.1.0"
 dependencies = [
+ "ct-adapters",
  "ct-application",
  "ct-domain",
  "ct-runtime",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]
