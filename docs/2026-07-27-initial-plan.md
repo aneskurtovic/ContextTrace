@@ -103,8 +103,12 @@ no IPC protocol, and no logic duplication.
 | `ct-cli` | `clap` binary → single `.exe` | `clap`, `comfy-table` |
 | `ct-ui` | Tauri v2 + React shell (**milestone 3**, not now) | — |
 
-**No HTTP client anywhere in the dependency tree.** That is the enforceable form of "no telemetry, no uploads" —
-a `cargo deny` rule banning network crates makes the privacy guarantee structural rather than aspirational.
+**Original privacy target:** no HTTP client anywhere in the dependency tree.
+The current Tauri desktop stack makes that dependency-wide rule impractical:
+general-purpose framework dependencies may contain network support even though
+ContextTrace does not invoke it. The current enforceable boundary is no
+application upload/telemetry code, a core-only Tauri capability, a local-IPC
+CSP, read-only agent adapters, and release review of those permissions.
 
 ---
 

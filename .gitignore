@@ -11,4 +11,7 @@ Cargo.lock.orig
 # Tauri (milestone 3)
 /crates/ct-ui/target
 /crates/ct-ui/dist
+/crates/ct-ui/src-tauri/gen/
+/crates/ct-ui/src-tauri/icons/android/
+/crates/ct-ui/src-tauri/icons/ios/
 node_modules/

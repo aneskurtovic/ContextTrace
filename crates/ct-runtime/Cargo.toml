@@ -1,0 +1,16 @@
+[package]
+name = "ct-runtime"
+description = "Shared ContextTrace composition root for CLI and desktop driving adapters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ct-domain.workspace = true
+ct-application.workspace = true
+ct-adapters.workspace = true
+
+[lints]
+workspace = true

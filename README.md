@@ -16,14 +16,16 @@ It is not a chat-history viewer. The workflow it exists for is:
 
 Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 
-> **Status: the functional CLI MVP is complete; a public 0.1 release is not.**
-> Both adapters, reconstruction, analysis and all twelve CLI commands work end
-> to end. On 2026-07-29, `ct doctor --dir` parsed **792 local sessions** (715
-> Claude Code and 77 Codex), recognised all **134,764 events**, and finished in
-> 2.71 seconds. The workspace has 285 passing tests and a clean release build.
+> **Status: the CLI is complete and the first useful desktop slice now runs; a
+> public 0.1 release is not ready.** The Tauri app browses local Codex and
+> Claude Code sessions, charts prompt growth and compactions, switches between
+> measured turns, and shows context composition and largest contributors using
+> the same Rust application service as the CLI.
 >
-> The remaining public-MVP work is release work plus two explicitly bounded
-> accounting questions, not another feature milestone. See
+> On 2026-07-29, `ct doctor --dir` parsed **792 local sessions** (715 Claude Code
+> and 77 Codex), recognised all **134,764 events**, and finished in 2.71
+> seconds. The remaining work is desktop hardening and acceptance, two bounded
+> accounting questions, CI, and installer/release work. See
 > [MVP status and release plan](docs/MVP-STATUS.md) for the evidence, gates and
 > realistic distance.
 
@@ -32,8 +34,9 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 ## Principles
 
 **Local-first.** Session data contains source code, prompts, terminal output and
-potentially secrets. Nothing is uploaded, there is no telemetry, and there is no
-cloud dependency. The dependency tree deliberately contains no HTTP client.
+potentially secrets. ContextTrace has no upload, telemetry or cloud code. The
+desktop capability set is core-only and its content-security policy permits
+only local Tauri IPC; session data stays on the machine.
 
 **Read-only.** Agent directories are inputs. ContextTrace never writes to them.
 
@@ -328,19 +331,30 @@ to *write*; they do not make a bad value hard to *derive*.
 ## Building
 
 Requires Rust 1.85+. `rust-toolchain.toml` selects stable Rust for the host
-platform and includes `rustfmt` and `clippy`.
+platform and includes `rustfmt` and `clippy`. The desktop frontend additionally
+requires Node.js 20.19+ and npm.
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 cargo build --workspace --release
+
+cd crates/ct-ui
+npm ci
+npm test
+npm run build
+npm run tauri dev
 ```
 
-Dependencies are kept deliberately few — `walkdir` and `clap`'s default features
-were both dropped to avoid `windows-sys`, which needs mingw's `dlltool` on
-`PATH` and which this project does not otherwise need. Fewer crates also means a
-cheaper audit of the "nothing leaves this machine" claim.
+`npm run dev` by itself opens a browser preview backed by synthetic sessions;
+`npm run tauri dev` runs the native app against the real read-only local
+adapters.
+
+The analysis crates and CLI keep a deliberately small dependency surface.
+Tauri necessarily adds the native window/webview stack; it is isolated in
+`ct-ui`, and both interfaces share their concrete adapter and tokenizer choices
+through `ct-runtime`.
 
 The 2026-07-29 verification used Rust 1.97.1 on Windows/MSVC. The declared
 1.85 minimum and the other host platforms still need to become CI jobs before
@@ -355,16 +369,19 @@ the public MVP can call its build reproducible.
 | `ct-domain` — model, ports, calibration, filtering | Implemented, 61 tests |
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented, 119 tests |
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
+| `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the twelve commands below | Implemented, 23 tests |
+| `ct-ui` — Tauri v2 + React session browser, growth, composition and contributors | First useful slice implemented; acceptance and packaging remain |
 | Standalone JSONL fixture files | Implemented, 14 tests |
 | Reproducible CI, installable release artifacts, release documentation | Not started |
-| Search, SQLite index, desktop shell | Deferred beyond the CLI MVP |
+| Search and SQLite index | Deferred until measured desktop performance requires them |
 
-**285 tests** passing, `cargo fmt --check` clean, `clippy` clean at zero
-warnings, a release binary builds and answers `ct --help`, and `ct doctor --dir`
+**286 Rust tests and 2 frontend tests** passing, `cargo fmt --check` clean,
+`clippy` clean at zero warnings, the React production bundle and Tauri command
+bridge build, the release CLI answers `ct --help`, and `ct doctor --dir`
 recognises every event type across the current local corpus. These checks are
-still local rather than CI-enforced. Work is queued in
-[BACKLOG.md](BACKLOG.md), which is the authoritative list: 32 done, 1 next, 8
+still local rather than CI-enforced. Work is queued in [BACKLOG.md](BACKLOG.md),
+which is the authoritative list: 33 done, 1 next, 8
 todo, 2 deliberately dropped. [IDEAS.md](IDEAS.md) is an idea pool and nothing
 in it is scheduled until it is pulled in there with a `CT-nnn` id.
 
@@ -654,8 +671,8 @@ It compares the median of the five turns either side rather than adjacent turns,
 because the remainder drifts — see [BACKLOG.md](BACKLOG.md) CT-016 for why that
 distinction had to be built in.
 
-`--json` on every command, so ContextTrace is pipeable into other tooling before
-any desktop UI exists. Domain types serialise as tagged sum types
+`--json` on every command keeps ContextTrace pipeable independently of the
+desktop app. Domain types serialise as tagged sum types
 (`{"kind":"calibrated",…}`), so downstream scripts never regex strings.
 
 ### Comparing two turns without comparing two rulers

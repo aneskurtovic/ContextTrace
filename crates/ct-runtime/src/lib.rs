@@ -1,0 +1,70 @@
+//! Shared composition root for every ContextTrace user interface.
+//!
+//! The CLI and desktop app are both driving adapters. Keeping concrete agent
+//! and tokenizer selection here ensures they execute the same use cases with
+//! the same measurement policy.
+
+use ct_adapters::{ClaudeCodeAdapter, CodexAdapter, HeuristicEstimator, TiktokenEstimator};
+use ct_application::{AgentBinding, ContextTrace};
+use ct_domain::ports::TokenEstimator;
+use ct_domain::services::DerivedRatio;
+use ct_domain::{AgentKind, AgentSession};
+
+/// A ready-to-use application service plus non-fatal startup notices.
+pub struct Runtime {
+    pub app: ContextTrace,
+    pub warnings: Vec<String>,
+}
+
+/// Wire every supported agent to the estimator appropriate to its models.
+pub fn build() -> Runtime {
+    let mut warnings = Vec::new();
+    let codex_estimator: Box<dyn TokenEstimator> = match TiktokenEstimator::o200k() {
+        Ok(tokenizer) => Box::new(tokenizer),
+        Err(error) => {
+            warnings.push(format!(
+                "o200k tokenizer unavailable ({error}); using the code-density heuristic"
+            ));
+            Box::new(HeuristicEstimator::for_code())
+        }
+    };
+
+    let app = ContextTrace::new(vec![
+        AgentBinding::new(
+            Box::new(ClaudeCodeAdapter::new()),
+            // Anthropic ships no public local tokenizer. Coding-agent sessions
+            // are code/output heavy, so the denser heuristic is the honest
+            // default until a session-specific ratio can be derived.
+            Box::new(HeuristicEstimator::for_code()),
+        ),
+        AgentBinding::new(Box::new(CodexAdapter::new()), codex_estimator),
+    ]);
+
+    Runtime { app, warnings }
+}
+
+/// Choose a session-specific estimator where the evidence supports one.
+///
+/// Claude Code has no public tokenizer and does not expose its system prompt,
+/// so fitting a local character ratio to its own usage records improves the
+/// heuristic. Codex records its system prompt and has a public tokenizer; its
+/// remaining gap is not a ratio to fit.
+pub fn calibrate_session(
+    app: &ContextTrace,
+    session: &AgentSession,
+    binding: usize,
+) -> (Option<HeuristicEstimator>, Option<DerivedRatio>) {
+    let ratio = (session.agent() == AgentKind::ClaudeCode)
+        .then(|| app.derive_ratio(session, binding))
+        .flatten();
+    let estimator = ratio.map(|ratio| HeuristicEstimator::with_ratio(ratio.chars_per_token));
+    (estimator, ratio)
+}
+
+/// Recreate the concrete heuristic selected by [`calibrate_session`].
+///
+/// Desktop clients cache the small ratio rather than a tokenizer object so
+/// cached sessions remain simple data and can be invalidated cheaply.
+pub fn heuristic_estimator(chars_per_token: f32) -> HeuristicEstimator {
+    HeuristicEstimator::with_ratio(chars_per_token)
+}

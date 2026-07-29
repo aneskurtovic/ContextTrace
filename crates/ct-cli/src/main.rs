@@ -9,12 +9,8 @@ mod format;
 mod render;
 
 use clap::{Parser, Subcommand};
-use ct_adapters::{
-    ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, TiktokenEstimator,
-};
-use ct_application::{
-    AgentBinding, ContextTrace, ExportRedaction, ResolveError, ResolvedSession, SessionFilter,
-};
+use ct_adapters::{FileRawEventSource, HeuristicEstimator};
+use ct_application::{ContextTrace, ExportRedaction, ResolveError, ResolvedSession, SessionFilter};
 use ct_domain::ports::{ExactRecount, TokenEstimator};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
@@ -397,26 +393,11 @@ fn main() {
 /// where the tokenizer is public, a heuristic where it is not. The asymmetry is
 /// expressed once, here, rather than being rediscovered at call sites.
 fn build() -> ContextTrace {
-    let codex_estimator: Box<dyn TokenEstimator> = match TiktokenEstimator::o200k() {
-        Ok(t) => Box::new(t),
-        // Losing the tokenizer degrades accuracy, not function: fall back to the
-        // code-density heuristic and carry on, because a session listing should
-        // not fail because a BPE table would not load.
-        Err(e) => {
-            eprintln!("warning: o200k tokenizer unavailable ({e}); falling back to heuristic");
-            Box::new(HeuristicEstimator::for_code())
-        }
-    };
-
-    ContextTrace::new(vec![
-        AgentBinding::new(
-            Box::new(ClaudeCodeAdapter::new()),
-            // Anthropic ships no local tokenizer. Agent sessions are dominated
-            // by code and terminal output, so the denser ratio fits better.
-            Box::new(HeuristicEstimator::for_code()),
-        ),
-        AgentBinding::new(Box::new(CodexAdapter::new()), codex_estimator),
-    ])
+    let runtime = ct_runtime::build();
+    for warning in runtime.warnings {
+        eprintln!("warning: {warning}");
+    }
+    runtime.app
 }
 
 fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
@@ -802,14 +783,9 @@ fn session_estimator(
     session: &ct_domain::AgentSession,
     binding: usize,
 ) -> SessionCalibration {
-    let ratio = (session.agent() == AgentKind::ClaudeCode)
-        .then(|| app.derive_ratio(session, binding))
-        .flatten();
+    let (estimator, ratio) = ct_runtime::calibrate_session(app, session, binding);
 
-    SessionCalibration {
-        estimator: ratio.map(|r| HeuristicEstimator::with_ratio(r.chars_per_token)),
-        ratio,
-    }
+    SessionCalibration { estimator, ratio }
 }
 
 /// Resolve `--turn`, defaulting to the session's largest turn.

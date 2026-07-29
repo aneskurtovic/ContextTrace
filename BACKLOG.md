@@ -37,8 +37,27 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
+### CT-044 · Complete desktop MVP acceptance
+`status: next` · `tier: A` · `size: L` · `source: product decision`
+
+**Why:** the public product now requires a desktop app. CT-030 delivered a
+working vertical slice—session discovery, filtering, prompt growth, compaction
+markers, turn selection, composition and largest contributors—but it has not
+yet been exercised as an installed app across the real corpus or accepted
+visually and interactively.
+**Done when:** the Windows desktop build completes the discovery-to-diagnosis
+workflow on real Codex and Claude Code sessions; cold load and cached turn
+switching have explicit budgets and meet them on the largest local sessions;
+empty, malformed and very large sessions have usable states; keyboard and
+1024/1440px layouts pass visual acceptance; and an end-to-end test covers the
+Rust IPC contract without reading private corpus data.
+
+---
+
+## Todo
+
 ### CT-041 · Make inline-image accounting threshold-independent
-`status: next` · `tier: A` · `size: S` · `source: review`
+`status: todo` · `tier: A` · `size: S` · `source: review`
 
 **Why:** ordinary Codex tool outputs currently include inline `image_url`
 payloads in their serialized-character estimate, while outputs above the 4 MiB
@@ -47,10 +66,6 @@ policy solely because it crossed an implementation threshold.
 **Done when:** ordinary and oversized outputs use one documented image policy,
 image base64 is never presented as BPE text, and fixtures cover both sides of
 the parse cap.
-
----
-
-## Todo
 
 ### CT-031 · Investigate reconstruction over-count
 `status: todo` · `tier: A` · `size: M` · `source: corpus`
@@ -73,26 +88,28 @@ a small, exactly-measured case of the same defect.
 ### CT-042 · Automate the public-MVP verification gate
 `status: todo` · `tier: A` · `size: M` · `source: MVP review`
 
-**Why:** 285 tests, formatting, clippy, a release build and the corpus sweep pass
-locally, but no repository automation prevents a broken main branch or a
-platform-only build. The declared Rust 1.85 minimum is not continuously tested.
+**Why:** 286 Rust tests, 2 frontend tests, formatting, clippy, both production
+builds and the corpus sweep pass locally, but no repository automation prevents
+a broken main branch or a platform-only build. The declared Rust 1.85 minimum
+is not continuously tested.
 **Done when:** CI runs formatting, clippy, all workspace/all-target tests,
-release builds and process-level fixture smoke flows on the supported release
-hosts, including either the declared minimum Rust version or a deliberately
-raised one.
+frontend type/build/tests, desktop compilation, release builds and process-level
+fixture smoke flows on the supported release hosts, including either the
+declared minimum Rust version or a deliberately raised one.
 
 ### CT-043 · Ship an installable 0.1.0
-`status: todo` · `tier: A` · `size: M` · `source: MVP review`
+`status: todo` · `tier: A` · `size: L` · `source: MVP review`
 
-**Why:** the binary works for a developer with the repository, but there is no
-license file, release workflow, downloadable archive, checksum, installation
-path, upgrade guidance or clean-machine acceptance result. The CLI crate also
-cannot currently be packaged for crates.io because its internal path
-dependencies have no registry version requirements.
+**Why:** the CLI and desktop app work for a developer with the repository, but
+there is no license file, release workflow, signed desktop installer,
+downloadable CLI archive, checksum, installation path, upgrade guidance or
+clean-machine acceptance result. The CLI crate also cannot currently be
+packaged for crates.io because its internal path dependencies have no registry
+version requirements.
 **Done when:** the intended license is present, the chosen release channels are
-explicit, signed or checksummed artifacts install on every supported host, and
-the README's install/upgrade/known-limitations steps have been exercised on a
-clean machine.
+explicit, the desktop installer and checksummed CLI artifacts install on every
+supported host, and the README's install/upgrade/known-limitations steps have
+been exercised on clean machines.
 
 ### CT-026 · Cost projection
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
@@ -121,15 +138,30 @@ real evidence for it.
 **Done when:** derived metadata is cached, disposable and rebuildable, and no
 domain type depends on it.
 
-### CT-030 · Tauri v2 desktop shell
-`status: todo` · `tier: C` · `size: L` · `source: plan`
-**Why:** milestone 3, deliberately outside the CLI MVP.
-**Done when:** the desktop app calls the same crates through `#[tauri::command]`
-with no logic duplicated.
-
 ---
 
 ## Done
+
+### CT-030 · Build the Tauri v2 desktop vertical slice
+`status: done` · `tier: A` · `size: L` · `source: plan`
+
+**Why:** a public ContextTrace release now requires a desktop interface, not
+only a capable CLI.
+**Done when:** the desktop app calls the same crates through `#[tauri::command]`
+with no measurement or adapter-wiring logic duplicated.
+
+**The first slice is useful rather than ornamental.** The React interface
+discovers and filters local sessions, shows model/project/branch metadata,
+charts measured prompt growth with compaction markers, selects measured turns,
+and renders category composition and the twenty largest contributors with
+source and confidence. A disposable in-memory cache keeps turn switching from
+re-reading and re-calibrating the session; refresh invalidates it.
+
+**The composition root moved, not copied.** `ct-runtime` now owns agent and
+tokenizer selection plus session calibration. Both the CLI and Tauri commands
+call it, so a new adapter or measurement policy cannot silently differ between
+interfaces. The desktop capability is core-only, the CSP permits local IPC,
+and the frontend has no remote assets.
 
 ### CT-025 · Secret scanning and redacted export
 `status: done` · `tier: B` · `size: M` · `source: brief`

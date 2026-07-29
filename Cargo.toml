@@ -4,7 +4,9 @@ members = [
     "crates/ct-domain",
     "crates/ct-application",
     "crates/ct-adapters",
+    "crates/ct-runtime",
     "crates/ct-cli",
+    "crates/ct-ui/src-tauri",
 ]
 
 # Ports and adapters (hexagonal), with the dependency rule enforced by Cargo.
@@ -40,6 +42,7 @@ repository = "https://github.com/aneskurtovic/ContextTrace"
 ct-domain = { path = "crates/ct-domain" }
 ct-application = { path = "crates/ct-application" }
 ct-adapters = { path = "crates/ct-adapters" }
+ct-runtime = { path = "crates/ct-runtime" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

@@ -4,42 +4,42 @@ Assessment date: **2026-07-29**
 
 ## Bottom line
 
-ContextTrace has reached a **functional/private CLI MVP**. A developer who can
-build the repository can already complete the core job:
+ContextTrace has reached a **functional/private CLI MVP and a working desktop
+vertical slice**. A developer who can build the repository can already complete
+the core job in the CLI, and the desktop app now covers its highest-value loop:
 
-1. discover a Codex CLI or Claude Code session;
-2. find the relevant turn;
-3. inspect what occupied its context and where each item came from;
-4. identify large, duplicate, low-information or secret-bearing content;
-5. trace changes over time or export the session for analysis.
+1. discover and filter Codex CLI or Claude Code sessions;
+2. see prompt growth and compaction points;
+3. select a measured turn;
+4. inspect context composition, confidence and largest contributors;
+5. see which local roots are read.
 
-It has **not reached a public, downloadable MVP**. The missing work is narrower
-than a new product milestone, but it matters: close two known accounting
-boundaries, make verification repeatable in CI, and ship an installable 0.1
-artifact with an actual license and install instructions.
+It has **not reached a public, downloadable desktop MVP**. The UI has not yet
+passed real-corpus, visual, accessibility, failure-state or installed-app
+acceptance. Two accounting boundaries remain, CI is absent, and no installer or
+license is shipped.
 
-Realistic distance: **four focused work packages, roughly 4–7 engineering days
-plus a release-candidate soak**. That is about one focused week if the
-reconstruction investigation ends in a documented limitation. It becomes longer
-only if CT-031 reveals a recoverable adapter defect rather than an unobservable
-agent behavior.
-
-A desktop UI is not part of this MVP. If “MVP” means a Tauri desktop product
-rather than the CLI, it is materially farther away: the shell, index,
-navigation, packaging and UI acceptance work have not started.
+Realistic distance from a Windows-first public desktop MVP: **five focused work
+packages, roughly 8–12 engineering days plus a release-candidate soak**. The
+desktop foundation and core diagnostic view exist, so this is no longer a
+greenfield UI estimate. The range covers interaction/performance hardening,
+correctness closure, CI and installer work; it grows if real-corpus acceptance
+shows that an index is required.
 
 ## Evidence checked for this assessment
 
 | Check | Result on 2026-07-29 |
 |---|---|
 | Local repository | One local branch (`main`), no changes, stashes, extra worktrees, unmerged commits or unreachable commits before this documentation update |
-| Automated tests | 285 passed: 61 domain, 119 adapter, 68 application, 23 CLI, 14 fixture |
+| Automated tests | 286 Rust tests plus 2 frontend tests |
 | Static verification | `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass |
 | Build | `cargo build --workspace --release` passes on Rust 1.97.1, Windows/MSVC |
 | Binary smoke | `ct 0.1.0` starts and exposes all twelve documented commands |
+| Desktop slice | Tauri v2 command bridge compiles; React type-check, tests and production bundle pass |
 | Format-drift sweep | 792 sessions, 134,764 events, every type recognised, 2.71 seconds |
-| Privacy architecture | No HTTP client in the production dependency tree; agent roots are read through read-only adapters |
-| Distribution | No CI, release workflow, downloadable artifacts, checksums or install instructions |
+| Privacy architecture | No application upload/telemetry code; core-only Tauri capability and local-IPC CSP; read-only adapters |
+| Desktop acceptance | Not yet run as an installed build across the real corpus; automated browser preview was unavailable during this assessment |
+| Distribution | No CI, installer, release workflow, downloadable artifacts, checksums or install instructions |
 | Legal packaging | Manifests say MIT, but the repository has no `LICENSE` file |
 | crates.io packaging | `cargo package -p ct-cli --no-verify` fails because internal path dependencies have no registry version requirement |
 
@@ -49,45 +49,48 @@ The corpus itself stays local because it contains prompts, code and secrets.
 
 ## Public MVP definition
 
-The public MVP is a **local-first 0.1 CLI release for Codex CLI and Claude Code**.
-It is done when a new user can download or build `ct`, run the discovery-to-
-diagnosis workflow, understand the confidence and known limitations of every
-number, and reproduce the project's verification without access to the
-developer's private corpus.
+The public MVP is a **local-first Windows desktop 0.1 for Codex CLI and Claude
+Code, with the CLI retained as a companion interface**. It is done when a new
+user can install ContextTrace, run the discovery-to-diagnosis workflow without
+a terminal, understand confidence and known limitations, and reproduce the
+project's verification without access to the developer's private corpus.
 
-Search, cost projection, SQLite, a desktop UI, more agent adapters and perfect
-prompt replay are explicitly outside this release. They may be valuable, but
-none is required to prove the core job.
+Global full-text search, cost projection, persistent SQLite, more agent adapters
+and perfect prompt replay are outside this release unless acceptance produces
+evidence that one is required for the core workflow.
 
 ## Release gates
 
 | Gate | State | What remains |
 |---|---|---|
 | Core user workflow | Pass | The twelve-command CLI covers discovery, inspection, reconstruction, diagnosis, lifecycle, comparison and export. |
+| Desktop core workflow | Partial | Session browser, growth, turn selection, composition and contributors work; real-session UX/performance and installed-app acceptance remain. |
 | Two-agent support | Pass | Codex CLI and Claude Code adapters work against fixtures and the current local corpus. |
 | Honest measurements | Conditional | CT-041 must remove threshold-dependent inline-image accounting. CT-031 must either identify the over-count mechanism or finalize it as an explicit, tested limitation. |
-| Local-first safety | Pass | Read-only roots, no telemetry or HTTP client, secret scan and redacted export are implemented. |
-| Repeatable verification | Fail | Add CI for formatting, clippy, all tests, a release build and process-level fixture smoke tests. Verify the declared Rust 1.85 minimum or raise it. |
-| Installation and legal basics | Fail | Add the intended license text, choose the release channels, build archives/checksums, and document installation and upgrade. |
+| Local-first safety | Pass | Read-only roots, no application telemetry/upload code, core-only desktop capability, local-IPC CSP, secret scan and redacted export are implemented. |
+| Repeatable verification | Fail | Add CI for Rust and frontend checks, desktop compilation, release builds and process-level fixture smoke tests. Verify the declared Rust 1.85 minimum or raise it. |
+| Installation and legal basics | Fail | Add the intended license text, produce a signed Windows desktop installer and CLI archives/checksums, and document installation and upgrade. |
 | Release documentation | Partial | README and backlog now describe the real state; 0.1 still needs concise known limitations and release notes tested on a clean machine. |
 
 ## Recommended order
 
-1. **CT-041 — unify inline-image accounting.** It is a bounded correctness
+1. **CT-044 — complete desktop MVP acceptance.** Exercise real sessions, set
+   cold/cached performance budgets, close empty/error states, test IPC, and pass
+   keyboard plus 1024/1440px visual review.
+2. **CT-041 — unify inline-image accounting.** It is a bounded correctness
    defect already named by the README and should not cross a release boundary.
-2. **CT-031 — close the reconstruction over-count investigation.** A truthful,
+3. **CT-031 — close the reconstruction over-count investigation.** A truthful,
    tested “unresolvable from available logs” is an acceptable result; invented
    semantics are not.
-3. **CT-042 — automate the release gate.** CI should run format, clippy, all 285
-   tests, release builds, and CLI smoke flows over synthetic fixtures. Include
-   at least the supported release hosts and the declared minimum Rust version.
-4. **CT-043 — ship 0.1.0.** Add the chosen license file, release archives and
-   checksums, install/upgrade instructions, known limitations and a clean-machine
-   smoke test.
+4. **CT-042 — automate the release gate.** CI should run Rust and frontend
+   checks, desktop compilation, release builds and fixture smoke flows.
+5. **CT-043 — ship 0.1.0.** Add the license, signed Windows installer, CLI
+   archives/checksums, install/upgrade instructions, known limitations and
+   clean-machine smoke tests.
 
-Cost projection (CT-026), exact compaction diffs (CT-027), family trees,
-SQLite and Tauri come after this sequence. They add capability; they do not make
-the current capability shippable.
+Cost projection (CT-026), exact compaction diffs (CT-027), family trees and
+persistent SQLite come after this sequence unless desktop acceptance produces
+evidence that one is necessary for the MVP experience.
 
 ## Main risks
 
@@ -100,6 +103,9 @@ the current capability shippable.
   not explain the mechanism.
 - **A local corpus can create false confidence.** It is broad and valuable, but
   it represents one developer's workloads and installed agent versions.
-- **Distribution may expose platform assumptions.** The code builds locally on
-  Windows/MSVC and GNU-LLVM; Linux and macOS release artifacts have not yet been
-  demonstrated in this repository.
+- **Desktop performance may force indexing earlier.** The first slice caches a
+  parsed session in memory, but the largest real sessions have not yet been
+  timed through the UI.
+- **Distribution may expose platform assumptions.** The code and Tauri command
+  bridge build locally on Windows/MSVC; an installed desktop artifact and clean
+  Windows machine have not yet been demonstrated.
