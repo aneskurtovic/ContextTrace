@@ -353,6 +353,11 @@ button:disabled {
   font-size: 11px;
 }
 
+.demo-shield {
+  background: rgba(224, 182, 115, .14);
+  color: #e0b673;
+}
+
 .roots {
   position: absolute;
   right: 10px;
@@ -386,14 +391,46 @@ button:disabled {
 
 .main-area {
   position: relative;
+  display: flex;
   min-width: 0;
   min-height: 0;
+  flex-direction: column;
 }
 
 .workspace {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 36px 42px 64px;
+}
+
+/* Deliberately part of the layout rather than a dismissible overlay: the
+   figures it qualifies stay on screen for as long as it does. */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 28px;
+  border-bottom: 1px solid #6b5326;
+  background: #241c10;
+  color: #e0b673;
+  font-size: 11px;
+}
+
+.demo-banner > span {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(224, 182, 115, .16);
+  font-size: 9px;
+}
+
+.demo-banner strong {
+  margin-right: 6px;
+  color: #f0cf9a;
 }
 
 .workspace-header {
@@ -482,6 +519,20 @@ h2 {
   border-radius: 50%;
   background: #60cc93;
   box-shadow: 0 0 8px #60cc93;
+}
+
+.demo-badge {
+  border-color: rgba(196, 150, 74, .3);
+  background: rgba(180, 132, 51, .1);
+  color: #e0b673;
+}
+
+.demo-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e0b673;
+  box-shadow: 0 0 8px #e0b673;
 }
 
 .metrics,
@@ -1300,7 +1351,8 @@ h2 {
 }
 
 .workspace-centered {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -1397,6 +1449,14 @@ h2 {
   border-color: #654b2d;
   background: #261d13;
   color: #d6a566;
+}
+
+/* The floating banners are positioned against the main area, so they clear the
+   demonstration-data bar rather than covering the sentence that qualifies every
+   number beneath it. */
+.main-area.demo-mode .error-banner,
+.main-area.demo-mode .warning-banner {
+  top: 62px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -554,6 +554,7 @@ function SessionWorkspace({
   lifecycle,
   lifecycleLoading,
   lifecycleItem,
+  demoData,
   onContributor,
   onCloseLifecycle,
   onRunDoctor,
@@ -567,6 +568,7 @@ function SessionWorkspace({
   lifecycle: LifecycleReport | null;
   lifecycleLoading: boolean;
   lifecycleItem: string | null;
+  demoData: boolean;
   onContributor: (item: string) => void;
   onCloseLifecycle: () => void;
   onRunDoctor: () => void;
@@ -600,10 +602,17 @@ function SessionWorkspace({
             <span>{shortId(detail.session.id)}</span>
           </div>
         </div>
-        <div className="privacy-badge">
-          <span className="privacy-dot" />
-          Local only
-        </div>
+        {demoData ? (
+          <div className="privacy-badge demo-badge">
+            <span className="demo-dot" />
+            Demo data
+          </div>
+        ) : (
+          <div className="privacy-badge">
+            <span className="privacy-dot" />
+            Local only
+          </div>
+        )}
       </header>
 
       <section className="metrics">
@@ -708,6 +717,11 @@ function SessionWorkspace({
 }
 
 export default function App() {
+  // Without the desktop bridge every panel below is filled from `demo.ts`.
+  // A tool that argues for evidence over invention cannot render invented
+  // sessions in the same chrome as a real read, so this drives a label on
+  // every surface those figures reach.
+  const demoData = api.isDemoData();
   const [startup, setStartup] = useState<StartupSummary | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionTotal, setSessionTotal] = useState(0);
@@ -1003,7 +1017,7 @@ export default function App() {
         </div>
 
         <div className="session-list-heading" aria-live="polite" aria-atomic="true">
-          <span>Recent sessions</span>
+          <span>{demoData ? "Demonstration sessions" : "Recent sessions"}</span>
           <span>
             {sessions.length === sessionTotal
               ? sessionTotal
@@ -1048,10 +1062,16 @@ export default function App() {
             aria-expanded={showRoots}
             aria-controls="local-log-roots"
           >
-            <span className="shield">✓</span>
+            <span className={demoData ? "shield demo-shield" : "shield"}>
+              {demoData ? "!" : "✓"}
+            </span>
             <span>
-              <strong>Private by design</strong>
-              <small>Reads local logs. No network.</small>
+              <strong>{demoData ? "Demonstration data" : "Private by design"}</strong>
+              <small>
+                {demoData
+                  ? "Fabricated fixtures. No local logs are being read."
+                  : "Reads local logs. No network."}
+              </small>
             </span>
             <span>{showRoots ? "⌃" : "⌄"}</span>
           </button>
@@ -1070,7 +1090,21 @@ export default function App() {
         </footer>
       </aside>
 
-      <div className="main-area" aria-busy={loadingDetail}>
+      <div
+        className={demoData ? "main-area demo-mode" : "main-area"}
+        aria-busy={loadingDetail}
+      >
+        {demoData && (
+          <div className="demo-banner" role="status">
+            <span aria-hidden="true">◆</span>
+            <p>
+              <strong>Demonstration data.</strong>
+              The desktop bridge is not available, so every session, token count and
+              finding on this screen is fabricated. Run the ContextTrace desktop app
+              to read your own local logs.
+            </p>
+          </div>
+        )}
         {error && (
           <div className="error-banner" role="alert" aria-atomic="true">
             <span aria-hidden="true">!</span>
@@ -1095,6 +1129,7 @@ export default function App() {
             lifecycle={lifecycle}
             lifecycleLoading={loadingLifecycle}
             lifecycleItem={lifecycleItem}
+            demoData={demoData}
             onContributor={inspectContributor}
             onCloseLifecycle={closeLifecycle}
             onRunDoctor={runDoctor}

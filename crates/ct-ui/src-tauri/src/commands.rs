@@ -5,16 +5,21 @@ use ct_domain::{
 };
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
 const MAX_SESSION_PAGE_SIZE: usize = 1_000;
 
+/// Caches hold `Arc` handles rather than values so a command can take what it
+/// needs and release the lock before analysing anything. Tauri dispatches
+/// commands on separate threads, and holding either lock across a lifecycle
+/// sweep or the doctor's raw-file scan would serialise the whole desktop behind
+/// whichever command is slowest.
 pub struct AppState {
     app: ContextTrace,
     warnings: Vec<String>,
-    sessions: Mutex<HashMap<String, CachedSession>>,
-    lifecycles: Mutex<HashMap<String, LifecycleSweep>>,
+    sessions: Mutex<HashMap<String, Arc<CachedSession>>>,
+    lifecycles: Mutex<HashMap<String, Arc<LifecycleSweep>>>,
 }
 
 struct CachedSession {
@@ -40,70 +45,70 @@ impl AppState {
         }
     }
 
-    fn with_session<T>(
-        &self,
-        id: &str,
-        use_session: impl FnOnce(&CachedSession) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let mut sessions = self
-            .sessions
+    /// Take a cache lock without letting one command's panic disable the rest.
+    ///
+    /// A poisoned mutex here only means some other command unwound while
+    /// holding it. What these maps guard is a rebuildable cache of what is on
+    /// disk, not state a half-finished write can leave inconsistent, so
+    /// recovering the map beats failing every later command until the desktop
+    /// is restarted.
+    fn sessions(&self) -> MutexGuard<'_, HashMap<String, Arc<CachedSession>>> {
+        self.sessions
             .lock()
-            .map_err(|_| "the in-memory session cache is unavailable".to_string())?;
-        if !sessions.contains_key(id) {
-            let (session, resolved) = self.app.load(id).map_err(|error| error.to_string())?;
-            let (_, ratio) = ct_runtime::calibrate_session(&self.app, &session, resolved.binding);
-            sessions.insert(
-                id.to_string(),
-                CachedSession {
-                    session,
-                    descriptor: resolved.descriptor,
-                    binding: resolved.binding,
-                    chars_per_token: ratio.map(|ratio| ratio.chars_per_token),
-                    content_analyzed: false,
-                },
-            );
-        }
-        use_session(
-            sessions
-                .get(id)
-                .expect("a session was inserted immediately above"),
-        )
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn with_analyzed_session<T>(
-        &self,
-        id: &str,
-        use_session: impl FnOnce(&CachedSession) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let mut sessions = self
-            .sessions
+    fn lifecycles(&self) -> MutexGuard<'_, HashMap<String, Arc<LifecycleSweep>>> {
+        self.lifecycles
             .lock()
-            .map_err(|_| "the in-memory session cache is unavailable".to_string())?;
-        let needs_analysis = sessions
-            .get(id)
-            .is_none_or(|cached| !cached.content_analyzed);
-        if needs_analysis {
-            let (session, resolved) = self
-                .app
-                .load_with_content_analysis(id)
-                .map_err(|error| error.to_string())?;
-            let (_, ratio) = ct_runtime::calibrate_session(&self.app, &session, resolved.binding);
-            sessions.insert(
-                id.to_string(),
-                CachedSession {
-                    session,
-                    descriptor: resolved.descriptor,
-                    binding: resolved.binding,
-                    chars_per_token: ratio.map(|ratio| ratio.chars_per_token),
-                    content_analyzed: true,
-                },
-            );
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Hand back a session handle that outlives the cache lock.
+    ///
+    /// Both the parse and every later analysis run with no lock held: the
+    /// caller keeps the returned handle, so a doctor run over a large session
+    /// cannot stop the session list from answering on another thread. Two
+    /// threads may therefore load the same session at once, which costs a
+    /// duplicate parse and never a wrong answer.
+    fn cached_session(&self, id: &str, analyzed: bool) -> Result<Arc<CachedSession>, String> {
+        if let Some(existing) = self.usable_cached_session(id, analyzed) {
+            return Ok(existing);
         }
-        use_session(
-            sessions
-                .get(id)
-                .expect("an analyzed session was inserted immediately above"),
-        )
+
+        let (session, resolved) = if analyzed {
+            self.app.load_with_content_analysis(id)
+        } else {
+            self.app.load(id)
+        }
+        .map_err(|error| error.to_string())?;
+        let (_, ratio) = ct_runtime::calibrate_session(&self.app, &session, resolved.binding);
+        let cached = Arc::new(CachedSession {
+            session,
+            descriptor: resolved.descriptor,
+            binding: resolved.binding,
+            chars_per_token: ratio.map(|ratio| ratio.chars_per_token),
+            content_analyzed: analyzed,
+        });
+
+        let mut sessions = self.sessions();
+        // Another thread may have finished a content-analysed load while this
+        // one was parsing; the richer entry stays.
+        if let Some(existing) = sessions
+            .get(id)
+            .filter(|existing| existing.content_analyzed && !analyzed)
+        {
+            return Ok(Arc::clone(existing));
+        }
+        sessions.insert(id.to_string(), Arc::clone(&cached));
+        Ok(cached)
+    }
+
+    fn usable_cached_session(&self, id: &str, analyzed: bool) -> Option<Arc<CachedSession>> {
+        self.sessions()
+            .get(id)
+            .filter(|cached| cached.content_analyzed || !analyzed)
+            .map(Arc::clone)
     }
 
     fn startup(&self) -> StartupSummary {
@@ -145,14 +150,8 @@ impl AppState {
         offset: Option<usize>,
         limit: Option<usize>,
     ) -> Result<SessionPage, String> {
-        self.sessions
-            .lock()
-            .map_err(|_| "the in-memory session cache is unavailable".to_string())?
-            .clear();
-        self.lifecycles
-            .lock()
-            .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?
-            .clear();
+        self.sessions().clear();
+        self.lifecycles().clear();
         let parsed_agent = match agent.as_deref() {
             Some(agent) => Some(
                 AgentKind::parse(agent)
@@ -201,216 +200,210 @@ impl AppState {
     }
 
     fn inspect_session(&self, id: &str) -> Result<SessionDetail, String> {
-        self.with_session(id, |cached| {
-            let session = &cached.session;
-            let growth = timeline(session);
-            let peak_turn = session.peak_turn().map(|turn| turn.get());
-            let metadata = session.metadata();
+        let cached = self.cached_session(id, false)?;
+        let session = &cached.session;
+        let growth = timeline(session);
+        let peak_turn = session.peak_turn().map(|turn| turn.get());
+        let metadata = session.metadata();
 
-            Ok(SessionDetail {
-                session: cached.descriptor.clone().into(),
-                model: metadata.model.clone(),
-                agent_version: metadata.agent_version.clone(),
-                git_branch: metadata.git_branch.clone(),
-                turn_count: session.turn_count(),
-                event_count: session.events().len(),
-                total_output_tokens: session.total_output_tokens(),
-                peak_turn,
-                peak_prompt_tokens: session.peak_prompt_tokens(),
-                context_window: metadata.context_window,
-                fidelity: session.fidelity(),
-                unrecognised_events: session.unrecognised_total(),
-                unplaced_compactions: growth.unplaced_compactions,
-                growth: growth
-                    .points
-                    .into_iter()
-                    .map(|point| GrowthPointSummary {
-                        turn: point.turn,
-                        prompt_tokens: point.prompt_tokens,
-                        compaction: point.compaction.map(|event| CompactionSummary {
-                            turn: Some(point.turn),
-                            reclaimed: event.reclaimed,
-                        }),
-                    })
-                    .collect(),
-            })
+        Ok(SessionDetail {
+            session: cached.descriptor.clone().into(),
+            model: metadata.model.clone(),
+            agent_version: metadata.agent_version.clone(),
+            git_branch: metadata.git_branch.clone(),
+            turn_count: session.turn_count(),
+            event_count: session.events().len(),
+            total_output_tokens: session.total_output_tokens(),
+            peak_turn,
+            peak_prompt_tokens: session.peak_prompt_tokens(),
+            context_window: metadata.context_window,
+            fidelity: session.fidelity(),
+            unrecognised_events: session.unrecognised_total(),
+            unplaced_compactions: growth.unplaced_compactions,
+            growth: growth
+                .points
+                .into_iter()
+                .map(|point| GrowthPointSummary {
+                    turn: point.turn,
+                    prompt_tokens: point.prompt_tokens,
+                    compaction: point.compaction.map(|event| CompactionSummary {
+                        turn: Some(point.turn),
+                        reclaimed: event.reclaimed,
+                    }),
+                })
+                .collect(),
         })
     }
 
     fn context(&self, id: &str, turn: Option<u32>) -> Result<ContextDetail, String> {
-        self.with_session(id, |cached| {
-            let turn = match turn {
-                Some(turn) => TurnNumber::new(turn).map_err(|error| error.to_string())?,
-                None => self
-                    .app
-                    .peak_turn(&cached.session)
-                    .ok_or_else(|| "this session has no turn with prompt usage".to_string())?,
-            };
-            let estimator = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
-            let snapshot = match estimator.as_ref() {
-                Some(estimator) => {
-                    self.app
-                        .snapshot_with(&cached.session, cached.binding, turn, estimator)
-                }
-                None => self.app.snapshot(&cached.session, cached.binding, turn),
+        let cached = self.cached_session(id, false)?;
+        let turn = match turn {
+            Some(turn) => TurnNumber::new(turn).map_err(|error| error.to_string())?,
+            None => self
+                .app
+                .peak_turn(&cached.session)
+                .ok_or_else(|| "this session has no turn with prompt usage".to_string())?,
+        };
+        let estimator = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
+        let snapshot = match estimator.as_ref() {
+            Some(estimator) => {
+                self.app
+                    .snapshot_with(&cached.session, cached.binding, turn, estimator)
             }
-            .map_err(|error| error.to_string())?;
+            None => self.app.snapshot(&cached.session, cached.binding, turn),
+        }
+        .map_err(|error| error.to_string())?;
 
-            let contributors = snapshot
-                .largest_contributors(20)
-                .into_iter()
-                .map(|item| ContributorSummary {
-                    id: item.id.to_string(),
-                    label: item.label,
-                    category: item.category.label().to_string(),
-                    source: format_source(&item.source),
-                    tokens: item.tokens,
-                    share: item.share,
-                    confidence: item.confidence,
-                })
-                .collect();
-
-            Ok(ContextDetail {
-                turn: turn.get(),
-                model: snapshot.model().map(str::to_string),
-                total_tokens: snapshot.total().tokens(),
-                residual_tokens: snapshot.residual(),
-                residual_is_meaningful: snapshot.residual_is_meaningful(),
-                context_window: snapshot.context_window(),
-                utilisation: snapshot.utilisation(),
-                calibration_scale: snapshot.calibration_scale(),
-                categories: snapshot
-                    .by_category()
-                    .into_iter()
-                    .map(CategorySummary::from)
-                    .collect(),
-                contributors,
+        let contributors = snapshot
+            .largest_contributors(20)
+            .into_iter()
+            .map(|item| ContributorSummary {
+                id: item.id.to_string(),
+                label: item.label,
+                category: item.category.label().to_string(),
+                source: format_source(&item.source),
+                tokens: item.tokens,
+                share: item.share,
+                confidence: item.confidence,
             })
+            .collect();
+
+        Ok(ContextDetail {
+            turn: turn.get(),
+            model: snapshot.model().map(str::to_string),
+            total_tokens: snapshot.total().tokens(),
+            residual_tokens: snapshot.residual(),
+            residual_is_meaningful: snapshot.residual_is_meaningful(),
+            context_window: snapshot.context_window(),
+            utilisation: snapshot.utilisation(),
+            calibration_scale: snapshot.calibration_scale(),
+            categories: snapshot
+                .by_category()
+                .into_iter()
+                .map(CategorySummary::from)
+                .collect(),
+            contributors,
         })
     }
 
     fn doctor(&self, id: &str, turn: Option<u32>) -> Result<DoctorReport, String> {
-        self.with_analyzed_session(id, |cached| {
-            let turn = match turn {
-                Some(turn) => TurnNumber::new(turn).map_err(|error| error.to_string())?,
-                None => self
-                    .app
-                    .peak_turn(&cached.session)
-                    .ok_or_else(|| "this session has no turn with prompt usage".to_string())?,
-            };
-            let estimator = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
-            let snapshot = match estimator.as_ref() {
-                Some(estimator) => {
-                    self.app
-                        .snapshot_with(&cached.session, cached.binding, turn, estimator)
-                }
-                None => self.app.snapshot(&cached.session, cached.binding, turn),
+        let cached = self.cached_session(id, true)?;
+        let turn = match turn {
+            Some(turn) => TurnNumber::new(turn).map_err(|error| error.to_string())?,
+            None => self
+                .app
+                .peak_turn(&cached.session)
+                .ok_or_else(|| "this session has no turn with prompt usage".to_string())?,
+        };
+        let estimator = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
+        let snapshot = match estimator.as_ref() {
+            Some(estimator) => {
+                self.app
+                    .snapshot_with(&cached.session, cached.binding, turn, estimator)
             }
-            .map_err(|error| error.to_string())?;
+            None => self.app.snapshot(&cached.session, cached.binding, turn),
+        }
+        .map_err(|error| error.to_string())?;
 
-            let duplicate_content = snapshot.duplicate_content();
-            let duplicate_groups = duplicate_content.len();
-            let repeated_tokens = duplicate_content.iter().fold(0u32, |total, group| {
-                total.saturating_add(group.repeated_tokens)
-            });
-            let duplicates = duplicate_content
-                .into_iter()
-                .take(8)
-                .map(|group| DuplicateSummary {
-                    copies: group.items.len(),
-                    total_tokens: group.total_tokens,
-                    repeated_tokens: group.repeated_tokens,
-                    share: group.share,
-                    confidence: group.confidence,
-                    items: group
-                        .items
-                        .into_iter()
-                        .take(4)
-                        .map(|item| DiagnosticItemSummary {
-                            label: item.label,
-                            source: format_source(&item.source),
-                            tokens: item.tokens,
-                        })
-                        .collect(),
-                })
-                .collect();
-
-            let low_entropy_content = snapshot.low_entropy_content();
-            let low_entropy_items = low_entropy_content.len();
-            let waste_score_tokens = low_entropy_content.iter().fold(0u32, |total, item| {
-                total.saturating_add(item.waste_score_tokens)
-            });
-            let low_entropy = low_entropy_content
-                .into_iter()
-                .take(8)
-                .map(|item| LowEntropySummary {
-                    label: item.label,
-                    source: format_source(&item.source),
-                    tokens: item.tokens,
-                    compression_ratio: item.compression_ratio,
-                    waste_score_tokens: item.waste_score_tokens,
-                    share: item.share,
-                    confidence: item.confidence,
-                })
-                .collect();
-
-            let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
-            let secret_scan = self.app.scan_secrets(&cached.session, &raw);
-            let secret_occurrences = secret_scan.occurrence_count();
-            let secret_findings = secret_scan.findings.len();
-            let secrets = secret_scan
-                .findings
-                .into_iter()
-                .take(12)
-                .map(|finding| SecretFindingSummary {
-                    kind: finding.kind.label().to_string(),
-                    occurrences: finding.occurrences,
-                    turn: finding.turn.map(|turn| turn.get()),
-                    line: finding.line_no,
-                    event_type: finding.event_type,
-                })
-                .collect();
-
-            Ok(DoctorReport {
-                turn: turn.get(),
-                duplicate_groups,
-                repeated_tokens,
-                duplicates,
-                low_entropy_items,
-                waste_score_tokens,
-                low_entropy,
-                secret_findings,
-                secret_occurrences,
-                scanned_records: secret_scan.scanned_records,
-                unreadable_records: secret_scan.unreadable_records,
-                secrets,
+        let duplicate_content = snapshot.duplicate_content();
+        let duplicate_groups = duplicate_content.len();
+        let repeated_tokens = duplicate_content.iter().fold(0u32, |total, group| {
+            total.saturating_add(group.repeated_tokens)
+        });
+        let duplicates = duplicate_content
+            .into_iter()
+            .take(8)
+            .map(|group| DuplicateSummary {
+                copies: group.items.len(),
+                total_tokens: group.total_tokens,
+                repeated_tokens: group.repeated_tokens,
+                share: group.share,
+                confidence: group.confidence,
+                items: group
+                    .items
+                    .into_iter()
+                    .take(4)
+                    .map(|item| DiagnosticItemSummary {
+                        label: item.label,
+                        source: format_source(&item.source),
+                        tokens: item.tokens,
+                    })
+                    .collect(),
             })
+            .collect();
+
+        let low_entropy_content = snapshot.low_entropy_content();
+        let low_entropy_items = low_entropy_content.len();
+        let waste_score_tokens = low_entropy_content.iter().fold(0u32, |total, item| {
+            total.saturating_add(item.waste_score_tokens)
+        });
+        let low_entropy = low_entropy_content
+            .into_iter()
+            .take(8)
+            .map(|item| LowEntropySummary {
+                label: item.label,
+                source: format_source(&item.source),
+                tokens: item.tokens,
+                compression_ratio: item.compression_ratio,
+                waste_score_tokens: item.waste_score_tokens,
+                share: item.share,
+                confidence: item.confidence,
+            })
+            .collect();
+
+        // The raw-file scan is the slowest thing the desktop does. It runs on
+        // the handle above with no cache lock held, so the session list stays
+        // answerable while a large session is being read.
+        let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+        let secret_scan = self.app.scan_secrets(&cached.session, &raw);
+        let secret_occurrences = secret_scan.occurrence_count();
+        let secret_findings = secret_scan.findings.len();
+        let secrets = secret_scan
+            .findings
+            .into_iter()
+            .take(12)
+            .map(|finding| SecretFindingSummary {
+                kind: finding.kind.label().to_string(),
+                occurrences: finding.occurrences,
+                turn: finding.turn.map(|turn| turn.get()),
+                line: finding.line_no,
+                event_type: finding.event_type,
+            })
+            .collect();
+
+        Ok(DoctorReport {
+            turn: turn.get(),
+            duplicate_groups,
+            repeated_tokens,
+            duplicates,
+            low_entropy_items,
+            waste_score_tokens,
+            low_entropy,
+            secret_findings,
+            secret_occurrences,
+            scanned_records: secret_scan.scanned_records,
+            unreadable_records: secret_scan.unreadable_records,
+            secrets,
         })
     }
 
     fn lifecycle(&self, id: &str, item: &str) -> Result<LifecycleReport, String> {
-        let needs_sweep = !self
-            .lifecycles
-            .lock()
-            .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?
-            .contains_key(id);
-        if needs_sweep {
-            let sweep = self.with_session(id, |cached| {
-                Ok(self.app.sweep_lifecycles(&cached.session, cached.binding))
-            })?;
-            self.lifecycles
-                .lock()
-                .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?
-                .insert(id.to_string(), sweep);
-        }
+        // The sweep walks every turn, so it too runs outside both locks; the
+        // cache is only locked to read the handle and to publish the result.
+        // The lookup is bound before the match: a guard in a match scrutinee
+        // lives as long as the whole match, and re-locking inside an arm would
+        // deadlock the command against itself.
+        let swept = self.lifecycles().get(id).map(Arc::clone);
+        let sweep = match swept {
+            Some(sweep) => sweep,
+            None => {
+                let cached = self.cached_session(id, false)?;
+                let sweep = Arc::new(self.app.sweep_lifecycles(&cached.session, cached.binding));
+                self.lifecycles().insert(id.to_string(), Arc::clone(&sweep));
+                sweep
+            }
+        };
 
-        let lifecycles = self
-            .lifecycles
-            .lock()
-            .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?;
-        let sweep = lifecycles
-            .get(id)
-            .expect("a lifecycle sweep was inserted immediately above");
         let item_id = ContextItemId::new(item);
         let record = sweep.item(&item_id).ok_or_else(|| {
             "this contributor is no longer present after the session cache was refreshed"
@@ -1104,6 +1097,72 @@ mod tests {
             Ok(_) => panic!("refresh evicts sessions that have disappeared from disk"),
         };
         assert!(error.contains("no session matching"));
+    }
+
+    #[test]
+    fn analysis_holds_a_session_handle_rather_than_the_cache_lock() {
+        // Tauri dispatches commands on separate threads. A handle that outlives
+        // the lock is what lets a doctor run over a large session proceed while
+        // the session list answers on another thread.
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = state
+            .list_sessions(None, None, None)
+            .expect("list committed synthetic fixtures");
+        let codex_id = session_id(&sessions, "codex");
+
+        let cached = state
+            .cached_session(&codex_id, true)
+            .expect("load the session for analysis");
+        assert!(
+            state.sessions.try_lock().is_ok(),
+            "no cache lock may be held while a session handle is in use"
+        );
+
+        let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+        let scan = state.app.scan_secrets(&cached.session, &raw);
+        assert!(scan.scanned_records > 0);
+        assert!(
+            state.sessions.try_lock().is_ok(),
+            "the raw-file secret scan must not run under the cache lock"
+        );
+    }
+
+    #[test]
+    fn a_panic_under_the_cache_lock_does_not_disable_later_commands() {
+        // Before, the closure ran under the lock, so one panic anywhere in
+        // analysis left every later command answering "the in-memory session
+        // cache is unavailable" until the app was restarted.
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = state
+            .list_sessions(None, None, None)
+            .expect("list committed synthetic fixtures");
+        let codex_id = session_id(&sessions, "codex");
+
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = state.sessions.lock().expect("take the cache lock");
+            panic!("a command unwound while holding the cache lock");
+        }));
+        std::panic::set_hook(previous);
+        assert!(panicked.is_err());
+        assert!(
+            state.sessions.is_poisoned(),
+            "the test must actually poison the lock it is about"
+        );
+
+        let after = state
+            .list_sessions(None, None, None)
+            .expect("the session list still answers after a poisoning panic");
+        assert_eq!(after.len(), 2);
+        state
+            .inspect_session(&codex_id)
+            .expect("inspection still answers after a poisoning panic");
+        state
+            .doctor(&codex_id, None)
+            .expect("the doctor still answers after a poisoning panic");
     }
 
     #[test]

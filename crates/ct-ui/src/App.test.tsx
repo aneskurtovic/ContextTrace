@@ -12,6 +12,7 @@ import type {
 } from "./types";
 
 vi.mock("./api", () => ({
+  isDemoData: vi.fn(),
   getStartup: vi.fn(),
   listSessions: vi.fn(),
   searchSessions: vi.fn(),
@@ -50,6 +51,9 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  // These cases are about a real desktop read; the demonstration-data path has
+  // its own file, which deliberately does not mock `./api`.
+  mockedApi.isDemoData.mockReturnValue(false);
   mockedApi.getStartup.mockResolvedValue(startup);
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
   mockedApi.inspectSession.mockImplementation(async (id) => demoDetail(id));

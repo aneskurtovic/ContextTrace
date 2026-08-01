@@ -457,6 +457,14 @@ fn find_fixed(
     }
 }
 
+/// Match a PEM block, and everything after an opening header that never closes.
+///
+/// A record that begins a key block and stops mid-body is the shape this
+/// project reads most: bounded and truncated tool output is the material it
+/// exists to analyse. Ending such a match at the header would leave the key
+/// body itself in redacted output, so an unterminated block claims the rest of
+/// the record. Over-redacting prose that merely quotes a `-----BEGIN` line is
+/// the affordable half of that trade.
 fn find_private_keys(text: &str, found: &mut Vec<SecretMatch>) {
     for label in [
         "PRIVATE KEY",
@@ -471,7 +479,7 @@ fn find_private_keys(text: &str, found: &mut Vec<SecretMatch>) {
             let end = text[after_header..]
                 .find(&end_marker)
                 .map(|offset| after_header + offset + end_marker.len())
-                .unwrap_or(after_header);
+                .unwrap_or(text.len());
             found.push(SecretMatch {
                 kind: SecretKind::PrivateKey,
                 start,
@@ -481,6 +489,14 @@ fn find_private_keys(text: &str, found: &mut Vec<SecretMatch>) {
     }
 }
 
+/// Match a secret-like name bound to a value, in either syntax that appears in
+/// a session.
+///
+/// Everything this tool reads is JSONL, so `"api_key": "…"` is the common form
+/// and `NAME=value` the exception; recognising only the shell form left the
+/// generic detector unable to fire on the project's own corpus. A quoted key
+/// closes before its separator, so the closing quote is stepped over rather
+/// than treated as the start of the value.
 fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
     let bytes = text.as_bytes();
     let mut cursor = 0;
@@ -492,9 +508,7 @@ fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
 
         let name_start = cursor;
         cursor += 1;
-        while cursor < bytes.len()
-            && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_')
-        {
+        while cursor < bytes.len() && name_char(bytes[cursor]) {
             cursor += 1;
         }
         let name = &text[name_start..cursor];
@@ -506,7 +520,13 @@ fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
         while bytes.get(value_start).is_some_and(u8::is_ascii_whitespace) {
             value_start += 1;
         }
-        if bytes.get(value_start) != Some(&b'=') {
+        if matches!(bytes.get(value_start), Some(b'\'') | Some(b'"')) {
+            value_start += 1;
+        }
+        while bytes.get(value_start).is_some_and(u8::is_ascii_whitespace) {
+            value_start += 1;
+        }
+        if !matches!(bytes.get(value_start), Some(b'=') | Some(b':')) {
             continue;
         }
         value_start += 1;
@@ -538,17 +558,64 @@ fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
     }
 }
 
+/// Decide whether a name promises a credential, whatever its spelling.
+///
+/// Matching runs on words rather than on underscores, so `AWS_SECRET_KEY`,
+/// `aws-secret-key` and `awsSecretKey` are the same name here. JSON keys are
+/// usually written in the last of those three, and keying on underscores made
+/// every one of them invisible. `KEY` alone is deliberately not enough: it is
+/// too common a word to carry the claim on its own.
 fn secretish_name(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    upper == "TOKEN"
-        || upper == "PASSWORD"
-        || upper == "PRIVATE_KEY"
-        || upper.ends_with("_TOKEN")
-        || upper.ends_with("_PASSWORD")
-        || upper.ends_with("_API_KEY")
-        || upper.ends_with("_PRIVATE_KEY")
-        || upper.contains("_SECRET")
-        || upper.contains("SECRET_ACCESS_KEY")
+    let words = name_words(name);
+    let Some(last) = words.last() else {
+        return false;
+    };
+    if words.iter().any(|word| word == "SECRET") {
+        return true;
+    }
+    if matches!(
+        last.as_str(),
+        "TOKEN" | "PASSWORD" | "PASSPHRASE" | "CREDENTIAL" | "CREDENTIALS"
+    ) {
+        return true;
+    }
+    if last != "KEY" || words.len() < 2 {
+        return false;
+    }
+    matches!(
+        words[words.len() - 2].as_str(),
+        "API" | "PRIVATE" | "ACCESS" | "AUTH" | "SIGNING" | "ENCRYPTION" | "SESSION"
+    )
+}
+
+/// Split a name into upper-case words across `_`, `-`, `.` and case changes.
+///
+/// `APIKey` splits before the final word rather than after the acronym, so
+/// `xApiKey`, `X-API-KEY` and `x_api_key` all reduce to `[X, API, KEY]`.
+fn name_words(name: &str) -> Vec<String> {
+    let chars: Vec<char> = name.chars().collect();
+    let mut words = Vec::new();
+    let mut word = String::new();
+    for (index, &current) in chars.iter().enumerate() {
+        if matches!(current, '_' | '-' | '.') {
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            continue;
+        }
+        let starts_word = current.is_ascii_uppercase()
+            && !word.is_empty()
+            && (!chars[index - 1].is_ascii_uppercase()
+                || chars.get(index + 1).is_some_and(char::is_ascii_lowercase));
+        if starts_word {
+            words.push(std::mem::take(&mut word));
+        }
+        word.push(current.to_ascii_uppercase());
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
 fn looks_like_placeholder(value: &str) -> bool {
@@ -560,6 +627,12 @@ fn looks_like_placeholder(value: &str) -> bool {
         || lower.starts_with("changeme")
         || lower.starts_with("replace_me")
         || lower.starts_with("your_")
+}
+
+/// A name may be written `api_key`, `api-key` or `apiKey`; all three continue
+/// the same name here.
+fn name_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }
 
 fn token_char(byte: u8) -> bool {
@@ -626,12 +699,74 @@ mod tests {
     }
 
     #[test]
+    fn finds_secret_like_members_in_a_json_session_record() {
+        // The corpus is JSONL, so this is the shape the generic detector has to
+        // work on: colon separators, quoted values and camel-case keys.
+        let record = concat!(
+            r#"{"type":"tool_use","name":"Bash","input":{"#,
+            r#""command":"curl -H 'x-api-key: 8f2b1c9d44ae5107bd33' https://api.internal/v1"},"#,
+            r#""env":{"apiKey":"9c1f2b7d8e4a6053ab21","authToken":"3e5d9a1c7b2f4068dc84","#,
+            r#""clientSecret":"a71f0c4e9d2b6538fa19","DATABASE_PASSWORD":"your_password_here"},"#,
+            r#""usage":{"max_tokens":4096,"model":"claude-opus-4-8"}}"#
+        );
+
+        let matches = find_secrets(record);
+        assert_eq!(
+            matches.len(),
+            4,
+            "the header, both camel-case keys and the client secret are all assignments"
+        );
+        assert!(matches
+            .iter()
+            .all(|found| found.kind == SecretKind::EnvironmentSecret));
+
+        let (redacted, count) = redact_text(record);
+        assert_eq!(count, 4);
+        for value in [
+            "8f2b1c9d44ae5107bd33",
+            "9c1f2b7d8e4a6053ab21",
+            "3e5d9a1c7b2f4068dc84",
+            "a71f0c4e9d2b6538fa19",
+        ] {
+            assert!(!redacted.contains(value), "{value} survived redaction");
+        }
+        assert!(
+            redacted.contains(r#""apiKey":"[REDACTED:environment-secret]""#),
+            "redaction keeps the record's shape: {redacted}"
+        );
+        assert!(
+            redacted.contains(r#""max_tokens":4096"#) && redacted.contains("claude-opus-4-8"),
+            "a token count and a model name are not credentials: {redacted}"
+        );
+        assert!(
+            redacted.contains("your_password_here"),
+            "a placeholder is still not reported as a secret"
+        );
+    }
+
+    #[test]
     fn a_private_key_is_redacted_as_one_value_including_its_body() {
         let pem =
             "before -----BEGIN PRIVATE KEY-----\nsecret-body\n-----END PRIVATE KEY----- after";
         let (redacted, count) = redact_text(pem);
         assert_eq!(count, 1);
         assert_eq!(redacted, "before [REDACTED:private-key] after");
+    }
+
+    #[test]
+    fn a_key_block_cut_off_mid_body_is_redacted_to_the_end_of_the_record() {
+        // Truncated records are the material this project reads, so the block
+        // that never closes must not leak the half of the key that was written.
+        let truncated = concat!(
+            "tool output: -----BEGIN RSA PRIVATE KEY-----\n",
+            "MIIEowIBAAKCAQEAvR8kJ2mQ1sX7pL0fY6nD4wT9cH5bV2gA3rK8mN1qS4tU6xZ0\n",
+            "wB7yC9dE2fG5hJ8kL1mN4pQ7rS0tU3vW6xY9zA2bC5dE8fG1h[output truncated"
+        );
+
+        let (redacted, count) = redact_text(truncated);
+        assert_eq!(count, 1);
+        assert_eq!(redacted, "tool output: [REDACTED:private-key]");
+        assert!(!redacted.contains("MIIEowIBAAKCAQEA"));
     }
 
     struct Lines(&'static str);

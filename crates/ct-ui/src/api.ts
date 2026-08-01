@@ -20,6 +20,18 @@ import {
 const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/**
+ * Whether every figure on screen came from `demo.ts` instead of a local log.
+ *
+ * Without the desktop bridge each call below answers from fabricated fixtures,
+ * which is useful for developing the interface and indefensible to show
+ * unlabelled: this tool's whole claim is evidence over invention. The UI asks
+ * this so it can say so wherever those numbers are rendered.
+ */
+export function isDemoData(): boolean {
+  return !inTauri();
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 const agents = new Set(["codex", "claude-code"]);
