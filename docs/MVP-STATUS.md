@@ -22,12 +22,6 @@ unsigned installer upgrades and launches locally, and installed 1024×680 and
 and portable-CLI validation, and release-candidate soak remain. Windows signing
 is deliberately deferred until the production-release discussion.
 
-One documentation gate also remains, tracked as CT-067: the README is still an
-engineering narrative rather than a front door, and it does not document
-building and installing locally — which, until a public download exists, is the
-only path a new user has. Publishing the repository before that is fixed spends
-the first impression on the wrong file.
-
 Realistic distance from a Windows-first public desktop MVP: **one clean-machine
 release-candidate session (roughly half to one hands-on day), followed by a
 short soak**. There is no known core product-code gap. Code-signing certificate
@@ -80,7 +74,7 @@ evidence that one is required for the core workflow.
 | Local-first safety | Pass | Read-only roots, no application telemetry/upload code, core-only desktop capability, local-IPC CSP, secret scan and redacted export are implemented. |
 | Repeatable verification | Pass | The first main-branch CI run passes Rust 1.88/stable, all tests, frontend production build, desktop compilation, release workspace build and two-agent fixture smoke. |
 | Installation and legal basics | Partial | MIT license, per-user NSIS, CLI ZIP, checksums and draft release automation exist; pass clean-machine install/upgrade checks. Signing is deferred until the production-release decision. |
-| Release documentation | Partial | README covers candidate installation, upgrade and known limitations; operator procedure is documented; final release notes still need clean-machine validation. |
+| Release documentation | Pass | README is a front door (~300 lines: what it is, quickstart, install, commands, roadmap) with the engineering narrative moved to `docs/guide.md`, `docs/formats.md`, `docs/methodology.md` and `docs/architecture.md`; candidate installation, upgrade and known limitations are covered; operator procedure is documented. Final release notes still need clean-machine validation as part of CT-043's release-candidate soak. |
 
 ## Recommended order
 

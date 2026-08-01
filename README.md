@@ -159,20 +159,25 @@ agent-ae    claude-code   2026-08-01 19:42     405.0 KB  C:\Users\anesk\source\r
 10 session(s). Inspect one with: ct inspect <id>
 
 > ct context 03b48276
-Context at turn 91 - 197,520 [observed]
+Context at turn 97 - 206,569 [observed]
 Model      claude-opus-5
 Estimator  heuristic:chars/2.4
 
-  Tool outputs              161,682   81.9%  ████████████████····  [estimated]
-  Tool calls                 16,991    8.6%  ██··················  [estimated]
-  User messages               6,440    3.3%  █···················  [estimated]
+  Tool outputs              167,055   80.9%  ████████████████····  [estimated]
+  Tool calls                 19,311    9.3%  ██··················  [estimated]
+  User messages               6,894    3.3%  █···················  [estimated]
   ... 8 more categories; exact-duplicate and low-information sections
       also print by default and are omitted here — see the guide for a
       full worked example ...
 
-  Calibration: estimates scaled by 0.33 to meet the observed total of 197,520.
+  Calibration: estimates scaled by 0.33 to meet the observed total of 206,569.
+  The estimator ran 201% high, so the scaled figures consumed the whole
+  budget and no residual remains. That does NOT mean there is no hidden
+  context -- the system prompt and tool schemas are still in the total, and their
+  share has been absorbed into the categories above. Treat the breakdown
+  as proportions, not as an inventory.
 
-332 context items. Largest contributors: ct largest <id> --turn 91
+352 context items. Largest contributors: ct largest <id> --turn 97
 ```
 
 ## Commands

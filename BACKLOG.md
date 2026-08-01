@@ -282,8 +282,12 @@ is fine at today's sizes and will not stay fine; a fingerprint of the kind
 **Done when:** matching is linear in the size of the two histories, with the
 same dropped/preserved/added answers.
 
+---
+
+## Done
+
 ### CT-067 · Make the README a front door before the repository is public
-`status: todo` · `tier: A` · `size: M` · `source: review`
+`status: done` · `tier: A` · `size: M` · `source: review`
 
 **Why:** **this gates the public launch** — it is the one moment the README is
 read by people who have never seen the project, and a first impression cannot be
@@ -302,9 +306,27 @@ methodology, architecture) and linked rather than deleted; the desktop app is
 shown with at least one screenshot; and someone who has never seen the
 repository can install and run both surfaces from the README alone.
 
----
-
-## Done
+**Accepted on 2026-08-01.** The README is 305 lines, down from 936, and every
+remaining line pulls its weight: pitch, supported agents, a features table,
+local install (CLI and desktop, from source, since there is no public download
+yet), a quickstart with real captured output, the command table, how to read
+the numbers, privacy, status and contributing. The engineering narrative moved
+to four linked documents rather than being cut: `docs/guide.md` (a worked
+example per command, with real output), `docs/formats.md` (what Codex CLI and
+Claude Code actually write to disk), `docs/methodology.md` (how two agents'
+logs become comparable numbers, and where the tool refuses to answer), and
+`docs/architecture.md` (crate layout, the invariants the type system enforces,
+fixtures and testing). A screenshot of the desktop app's overview panel now
+sits right under the pitch, so a visitor sees the product before reading a
+word of prose. What runs today (Features) is kept separate from what is next
+or deferred (Roadmap), so a reader never has to guess which claims are shipped
+and which are aspirational. Test and event counts are not stated in prose
+anywhere in the README or the four docs — CI publishes and enforces them, and
+a hand-written count would go stale the next time a test is added; the one
+corpus figure that does appear (session/event counts from a format-drift
+sweep) carries its capture date, the same discipline `docs/MVP-STATUS.md`
+already applied. Someone who has never seen the repository can now go from
+the pitch to a running `ct.exe` using only the README.
 
 ### CT-049 · Redact a private key whose block never closes
 `status: done` · `tier: A` · `size: S` · `source: review`
