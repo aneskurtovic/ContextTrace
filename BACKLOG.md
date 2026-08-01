@@ -282,6 +282,23 @@ is fine at today's sizes and will not stay fine; a fingerprint of the kind
 **Done when:** matching is linear in the size of the two histories, with the
 same dropped/preserved/added answers.
 
+### CT-068 · Re-capture five stale terminal blocks in the extracted docs
+`status: todo` · `tier: B` · `size: S` · `source: review`
+
+**Why:** the README-front-door extraction carried five quoted terminal blocks
+into `docs/methodology.md` (lines 99 and 108) and `docs/guide.md` (lines 163,
+237 and 238) verbatim from the original README. They show an em dash `—` where
+the binary actually prints an ASCII `-`, and one carries a `tokens` word its own
+header omits. These were inherited defects, not introduced by the move, but the
+move changed their standing: they are no longer prose beside the README's own
+quickstart, they are standalone public reference documents. On a project whose
+whole thesis is that shown output is real output, hand-editing the punctuation
+of a quoted terminal block is the wrong fix — it is exactly the failure this
+branch already caught and reverted three times elsewhere. The correct fix is a
+deliberate re-capture from the real binary.
+**Done when:** all five blocks are re-captured from the binary's actual output
+rather than hand-edited, and match character-for-character.
+
 ---
 
 ## Done
@@ -306,7 +323,7 @@ methodology, architecture) and linked rather than deleted; the desktop app is
 shown with at least one screenshot; and someone who has never seen the
 repository can install and run both surfaces from the README alone.
 
-**Accepted on 2026-08-01.** The README is 305 lines, down from 936, and every
+**Accepted on 2026-08-01.** The README is down from 936 lines, and every
 remaining line pulls its weight: pitch, supported agents, a features table,
 local install (CLI and desktop, from source, since there is no public download
 yet), a quickstart with real captured output, the command table, how to read

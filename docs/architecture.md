@@ -63,9 +63,12 @@ item tokens plus the unattributed residual equalling the reported total. An
 inconsistent breakdown is unrepresentable, not merely discouraged.
 
 **Exact duplicate content is named and costed.** On `ct context`'s opt-in
-analysis path, each adapter reduces model-visible content to a fixed-size
-identity, excluding retry-specific transport ids. Other commands do not pay to
-analyse content they never compare. `ct context` groups equal identities,
+analysis path — opt-in in that only `ct context` triggers this load path, so
+every other command never pays for it, not that `ct context` itself needs a
+flag; its own terminal output prints the findings by default — each adapter
+reduces model-visible content to a fixed-size identity, excluding
+retry-specific transport ids. Other commands do not pay to analyse content
+they never compare. `ct context` groups equal identities,
 reports the tokens occupied by every copy and the avoidable tokens after the
 first, and includes all groups in `--json`. Content the log hides — notably
 Claude Code's redacted thinking — is not fingerprinted, because an exact-match
@@ -87,7 +90,7 @@ model did not need.
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented |
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
-| `ct-cli` — the thirteen commands below | Implemented |
+| `ct-cli` — the thirteen commands in the [README](../README.md#commands) | Implemented |
 | `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Desktop MVP accepted: real-corpus installed search/filtering and native 1024×680/1440×900 checks; new panels pass responsive acceptance |
 | Standalone JSONL fixture files | Implemented |
 | Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |
@@ -114,18 +117,18 @@ an event type from the future.
 
 ## Testing approach
 
-Committed fixtures are **hand-authored synthetic JSONL** covering each event
-shape found in the format probe, including a deliberate unknown-event-type case
-asserting graceful degradation. Real session logs are never committed; they are
-used only as a local, gitignored corpus for a zero-panic smoke test that also
-reports a histogram of unrecognised event types — which is how a format change
-upstream surfaces as a count rather than a crash.
+The fixtures also cover each event shape found in the format probe, including a
+deliberate unknown-event-type case asserting graceful degradation. Real session
+logs are never committed; they are used only as a local, gitignored corpus for a
+zero-panic smoke test that also reports a histogram of unrecognised event
+types — which is how a format change upstream surfaces as a count rather than a
+crash.
 
 That histogram has already paid for itself twice. It auto-detected five
 previously unseen event types (`relocated`, `file-history-delta`,
 `custom-title`, `frame-link`, `inter_agent_communication_metadata`) as counts
-rather than crashes. And the accuracy defects above — the multi-call sums, the
-redacted thinking, the JSON-escaping inflation — were all found by measuring the
-corpus against its own reported usage. None of them would have failed a unit
-test written from the format alone, which is the argument for keeping a
-real-data check in the loop.
+rather than crashes. And the accuracy defects in [formats](./formats.md) — the
+multi-call sums, the redacted thinking, the JSON-escaping inflation — were all
+found by measuring the corpus against its own reported usage. None of them
+would have failed a unit test written from the format alone, which is the
+argument for keeping a real-data check in the loop.

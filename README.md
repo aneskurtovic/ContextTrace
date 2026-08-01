@@ -35,22 +35,22 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 
 ## Features
 
-What runs today, on either surface:
+What runs today:
 
-| Feature | What it answers |
-|---|---|
-| Context composition | What filled a turn's context window, by category and confidence |
-| Largest contributors | Which items are biggest, ranked and named by what they acted on |
-| Item lifecycle tracing | When an item entered context, and when — or why — it left |
-| Codex compaction diffs | Exactly what a compaction dropped, kept or replaced |
-| Turn and session comparison | What changed between two turns, with measurement skew bounded |
-| Growth chart | The whole session's prompt size over time, purely from observed data |
-| Exact duplicate detection | Identical content repeated in a turn, and its token cost |
-| Low-information scoring | Large, highly-compressible blocks ranked by likely waste |
-| Secret scanning and redacted export | Where credential-shaped strings appear, without ever printing them |
-| Format-drift sweep | Whether this build recognises every event type in a local corpus |
-| NDJSON export | The whole session as typed records, cross-checked against the totals |
-| Desktop app | The same measurements in a native Windows browsing and inspection UI |
+| Feature | What it answers | Surface |
+|---|---|---|
+| Context composition | What filled a turn's context window, by category and confidence | CLI + desktop |
+| Largest contributors | Which items are biggest, ranked and named by what they acted on | CLI + desktop |
+| Item lifecycle tracing | When an item entered context, and when — or why — it left | CLI + desktop |
+| Codex compaction diffs | Exactly what a compaction dropped, kept or replaced | CLI |
+| Turn and session comparison | What changed between two turns, with measurement skew bounded | CLI |
+| Growth chart | The whole session's prompt size over time, purely from observed data | CLI + desktop |
+| Exact duplicate detection | Identical content repeated in a turn, and its token cost | CLI + desktop |
+| Low-information scoring | Large, highly-compressible blocks ranked by likely waste | CLI + desktop |
+| Secret scanning and redacted export | Where credential-shaped strings appear, without ever printing them | CLI |
+| Format-drift sweep | Whether this build recognises every event type in a local corpus | CLI |
+| NDJSON export | The whole session as typed records, cross-checked against the totals | CLI |
+| Desktop app | The same measurements in a native Windows browsing and inspection UI | Desktop |
 
 ## Install
 
@@ -193,7 +193,8 @@ for how the ratio is derived from a session's own turn-to-turn deltas.
 
 ## Commands
 
-`ct context` and `ct largest` accept the same filters:
+`ct context` and `ct largest` accept the same shared filter flags — a
+reference summary below, not captured program output:
 
 ```
 filters: --source <kind[:text]>  --category <name>
@@ -215,6 +216,8 @@ filters: --source <kind[:text]>  --category <name>
 | `ct doctor` | [Whether this build recognises every event type in a local corpus](docs/guide.md#catching-an-agent-that-changed-its-format) |
 | `ct export <id>` | [The whole session as NDJSON, optionally redacted](docs/guide.md#getting-the-numbers-out) |
 | `ct secrets <id>` | [Where credential-shaped strings appear, without ever printing them](docs/guide.md#finding-credentials-without-disclosing-them-again) |
+
+Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
@@ -299,7 +302,7 @@ cd crates/ct-ui
 npm ci
 npm test
 npm run build
-npm run tauri dev
+npm run tauri build -- --no-bundle
 ```
 
 `npm run dev` by itself opens a browser preview backed by synthetic sessions;
@@ -308,8 +311,9 @@ adapters.
 
 Node 18 runs `npm ci` successfully and then silently omits an optional
 native binding, so the failure surfaces later as `Cannot find native
-binding` — use Node 22. The minimum Rust version is **1.88**; CI checks it
-explicitly.
+binding` — use Node 22. The minimum Rust version is **1.88**, raised from
+1.85 once the Tauri dependency graph made the old claim false; CI checks
+1.88 explicitly.
 
 ## License
 
