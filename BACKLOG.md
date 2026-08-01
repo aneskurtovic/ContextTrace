@@ -133,6 +133,8 @@ departure, unreadable gaps and excluded main/subagent turns using distinct
 language. A current 253-turn Codex trace completed in 0.49 seconds and found a
 170-turn run removed by the next compaction. IPC validation, two-agent fixtures,
 frontend open/close state tests and responsive 1024×680/1440×900 checks pass.
+The updated unsigned NSIS bundle also completed an in-place local upgrade and
+the installed app launched responsively.
 
 ### CT-045 · Put Context Doctor in the desktop app
 `status: done` · `tier: A` · `size: S` · `source: desktop product strategy`
