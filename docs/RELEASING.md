@@ -39,9 +39,9 @@ Use this acceptance sequence on the clean host:
 6. leave the candidate installed for the agreed soak and record any crash,
    stale-data or format-drift evidence before publishing.
 
-Local acceptance on 2026-08-01 completed the in-place per-user install, native
-layout and real-corpus workflow portions of this sequence. It does not replace
-the separate clean-host and downloaded-asset checks.
+Local acceptance on 2026-08-01 completed in-place upgrade, uninstall/fresh
+reinstall, native layout and real-corpus workflow portions of this sequence.
+It does not replace the separate clean-host and downloaded-asset checks.
 
 ## Optional Windows code signing
 

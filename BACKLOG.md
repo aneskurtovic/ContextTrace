@@ -54,10 +54,13 @@ been exercised on clean machines.
 Windows release workflow, CLI ZIP, SHA-256 manifest and operator procedure now
 exist. On 2026-08-01 the unsigned installer rebuilt, replaced an existing
 per-user 0.1.0 installation, registered its uninstaller and Start-menu/Desktop
-shortcuts, launched against 816 local sessions, and passed native 1024×680 and
-1440×900 checks. The workflow rejects mixed workspace versions, fails closed on
-partial signing configuration and, when a PFX, password and timestamp service
-are provided, signs and verifies both the installer and companion CLI.
+shortcuts, and launched against 816 local sessions. A subsequent local
+uninstall removed only the app registration, files and shortcuts; reinstalling
+the same hashed candidate restored them and launched responsively. Native
+1024×680 and 1440×900 checks pass. The workflow rejects mixed workspace
+versions, fails closed on partial signing configuration and, when a PFX,
+password and timestamp service are provided, signs and verifies both the
+installer and companion CLI.
 Certificate provisioning is deferred until the production-release decision;
 a clean Windows host, downloaded-artifact/CLI checks and candidate soak remain.
 

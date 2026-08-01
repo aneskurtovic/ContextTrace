@@ -40,7 +40,7 @@ certificate procurement is deferred until the production-release decision.
 | Format-drift sweep | 816 sessions (717 Claude Code, 99 Codex), 148,970 events, every type recognised, 5.88 seconds |
 | Privacy architecture | No application upload/telemetry code; core-only Tauri capability and local-IPC CSP; read-only adapters |
 | Desktop acceptance | Real-corpus budgets, race handling, measurement-limit copy, keyboard semantics, loading/empty/error/malformed states and reduced motion pass; installed search and Codex/Claude filtering plus native 1024×680/1440×900 layouts pass against 816 sessions |
-| Distribution | Windows CI is green; the 2026-08-01 unsigned NSIS candidate rebuilt, replaced the prior per-user install, registered shortcuts/uninstaller and launched successfully; local staged CLI/checksums pass, while clean-machine downloaded-asset acceptance remains |
+| Distribution | Windows CI is green; the 2026-08-01 unsigned NSIS candidate passed in-place upgrade plus local uninstall/fresh reinstall, restored shortcuts/uninstaller and launched successfully; local staged CLI/checksums pass, while clean-machine downloaded-asset acceptance remains |
 | Legal packaging | MIT `LICENSE` is present and included in the CLI archive |
 | crates.io packaging | `cargo package -p ct-cli --no-verify` fails because internal path dependencies have no registry version requirement |
 
