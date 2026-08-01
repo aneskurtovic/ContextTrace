@@ -22,12 +22,13 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 > measured turns, and shows context composition and largest contributors using
 > the same Rust application service as the CLI.
 >
-> On 2026-07-29, `ct doctor --dir` parsed **792 local sessions** (715 Claude Code
-> and 77 Codex), recognised all **134,764 events**, and finished in 2.71
-> seconds. CI, bounded accounting defects, desktop performance, accessibility
-> states and installer generation are now closed. The remaining public-release
-> work is installed visual acceptance, Windows signing, a clean-machine pass
-> and release-candidate soak. See
+> On 2026-08-01, `ct doctor --dir` parsed **816 local sessions** (717 Claude Code
+> and 99 Codex), recognised all **148,970 events**, and finished in 5.88
+> seconds. CI, bounded accounting defects, desktop performance, accessibility,
+> installer generation and installed 1024×680/1440×900 visual acceptance are
+> now closed. The remaining public-release work is a clean-machine pass of the
+> downloaded artifacts and release-candidate soak; Windows signing is deferred
+> until the production-release discussion. See
 > [MVP status and release plan](docs/MVP-STATUS.md) for the evidence, gates and
 > realistic distance.
 
@@ -403,7 +404,7 @@ false; CI now checks 1.88 explicitly.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the thirteen commands below | Implemented, 23 tests |
-| `ct-ui` — Tauri v2 + React paged session search, growth, composition and contributors | Useful slice implemented, 5 Rust IPC tests plus 17 frontend tests; installed visual acceptance remains |
+| `ct-ui` — Tauri v2 + React paged session search, growth, composition and contributors | Desktop MVP accepted: 5 Rust IPC tests, 17 frontend tests, real-corpus installed search/filtering and native 1024×680/1440×900 checks |
 | Standalone JSONL fixture files | Implemented, 14 tests |
 | Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |
 | Session metadata search | Implemented server-side with explicit paging |

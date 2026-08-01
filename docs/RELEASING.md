@@ -26,6 +26,23 @@ Get-FileHash .\ContextTrace-<version>-windows-x64-cli.zip -Algorithm SHA256
 Also install the NSIS artifact on a clean Windows machine, run `ct.exe --help`
 from the extracted CLI ZIP, and complete the desktop acceptance checks.
 
+Use this acceptance sequence on the clean host:
+
+1. verify both downloaded hashes against `SHA256SUMS.txt`;
+2. install without administrator elevation and launch from the Start menu;
+3. confirm Codex and Claude Code roots are discovered, search for a known
+   project, filter each agent, inspect a session and move between measured turns;
+4. resize the native window to 1024×680 and 1440×900 and check focus, contrast,
+   scrolling and the composition/contributor panels;
+5. install the candidate over the previous private candidate, repeat launch and
+   one inspection, then run `ct.exe --help` from the extracted CLI ZIP;
+6. leave the candidate installed for the agreed soak and record any crash,
+   stale-data or format-drift evidence before publishing.
+
+Local acceptance on 2026-08-01 completed the in-place per-user install, native
+layout and real-corpus workflow portions of this sequence. It does not replace
+the separate clean-host and downloaded-asset checks.
+
 ## Optional Windows code signing
 
 Both the desktop installer and portable `ct.exe` are unsigned by default. If

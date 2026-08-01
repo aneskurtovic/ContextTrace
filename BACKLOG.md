@@ -37,41 +37,8 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-044 · Complete desktop MVP acceptance
-`status: next` · `tier: A` · `size: L` · `source: product decision`
-
-**Why:** the public product now requires a desktop app. CT-030 delivered a
-working vertical slice—session discovery, filtering, prompt growth, compaction
-markers, turn selection, composition and largest contributors—but it has not
-yet been exercised as an installed app across the real corpus or accepted
-visually and interactively.
-**Done when:** the Windows desktop build completes the discovery-to-diagnosis
-workflow on real Codex and Claude Code sessions; cold load and cached turn
-switching have explicit budgets and meet them on the largest local sessions;
-empty, malformed and very large sessions have usable states; keyboard and
-1024/1440px layouts pass visual acceptance; and an end-to-end test covers the
-Rust IPC contract without reading private corpus data.
-
-**Progress:** fixture-backed Rust tests now cover the full desktop
-list-to-inspect-to-context IPC contract for both agents, cache refresh and
-failure cases. Release benchmarks on the largest local Codex session (94.6 MiB)
-and two high-turn Claude sessions put cold discovery-to-snapshot at 0.79–1.43
-seconds and cached turn switching below 1 ms. The MVP budgets are therefore
-2 seconds cold and 50 ms cached on this reference machine; SQLite is not
-required for 0.1. Seventeen frontend tests now cover loading, empty, error and
-malformed IPC states, keyboard-operable chart points, focus visibility, live
-regions, reduced motion and out-of-order session/turn requests. Measurement
-confidence, calibration and an unmeasurable remainder are stated in the UI.
-Backend search and paging can reach an older targeted session beyond an initial
-500-session page without loading session bodies. Installed 1024/1440px visual
-acceptance remains.
-
----
-
-## Todo
-
 ### CT-043 · Ship an installable 0.1.0
-`status: todo` · `tier: A` · `size: L` · `source: MVP review`
+`status: next` · `tier: A` · `size: L` · `source: MVP review`
 
 **Why:** the CLI and desktop app work for a developer with the repository, but
 the locally built installer is unsigned and has not passed a clean-machine
@@ -85,12 +52,18 @@ been exercised on clean machines.
 
 **Progress:** the MIT license, current-user NSIS configuration, draft-first
 Windows release workflow, CLI ZIP, SHA-256 manifest and operator procedure now
-exist. A local unsigned NSIS build produced the expected installer. The
-workflow rejects mixed workspace versions, fails closed on partial signing
-configuration and, when a PFX, password and timestamp service are provided,
-signs and verifies both the installer and companion CLI. Certificate
-provisioning is deferred until the production-release decision; clean-machine
-install/upgrade acceptance remains.
+exist. On 2026-08-01 the unsigned installer rebuilt, replaced an existing
+per-user 0.1.0 installation, registered its uninstaller and Start-menu/Desktop
+shortcuts, launched against 816 local sessions, and passed native 1024×680 and
+1440×900 checks. The workflow rejects mixed workspace versions, fails closed on
+partial signing configuration and, when a PFX, password and timestamp service
+are provided, signs and verifies both the installer and companion CLI.
+Certificate provisioning is deferred until the production-release decision;
+a clean Windows host, downloaded-artifact/CLI checks and candidate soak remain.
+
+---
+
+## Todo
 
 ### CT-026 · Cost projection
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
@@ -115,6 +88,30 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-044 · Complete desktop MVP acceptance
+`status: done` · `tier: A` · `size: L` · `source: product decision`
+
+**Why:** the public product requires a desktop app that completes the core
+workflow without relying on the CLI.
+**Done when:** the Windows desktop build completes the discovery-to-diagnosis
+workflow on real Codex and Claude Code sessions; cold load and cached turn
+switching have explicit budgets and meet them on the largest local sessions;
+empty, malformed and very large sessions have usable states; keyboard and
+1024/1440px layouts pass visual acceptance; and an end-to-end test covers the
+Rust IPC contract without reading private corpus data.
+
+**Accepted on 2026-08-01.** Fixture-backed Rust tests cover the full desktop
+list-to-inspect-to-context IPC contract for both agents, cache refresh and
+failure cases. Release benchmarks on the largest local Codex session (94.6 MiB)
+and two high-turn Claude sessions put cold discovery-to-snapshot at 0.79–1.43
+seconds and cached turn switching below 1 ms, inside the 2-second/50-ms budgets.
+Seventeen frontend tests cover loading, empty, error and malformed IPC states,
+keyboard-operable chart points, focus visibility, live regions, reduced motion
+and out-of-order requests. Installed acceptance then exercised search and both
+agent filters against 816 local sessions and inspected native 1024×680 and
+1440×900 layouts. The pass exposed 8–9 px supporting text; it was raised to
+9–12 px and rechecked with no horizontal overflow.
 
 ### CT-027 · Codex compaction diff engine
 `status: done` · `tier: B` · `size: M` · `source: IDEAS.md §1`
