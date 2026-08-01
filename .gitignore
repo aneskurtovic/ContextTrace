@@ -8,6 +8,11 @@ Cargo.lock.orig
 /corpus/
 /tests/corpus/
 
+# Working notes from the Superpowers skills -- design specs and implementation
+# plans written to drive a single piece of work. The decisions that outlive
+# them belong in commit messages, BACKLOG.md and docs/.
+/docs/superpowers/
+
 # Tauri (milestone 3)
 /crates/ct-ui/target
 /crates/ct-ui/dist
