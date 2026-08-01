@@ -151,28 +151,28 @@ Nothing is written to them, and nothing leaves this machine.
 
 > ct sessions --limit 10
 ID          AGENT         LAST ACTIVITY            SIZE  PROJECT
-agent-a6    claude-code   2026-08-01 19:24     404.6 KB  C:\Users\anesk\source\repos\ContextTrace
-03b48276    claude-code   2026-08-01 19:24       3.0 MB  C:\Users\anesk\source\repos\ContextTrace
-agent-a7    claude-code   2026-08-01 17:31       2.1 MB  C:\Users\anesk\source\repos\ContextTrace
+agent-a6    claude-code   2026-08-01 19:43       1.0 MB  C:\Users\anesk\source\repos\ContextTrace
+03b48276    claude-code   2026-08-01 19:43       3.2 MB  C:\Users\anesk\source\repos\ContextTrace
+agent-ae    claude-code   2026-08-01 19:42     405.0 KB  C:\Users\anesk\source\repos\ContextTrace
 ... 7 more of the 10 shown, same columns ...
 
 10 session(s). Inspect one with: ct inspect <id>
 
 > ct context 03b48276
-Context at turn 82 - 175,590 [observed]
+Context at turn 91 - 197,520 [observed]
 Model      claude-opus-5
 Estimator  heuristic:chars/2.4
 
-  Tool outputs              145,756   83.0%  █████████████████···  [estimated]
-  Tool calls                 13,700    7.8%  ██··················  [estimated]
-  User messages               5,922    3.4%  █···················  [estimated]
+  Tool outputs              161,682   81.9%  ████████████████····  [estimated]
+  Tool calls                 16,991    8.6%  ██··················  [estimated]
+  User messages               6,440    3.3%  █···················  [estimated]
   ... 8 more categories; exact-duplicate and low-information sections
       also print by default and are omitted here — see the guide for a
       full worked example ...
 
-  Calibration: estimates scaled by 0.29 to meet the observed total of 175,590.
+  Calibration: estimates scaled by 0.33 to meet the observed total of 197,520.
 
-302 context items. Largest contributors: ct largest 03b48276 --turn 82
+332 context items. Largest contributors: ct largest <id> --turn 91
 ```
 
 ## Commands
