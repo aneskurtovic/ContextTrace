@@ -159,26 +159,37 @@ agent-ae    claude-code   2026-08-01 19:42     405.0 KB  C:\Users\anesk\source\r
 10 session(s). Inspect one with: ct inspect <id>
 
 > ct context 03b48276
-Context at turn 97 - 206,569 [observed]
+Context at turn 101 - 216,303 [observed]
 Model      claude-opus-5
 Estimator  heuristic:chars/2.4
 
-  Tool outputs              167,055   80.9%  ████████████████····  [estimated]
-  Tool calls                 19,311    9.3%  ██··················  [estimated]
-  User messages               6,894    3.3%  █···················  [estimated]
+  Tool outputs              173,749   80.3%  ████████████████····  [estimated]
+  Tool calls                 21,419    9.9%  ██··················  [estimated]
+  Reasoning                   7,326    3.4%  █···················  [estimated]
   ... 8 more categories; exact-duplicate and low-information sections
-      also print by default and are omitted here — see the guide for a
-      full worked example ...
+      also print by default and are omitted here for length ...
 
-  Calibration: estimates scaled by 0.33 to meet the observed total of 206,569.
-  The estimator ran 201% high, so the scaled figures consumed the whole
+  Ratio      2.40 characters per token, measured from this session's own
+             usage across 76 turn pairs (spread 2.9x).
+  Unlogged   ~22,754 tokens the agent never wrote down -- its system prompt
+             and tool JSON schemas. Measured, not assumed.
+  The per-turn ratios varied widely, so this session mixes content that
+  tokenizes very differently. The ratio is a middle value, not a constant.
+
+  Calibration: estimates scaled by 0.34 to meet the observed total of 216,303.
+  The estimator ran 192% high, so the scaled figures consumed the whole
   budget and no residual remains. That does NOT mean there is no hidden
   context -- the system prompt and tool schemas are still in the total, and their
   share has been absorbed into the categories above. Treat the breakdown
   as proportions, not as an inventory.
 
-352 context items. Largest contributors: ct largest <id> --turn 97
+367 context items. Largest contributors: ct largest <id> --turn 101
 ```
+
+The `Ratio` and `Unlogged` lines are the tool's central claim — that the
+gap between what an agent logs and what it reports is measured, not
+assumed. See [methodology](docs/methodology.md#the-ratio-is-measured-not-assumed)
+for how the ratio is derived from a session's own turn-to-turn deltas.
 
 ## Commands
 
