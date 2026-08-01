@@ -374,6 +374,11 @@ npm ci
 npm run tauri build
 ```
 
+Budget time for the first run: a cold release build of the workspace plus the
+native webview stack took **39 minutes** on a recent laptop, most of it silent.
+The bundling step also downloads its own NSIS toolchain from GitHub the first
+time, so that step needs network access even though nothing it builds does.
+
 That writes an installer to
 `target\release\bundle\nsis\ContextTrace_<version>_x64-setup.exe`. Running it
 installs ContextTrace for the current user under `%LOCALAPPDATA%`, so it never
