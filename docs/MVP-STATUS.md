@@ -22,6 +22,12 @@ unsigned installer upgrades and launches locally, and installed 1024×680 and
 and portable-CLI validation, and release-candidate soak remain. Windows signing
 is deliberately deferred until the production-release discussion.
 
+One documentation gate also remains, tracked as CT-067: the README is still an
+engineering narrative rather than a front door, and it does not document
+building and installing locally — which, until a public download exists, is the
+only path a new user has. Publishing the repository before that is fixed spends
+the first impression on the wrong file.
+
 Realistic distance from a Windows-first public desktop MVP: **one clean-machine
 release-candidate session (roughly half to one hands-on day), followed by a
 short soak**. There is no known core product-code gap. Code-signing certificate
@@ -33,7 +39,7 @@ certificate procurement is deferred until the production-release decision.
 | Check | Result through 2026-08-01 |
 |---|---|
 | Local repository | One local branch (`main`), no changes, stashes, extra worktrees, unmerged commits or unreachable commits before this documentation update |
-| Automated tests | 298 Rust tests plus 22 frontend tests |
+| Automated tests | 302 Rust tests plus 23 frontend tests |
 | Static verification | `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass |
 | Build | `cargo build --workspace --release` passes on Rust 1.97.1, Windows/MSVC |
 | Binary smoke | `ct 0.1.0` starts and exposes all thirteen documented commands |

@@ -109,9 +109,303 @@ switches below 1 ms, so 0.1 has no evidence that a persistent index is needed.
 **Done when:** derived metadata is cached, disposable and rebuildable, and no
 domain type depends on it.
 
+### CT-051 · Widen the credential vocabulary the scanner claims to know
+`status: todo` · `tier: B` · `size: S` · `source: review`
+
+**Why:** the PEM label list covers four spellings and omits
+`ENCRYPTED PRIVATE KEY`, `DSA PRIVATE KEY` and `PGP PRIVATE KEY BLOCK`, so
+those blocks are not detected at all. GitLab `glpat-`, npm `npm_` and bare JWTs
+that arrive without a `Bearer` prefix are likewise absent. A scanner that names
+a fixed set is honest only if the set is written down where a user can see it.
+**Done when:** the missing key labels and token shapes are recognised, and the
+documented list of what is and is not detected matches the code.
+
+### CT-054 · Give the desktop caches a lifetime that fits how they are used
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** the `sessions` and `lifecycles` maps grow without bound — nothing
+evicts, so clicking through a catalog retains every parsed session for the life
+of the process. The only thing that ever clears them is `search_sessions`,
+which clears both on every call including plain pagination, so pressing "Load
+more" throws away all the parsing the user just waited for. The two policies
+are exactly backwards.
+**Done when:** the caches are bounded, and paging through results does not
+discard sessions already parsed.
+
+### CT-055 · Identify a session by agent and id together
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `App.tsx` keys its React list and its load-more dedup set on
+`${agent}:${id}`, conceding that an id alone is not unique across agents — but
+`selectedId` holds the bare id, `selected={selectedId === session.id}` matches
+on it, and `api.inspectSession(selectedId)` resolves on it. Two sessions from
+different agents sharing an id highlight together and load whichever the
+backend resolves first.
+**Done when:** selection and lookup carry the agent alongside the id, and a
+test covers a colliding pair.
+
+### CT-056 · Retire the superseded `list_sessions` command
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `App.tsx` calls only `searchSessions`, so `list_sessions` and its
+`api.ts` wrapper are dead — yet the command stays registered in
+`invoke_handler`, and its behaviour changed underneath its own compatibility
+note. It now forwards `project` as the free-text `query`, which
+`search_sessions` matches against id, path and agent as well, with
+`SessionFilter.project` pinned to `None`. A caller filtering by project would
+get sessions from other projects whose path merely contains the string, and its
+fixed `limit: 500` truncates silently against the 816 sessions this machine
+holds. Keeping a dead command whose contract quietly broke is worse than
+deleting it.
+**Done when:** the command is removed, or its documented project-filter
+contract is restored and exercised by a test.
+
+### CT-057 · Benchmark the path the desktop actually runs
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `desktop_perf.rs` times `runtime.app.load(&id)`, but the doctor view
+and `ct context` both call `load_with_content_analysis`, which additionally
+SHA-256s and DEFLATEs every model-visible payload. CT-029 cites the resulting
+1.43-second cold load as the evidence that no persistent index is needed, so a
+deferral decision currently rests on a measurement of a cheaper path than the
+one users wait on.
+**Done when:** the example measures the content-analysis load as well, and
+CT-029's note quotes whichever figure corresponds to the slowest path a user
+can reach.
+
+### CT-058 · Let `ct context` skip content analysis
+`status: todo` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `Command::Context` was switched to `load_with_content_analysis`
+unconditionally, so the most-used command in the CLI now hashes and compresses
+every payload in the session whether or not the duplicate and low-information
+sections find anything worth printing. There is no flag to decline it.
+**Done when:** the extra measurement is opt-in or demonstrably cheap enough not
+to be, with the cost recorded either way.
+
+### CT-059 · Say how much content the doctor could not measure
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `find_duplicate_content` and `find_low_entropy_content` both skip
+items whose `content_measurement` is `None`, and nothing downstream reports how
+many were skipped. The secret scan sets the right example — it carries
+`scanned_records` and `unreadable_records` — but "no duplicates found" from the
+same report may mean nothing was measurable. This project states its evidence
+limits everywhere else; here it states a clean bill of health instead.
+**Done when:** both detectors report the number of items they could not
+measure, and the CLI and desktop surfaces show it.
+
+### CT-060 · Separate the two ordinals in a compaction diff
+`status: todo` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `compare` emits one flat `Vec<CompactionDiffItem>` in which
+`Preserved` and `Dropped` rows carry their index into the pre-compaction
+history while `AddedByReplacement` rows carry their index into the replacement
+array. Two unrelated numbering schemes share one field name, so a renderer
+showing "ordinal" prints colliding values that mean different things. A
+preserved item also records no position in the replacement list, so the report
+cannot say where anything moved to.
+**Done when:** a reader can tell which list an ordinal indexes, and a preserved
+item records both of its positions.
+
+### CT-061 · Declare the Node version the frontend requires
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** CI pins Node 22 in all three workflows, but `package.json` carries no
+`engines` field and the repository has no `.nvmrc`. On Node 18 `npm ci` reports
+success and then silently omits an optional native binding, so the first `npm
+test` fails inside a transitive dependency with `Cannot find native binding` and
+a rolldown stack trace that names nothing in this project. Verified on this
+machine: Node 18.16.0 installs cleanly and cannot run a single test; the same
+checkout under Node 22.14.0 passes all 22.
+**Done when:** the required Node version is declared where npm will enforce it,
+and an unsupported version fails with a message that names the requirement.
+
+### CT-062 · Verify the macOS and Linux build claim, or drop it
+`status: todo` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `rust-toolchain.toml` now says a host-neutral channel "keeps the
+repository buildable on Windows, macOS and Linux", but every job in `ci.yml`
+and `release.yml` runs on `windows-latest`. Nothing has ever compiled this
+workspace on the two platforms the comment vouches for.
+**Done when:** either CI builds on the platforms the comment names, or the
+comment says Windows is the only verified host.
+
+### CT-063 · Pin the actions that hold write access and signing secrets
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `release.yml` grants `contents: write`, imports a signing certificate
+and publishes artifacts, while referring to `dtolnay/rust-toolchain@stable`,
+`Swatinem/rust-cache@v2`, `actions/setup-node@v4` and
+`softprops/action-gh-release@v2` by mutable tags; the CI Rust job goes further
+and uses `@master`. Any of those refs can be moved under the repository without
+a commit here. Separately, `${{ steps.signing.outputs.thumbprint }}` is
+interpolated straight into a PowerShell script rather than passed through
+`env:`, which is the pattern the rest of the workflow correctly uses for
+`inputs.tag`.
+**Done when:** release-path actions are pinned to commit SHAs, the workflow
+`permissions` are narrowed to the job that needs write, and no step output is
+spliced into a shell body.
+
+### CT-064 · Revisit the hand-written SHA-256
+`status: todo` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `fingerprint.rs` implements the compression function by hand and
+justifies it by "a deliberately minimal Windows GNU toolchain" whose crypto
+crates need MinGW libraries. The same changeset removed that constraint —
+`rust-toolchain.toml` moved off the GNU pin to a host-neutral stable channel.
+The rationale in the comment no longer describes the repository, so the code is
+now carrying maintenance risk for a reason that has expired. The
+implementation itself passes the standard vectors; this is about whether it
+should still be here.
+**Done when:** the hashing either moves to a maintained crate or keeps a
+rationale that is true of the current toolchain.
+
+### CT-065 · Smoke-test the commands this release added
+`status: todo` · `tier: A` · `size: S` · `source: review`
+
+**Why:** the `cli-smoke` job exercises `sessions`, `inspect` and `context`. The
+three commands added since — `compactions`, `secrets`, and `export
+--redact-secrets` — read raw session bytes and are the ones whose failure
+matters most, and none of them runs in CI against a fixture.
+**Done when:** the smoke job runs all three against the committed fixtures and
+asserts something about each result.
+
+### CT-066 · Match compaction history without a quadratic scan
+`status: todo` · `tier: C` · `size: S` · `source: review`
+
+**Why:** `compare` walks the replacement array once per pre-compaction item,
+comparing whole `serde_json::Value` trees for equality, so cost grows with the
+product of the two histories and each comparison is a deep structural walk. It
+is fine at today's sizes and will not stay fine; a fingerprint of the kind
+`fingerprint.rs` already computes would reduce it to a lookup.
+**Done when:** matching is linear in the size of the two histories, with the
+same dropped/preserved/added answers.
+
+### CT-067 · Make the README a front door before the repository is public
+`status: todo` · `tier: A` · `size: M` · `source: review`
+
+**Why:** **this gates the public launch** — it is the one moment the README is
+read by people who have never seen the project, and a first impression cannot be
+reissued. The file is 883 lines, and roughly 700 of them are engineering
+findings: the signature regression, the negative-constant hypothesis, why two
+individually well-typed halves composed into a false claim. That writing is a
+differentiator and none of it should be lost; it is simply sitting where a
+visitor looks for what the tool is and how to run it. The install path has the
+same shape of problem — the only installation section describes downloading a
+draft release that no member of the public can reach, so the first thing a new
+user tries is the one thing the README does not document.
+**Done when:** the README is a front door — pitch, supported agents, local
+install, quickstart, command table, how to read the numbers, privacy, status,
+contributing, license — with the narrative moved under `docs/` (formats,
+methodology, architecture) and linked rather than deleted; the desktop app is
+shown with at least one screenshot; and someone who has never seen the
+repository can install and run both surfaces from the README alone.
+
 ---
 
 ## Done
+
+### CT-049 · Redact a private key whose block never closes
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `find_private_keys` locates `-----BEGIN <label>-----` and then looks
+for the matching `-----END` marker; when it does not find one it falls back to
+`unwrap_or(after_header)`, so the match covers the header alone and the key
+body flows unredacted into `--redact-secrets` output. Truncated records are not
+an edge case here — bounded and cut-off tool output is the material this
+project exists to analyse, so the one input shape most likely to carry a
+half-written PEM is the shape the redactor handles worst.
+**Done when:** an unterminated key block redacts to the end of the record
+rather than the end of its header, and a test covers a PEM cut off mid-body.
+
+**Accepted on 2026-08-01.** An opening header with no closing marker now claims
+the rest of the record instead of ending at itself, so a PEM cut off mid-body
+redacts to `[REDACTED:private-key]` with nothing of the key left behind. The
+trade is stated where the decision is made: prose that merely quotes a
+`-----BEGIN` line is over-redacted from that point on, which is the affordable
+direction. A test built from a truncated tool-output record covers it, and the
+README now describes the behaviour.
+
+### CT-050 · Find secret assignments in JSON, not only in shell syntax
+`status: done` · `tier: A` · `size: M` · `source: review`
+
+**Why:** `find_secret_assignments` only recognises `NAME = value`; it requires
+a literal `=` after the name. Every session this tool reads is JSONL, where the
+same fact is written `"api_key": "…"` with a colon. The generic detector
+therefore never fires on the project's own corpus, and only the fixed provider
+prefixes catch anything. `secretish_name` compounds it by keying on
+underscores, so `apiKey`, `authToken`, `accessToken` and `clientSecret` are all
+invisible.
+**Done when:** colon-separated JSON members are recognised alongside `=`, name
+matching does not depend on underscores, and both are covered by a test built
+from a realistic session record rather than a synthetic `.env` line.
+
+**Accepted on 2026-08-01.** A quoted key closes before its separator, so the
+scanner now steps over the closing quote and accepts `:` as well as `=`. Names
+are matched by word rather than by underscore: `AWS_SECRET_KEY`,
+`aws-secret-key` and `awsSecretKey` reduce to the same words, and `apiKey`,
+`authToken`, `accessToken`, `clientSecret` and the `x-api-key` header shape all
+match. `KEY` alone still is not enough to carry the claim. The new test runs on
+a JSONL tool-use record and asserts the four values are replaced while
+`max_tokens`, a model name and a placeholder are left alone. Placeholder and
+minimum-length filtering are unchanged; the 8 secrets tests and the 127-test
+`ct-application` suite pass.
+
+### CT-052 · Say when the desktop is showing demonstration data
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** every function in `api.ts` falls back to the fabricated fixtures in
+`demo.ts` when `__TAURI_INTERNALS__` is absent from `window`, and nothing in
+`App.tsx` ever says so. A user looking at invented session ids, projects and
+token counts sees the same chrome as a real run, under a footer that reads
+"Private by design — Reads local logs." For a tool whose entire claim is
+evidence over fabrication, silently substituting invented numbers is the worst
+failure available. `App.test.tsx` mocks `./api` wholesale, so this branch is
+also untested.
+**Done when:** demo data is visibly labelled wherever it is rendered, and a
+test asserts the indicator appears when the Tauri bridge is missing.
+
+**Accepted on 2026-08-01.** `api.isDemoData()` reports the missing bridge, and
+the interface says so on every surface those figures reach: a persistent bar
+above the workspace naming the sessions, token counts and findings as
+fabricated; the session list heading; a "Demo data" badge where "Local only"
+otherwise sits; and a footer that no longer claims to read local logs while
+showing invented numbers. The bar is styled as part of the layout rather than a
+dismissible overlay, with the main area made a flex column so it takes space
+from the workspace instead of covering it, and the floating error/warning
+banners offset to clear it — CSS only; not yet checked in a rendered window. A
+new
+`App.demo.test.tsx` deliberately does not mock `./api` — it renders the app with
+no `__TAURI_INTERNALS__` and asserts all four labels appear and the local-read
+claim does not. 23 frontend tests and `tsc --noEmit` pass.
+
+### CT-053 · Stop holding the session lock across analysis
+`status: done` · `tier: A` · `size: M` · `source: review`
+
+**Why:** `with_session` and `with_analyzed_session` take the `sessions` mutex
+and then run the caller's whole closure inside it — snapshot assembly, the
+lifecycle sweep, and the doctor's raw-file secret scan. Tauri dispatches
+commands on separate threads, so every IPC call serialises behind whichever one
+is slowest, and a doctor run over a large session blocks the session list from
+answering at all. Because the closure runs under the lock, a panic anywhere in
+analysis poisons the mutex and every later command fails with "the in-memory
+session cache is unavailable" until the app restarts.
+**Done when:** analysis runs outside the lock, and a panic in one command no
+longer disables the others.
+
+**Accepted on 2026-08-01.** Both caches now hold `Arc` handles. `cached_session`
+locks only to look up or publish an entry — the parse itself runs unlocked — and
+every caller analyses through the returned handle, so snapshot assembly, the
+lifecycle sweep and the doctor's raw-file scan all run with no lock held. Two
+threads may load the same session at once, which costs a duplicate parse and
+never a wrong answer; a concurrent content-analysed entry is never downgraded by
+a plain load finishing later. Lock acquisition recovers a poisoned mutex instead
+of failing, because these maps are a rebuildable cache of what is on disk. Two
+tests cover it: one asserts the cache is lockable while a handle is in use and
+across the secret scan, the other poisons the mutex with a real panic and then
+requires the list, inspection and doctor commands to answer. The 7 `ct-ui`
+tests and the full workspace suite pass, with `cargo fmt` and `clippy` clean.
 
 ### CT-046 · Trace a contributor through the desktop timeline
 `status: done` · `tier: A` · `size: S` · `source: desktop product strategy`

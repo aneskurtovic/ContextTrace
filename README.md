@@ -29,7 +29,8 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 > seconds. CI, bounded accounting defects, desktop performance, accessibility,
 > installer generation and installed 1024×680/1440×900 visual acceptance are
 > now closed. The remaining public-release work is a clean-machine pass of the
-> downloaded artifacts and release-candidate soak; Windows signing is deferred
+> downloaded artifacts, release-candidate soak, and this README's own
+> restructure into a front door (CT-067); Windows signing is deferred
 > until the production-release discussion. See
 > [MVP status and release plan](docs/MVP-STATUS.md) for the evidence, gates and
 > realistic distance.
@@ -334,10 +335,59 @@ to *write*; they do not make a bad value hard to *derive*.
 
 ---
 
-## Installing a release candidate
+## Installing
 
-There is no public 0.1 download yet. Each `v<version>` tag produces a **draft**
-GitHub release containing:
+Windows x64 is the supported surface. There is no public download yet, so the
+working path is a local build from source; it produces the same two artifacts
+the release workflow packages.
+
+### Prerequisites
+
+- **Rust 1.88+.** `rust-toolchain.toml` selects the channel and adds `rustfmt`
+  and `clippy`. On Windows the MSVC host toolchain — Visual Studio's "Desktop
+  development with C++" workload — is required, because without it nothing
+  links.
+- **Node.js 22**, for the desktop app only. Node 18 runs `npm ci` successfully
+  and then silently omits an optional native binding, so the failure surfaces
+  much later as `Cannot find native binding`; see CT-061 in
+  [BACKLOG.md](BACKLOG.md).
+
+### The `ct` CLI
+
+```powershell
+cargo build --release -p ct-cli
+```
+
+`target\release\ct.exe` is portable: copy it anywhere on `PATH` and it needs no
+installer, configuration or arguments to find your sessions.
+
+```powershell
+.\target\release\ct.exe roots            # which local directories it reads
+.\target\release\ct.exe sessions --limit 10
+```
+
+### The desktop app
+
+```powershell
+cd crates\ct-ui
+npm ci
+npm run tauri build
+```
+
+That writes an installer to
+`target\release\bundle\nsis\ContextTrace_<version>_x64-setup.exe`. Running it
+installs ContextTrace for the current user under `%LOCALAPPDATA%`, so it never
+asks for administrator rights. Upgrade by running a newer installer over the
+old one; remove it through Windows "Installed apps". The build is unsigned, so
+expect a SmartScreen warning on first launch.
+
+To run the app without installing it, use `npm run tauri dev` instead — that is
+the native app against the real read-only local adapters.
+
+### From a release candidate
+
+Each `v<version>` tag produces a **draft** GitHub release, not yet public,
+containing:
 
 - `ContextTrace-<version>-windows-x64-setup.exe` — the per-user desktop
   installer;
@@ -366,9 +416,8 @@ x64, and reconstruction remains bounded by what the agent logs; see
 
 ## Building
 
-Requires Rust 1.88+. `rust-toolchain.toml` selects stable Rust for the host
-platform and includes `rustfmt` and `clippy`. The desktop frontend additionally
-requires Node.js 20.19+ and npm.
+Toolchain requirements are the same as for [installing](#installing). These are
+the gates CI enforces:
 
 ```bash
 cargo fmt --all -- --check
@@ -407,13 +456,13 @@ false; CI now checks 1.88 explicitly.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the thirteen commands below | Implemented, 23 tests |
-| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Desktop MVP accepted: 5 Rust IPC tests, 22 frontend tests, real-corpus installed search/filtering and native 1024×680/1440×900 checks; new panels pass responsive acceptance |
+| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Desktop MVP accepted: 5 Rust IPC tests, 23 frontend tests, real-corpus installed search/filtering and native 1024×680/1440×900 checks; new panels pass responsive acceptance |
 | Standalone JSONL fixture files | Implemented, 14 tests |
 | Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |
 | Session metadata search | Implemented server-side with explicit paging |
 | SQLite index | Deferred until measured desktop performance requires it |
 
-**298 Rust tests and 22 frontend tests** passing, `cargo fmt --check` clean,
+**302 Rust tests and 23 frontend tests** passing, `cargo fmt --check` clean,
 `clippy` clean at zero warnings, the React production bundle and Tauri command
 bridge build, the release CLI answers `ct --help`, and `ct doctor --dir`
 recognises every event type across the current local corpus. The Windows CI
@@ -505,9 +554,13 @@ so the 99 MB session with 88 turns exports in 0.46 s while the 25 MB one with
 `ct secrets <id>` re-reads only context-bearing session records and reports a
 credential type, turn, line and event type. It recognises provider-shaped
 OpenAI, Anthropic, GitHub, AWS, Google, Slack and Stripe credentials, bearer
-tokens, PEM private keys, and secret-like `.env` assignments. The matched value
-is never stored in a finding, shown in a preview, or made serializable; this is
-why the command deliberately has no `--json` mode.
+tokens, PEM private keys, and secret-like assignments in either syntax a session
+uses — `API_KEY=…` and the JSON member `"apiKey": "…"` alike, since names are
+matched by word rather than by underscore. A PEM block whose `-----END-----`
+never arrives is treated as running to the end of the record, because a
+truncated record is exactly where half a key gets written. The matched value is
+never stored in a finding, shown in a preview, or made serializable; this is why
+the command deliberately has no `--json` mode.
 
 Records are scanned once even when their content survives for hundreds of
 turns. Codex replacement histories and the recorded base instructions are
