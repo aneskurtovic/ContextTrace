@@ -37,18 +37,6 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-046 · Trace a contributor through the desktop timeline
-`status: next` · `tier: A` · `size: S` · `source: desktop product strategy`
-
-**Why:** the context view answers what is large now, but the next question is
-when a suspicious file or tool result entered, how long it survived, and what
-removed it. The lifecycle engine already answers this in the CLI, so making
-largest-contributor rows open a timeline is mostly desktop presentation work
-and gives the app a debugger-like interaction neither harness provides.
-**Done when:** selecting a contributor shows its first/last presence, every
-present interval, departure reason and compaction boundary where applicable,
-with ambiguous or unavailable lineage stated rather than guessed.
-
 ### CT-047 · Add a desktop compaction autopsy
 `status: next` · `tier: A` · `size: S` · `source: desktop product strategy`
 
@@ -124,6 +112,27 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-046 · Trace a contributor through the desktop timeline
+`status: done` · `tier: A` · `size: S` · `source: desktop product strategy`
+
+**Why:** the context view answers what is large now, but the next question is
+when a suspicious file or tool result entered, how long it survived, and what
+removed it. The lifecycle engine already answers this in the CLI, so making
+largest-contributor rows open a timeline is mostly desktop presentation work
+and gives the app a debugger-like interaction neither harness provides.
+**Done when:** selecting a contributor shows its first/last presence, every
+present interval, departure reason and compaction boundary where applicable,
+with ambiguous or unavailable lineage stated rather than guessed.
+
+**Accepted on 2026-08-01.** Every largest-contributor row is now a keyboard-
+focusable trace control. The desktop runs and caches the existing whole-session
+lifecycle sweep, then shows observed presence ranges, first/last turns, a
+recorded compaction departure, Claude Code branch divergence, unexplained
+departure, unreadable gaps and excluded main/subagent turns using distinct
+language. A current 253-turn Codex trace completed in 0.49 seconds and found a
+170-turn run removed by the next compaction. IPC validation, two-agent fixtures,
+frontend open/close state tests and responsive 1024×680/1440×900 checks pass.
 
 ### CT-045 · Put Context Doctor in the desktop app
 `status: done` · `tier: A` · `size: S` · `source: desktop product strategy`

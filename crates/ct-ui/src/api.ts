@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ContextDetail,
   DoctorReport,
+  LifecycleReport,
   SessionDetail,
   SessionPage,
   SessionSummary,
@@ -11,6 +12,7 @@ import {
   demoContext,
   demoDetail,
   demoDoctor,
+  demoLifecycle,
   demoSessions,
   demoStartup,
 } from "./demo";
@@ -232,6 +234,46 @@ function asDoctor(value: unknown): DoctorReport {
   return value as unknown as DoctorReport;
 }
 
+function asLifecycle(value: unknown): LifecycleReport {
+  const validDeparture = (departure: unknown) =>
+    departure === null ||
+    (isRecord(departure) &&
+      typeof departure.kind === "string" &&
+      ["compaction", "branch-diverged", "unexplained"].includes(departure.kind) &&
+      isNumberOrNull(departure.turn) &&
+      isNumberOrNull(departure.reclaimed));
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.label !== "string" ||
+    typeof value.category !== "string" ||
+    typeof value.source !== "string" ||
+    !isNumberOrNull(value.firstPresent) ||
+    !isNumberOrNull(value.lastPresent) ||
+    typeof value.turnsPresent !== "number" ||
+    !Array.isArray(value.runs) ||
+    !value.runs.every(
+      (run) =>
+        isRecord(run) &&
+        typeof run.from === "number" &&
+        typeof run.to === "number" &&
+        typeof run.turns === "number",
+    ) ||
+    !validDeparture(value.departure) ||
+    typeof value.stillPresent !== "boolean" ||
+    !Array.isArray(value.unknownTurns) ||
+    !value.unknownTurns.every((turn) => typeof turn === "number") ||
+    typeof value.scannedTurns !== "number" ||
+    typeof value.otherThreadTurns !== "number" ||
+    !isNumberOrNull(value.lastScannedTurn) ||
+    !isNumberOrNull(value.recordedFirstSeen) ||
+    typeof value.firstSeenDisagrees !== "boolean"
+  ) {
+    throw malformed("item lifecycle");
+  }
+  return value as unknown as LifecycleReport;
+}
+
 export function getStartup(): Promise<StartupSummary> {
   if (!inTauri()) return Promise.resolve(demoStartup);
   return invoke<unknown>("get_startup").then(asStartup);
@@ -305,4 +347,9 @@ export function getContext(id: string, turn?: number): Promise<ContextDetail> {
 export function runDoctor(id: string, turn?: number): Promise<DoctorReport> {
   if (!inTauri()) return Promise.resolve(demoDoctor(turn));
   return invoke<unknown>("run_doctor", { id, turn: turn ?? null }).then(asDoctor);
+}
+
+export function getLifecycle(id: string, item: string): Promise<LifecycleReport> {
+  if (!inTauri()) return Promise.resolve(demoLifecycle(item));
+  return invoke<unknown>("get_lifecycle", { id, item }).then(asLifecycle);
 }

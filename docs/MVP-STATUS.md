@@ -12,8 +12,9 @@ the desktop app covers its highest-value loop:
 2. see prompt growth and compaction points;
 3. select a measured turn;
 4. inspect context composition, confidence and largest contributors;
-5. opt into exact-duplicate, low-entropy and potential-secret diagnosis;
-6. see which local roots are read.
+5. trace a contributor's observed lifetime and departure across the session;
+6. opt into exact-duplicate, low-entropy and potential-secret diagnosis;
+7. see which local roots are read.
 
 It has **not reached a public, downloadable desktop MVP**. CI is green, the
 unsigned installer upgrades and launches locally, and installed 1024×680 and
@@ -32,16 +33,16 @@ certificate procurement is deferred until the production-release decision.
 | Check | Result through 2026-08-01 |
 |---|---|
 | Local repository | One local branch (`main`), no changes, stashes, extra worktrees, unmerged commits or unreachable commits before this documentation update |
-| Automated tests | 298 Rust tests plus 20 frontend tests |
+| Automated tests | 298 Rust tests plus 22 frontend tests |
 | Static verification | `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass |
 | Build | `cargo build --workspace --release` passes on Rust 1.97.1, Windows/MSVC |
 | Binary smoke | `ct 0.1.0` starts and exposes all thirteen documented commands |
-| Desktop slice | Tauri v2 command bridge compiles; React type-check, 20 tests and production bundle pass; 5 Rust tests cover fixture-backed IPC, caching, errors, Context Doctor and a 501-session search/page contract |
+| Desktop slice | Tauri v2 command bridge compiles; React type-check, 22 tests and production bundle pass; 5 Rust tests cover fixture-backed IPC, caching, errors, Context Doctor, lifecycle tracing and a 501-session search/page contract |
 | Desktop performance | Largest local Codex session: 1.43 s cold and 0.2 ms cached; two high-turn Claude sessions: 0.79–1.07 s cold and 0.4–0.5 ms cached |
 | Format-drift sweep | 816 sessions (717 Claude Code, 99 Codex), 148,970 events, every type recognised, 5.88 seconds |
 | Privacy architecture | No application upload/telemetry code; core-only Tauri capability and local-IPC CSP; read-only adapters |
 | Desktop acceptance | Real-corpus budgets, race handling, measurement-limit copy, keyboard semantics, loading/empty/error/malformed states and reduced motion pass; installed search and Codex/Claude filtering plus native 1024×680/1440×900 layouts pass against 816 sessions. Context Doctor's new responsive panel passes the same two viewport widths. |
-| Desktop differentiation | On-demand Context Doctor exposes exact repeats, low-entropy ranking and value-free potential-secret locations. On a current 208-turn Codex session, the underlying release paths found 16 duplicate groups, 42 low-entropy blocks and two potential-secret locations in 0.43 s plus 0.55 s. |
+| Desktop differentiation | On-demand Context Doctor exposes exact repeats, low-entropy ranking and value-free potential-secret locations. Contributor rows open an observed lifecycle with compaction/branch/unknown departure semantics. Current release paths completed Doctor's analyses in 0.43 s plus 0.55 s and a 253-turn lifecycle sweep in 0.49 s. |
 | Distribution | Windows CI is green; the 2026-08-01 unsigned NSIS candidate passed in-place upgrade plus local uninstall/fresh reinstall, restored shortcuts/uninstaller and launched successfully; local staged CLI/checksums pass, while clean-machine downloaded-asset acceptance remains |
 | Legal packaging | MIT `LICENSE` is present and included in the CLI archive |
 | crates.io packaging | `cargo package -p ct-cli --no-verify` fails because internal path dependencies have no registry version requirement |
@@ -67,7 +68,7 @@ evidence that one is required for the core workflow.
 | Gate | State | What remains |
 |---|---|---|
 | Core user workflow | Pass | The thirteen-command CLI covers discovery, inspection, reconstruction, exact Codex compaction diffs, diagnosis, lifecycle, comparison and export. |
-| Desktop core workflow | Pass | Paged search, growth, race-safe turn selection, honest measurement limits, composition, contributors and opt-in Context Doctor pass automated acceptance; the previous installed native slice passed local lifecycle acceptance. |
+| Desktop core workflow | Pass | Paged search, growth, race-safe turn selection, honest measurement limits, composition, contributors, lifecycle drill-down and opt-in Context Doctor pass automated acceptance; the previous installed native slice passed installer lifecycle acceptance. |
 | Two-agent support | Pass | Codex CLI and Claude Code adapters work against fixtures and the current local corpus. |
 | Honest measurements | Pass with limitation | Inline-image accounting is threshold-independent. A 40-session/3,353-turn exact audit could not reproduce the historical over-count and found no generic removal marker; the tool reports such cases as unknown rather than inventing semantics. |
 | Local-first safety | Pass | Read-only roots, no application telemetry/upload code, core-only desktop capability, local-IPC CSP, secret scan and redacted export are implemented. |
@@ -77,13 +78,11 @@ evidence that one is required for the core workflow.
 
 ## Recommended order
 
-1. **CT-046 — contributor lifecycle drill-down.** Make a large contributor
-   open the already-implemented entry/survival/departure timeline.
-2. **CT-047 — compaction autopsy.** Connect Codex compaction markers to the
+1. **CT-047 — compaction autopsy.** Connect Codex compaction markers to the
    existing exact replacement-history diff.
-3. **CT-048 — turn comparison.** Let users pin a baseline and reuse the
+2. **CT-048 — turn comparison.** Let users pin a baseline and reuse the
    existing measurement-aware diff engine in the desktop app.
-4. **CT-043 — validate and ship 0.1.0.** Exercise the downloaded installer,
+3. **CT-043 — validate and ship 0.1.0.** Exercise the downloaded installer,
    upgrade, portable CLI and checksums on a clean Windows host, then soak the
    unsigned private candidate. Before a
    production release, decide on and provision the certificate/timestamp

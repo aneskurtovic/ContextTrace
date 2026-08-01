@@ -14,6 +14,7 @@ import type {
   ContextDetail,
   DoctorReport,
   GrowthPoint,
+  LifecycleReport,
   SessionDetail,
   SessionSummary,
   StartupSummary,
@@ -254,7 +255,15 @@ function ContextComposition({ context }: { context: ContextDetail }) {
   );
 }
 
-function Contributors({ context }: { context: ContextDetail }) {
+function Contributors({
+  context,
+  selectedItem,
+  onSelect,
+}: {
+  context: ContextDetail;
+  selectedItem: string | null;
+  onSelect: (item: string) => void;
+}) {
   const contributors = Array.isArray(context.contributors) ? context.contributors : [];
   return (
     <section className="panel contributors-panel" aria-labelledby="contributors-heading">
@@ -268,7 +277,15 @@ function Contributors({ context }: { context: ContextDetail }) {
       <div className="contributor-list">
         {contributors.length ? (
           contributors.map((item, index) => (
-            <div className="contributor-row" key={item.id}>
+            <button
+              type="button"
+              className={selectedItem === item.id ? "contributor-row selected" : "contributor-row"}
+              key={item.id}
+              onClick={() => onSelect(item.id)}
+              aria-expanded={selectedItem === item.id}
+              aria-controls="item-lifecycle"
+              title={`Trace ${item.label} through the session`}
+            >
               <span className="rank">{String(index + 1).padStart(2, "0")}</span>
               <div className="contributor-copy">
                 <strong title={item.label}>{item.label}</strong>
@@ -283,12 +300,93 @@ function Contributors({ context }: { context: ContextDetail }) {
                 <strong>{formatTokens(item.tokens)}</strong>
                 <span>{formatPercent(item.share)}</span>
               </div>
-            </div>
+            </button>
           ))
         ) : (
           <p className="empty-inline">No individual contributors were reported for this turn.</p>
         )}
       </div>
+    </section>
+  );
+}
+
+function departureText(report: LifecycleReport): string {
+  const departure = report.departure;
+  if (!departure) {
+    return report.stillPresent
+      ? `Still present at the last scanned turn (${report.lastScannedTurn ?? "unknown"}).`
+      : "No departure can be established from the readable turns.";
+  }
+  if (departure.kind === "compaction") {
+    const reclaimed = departure.reclaimed
+      ? `, which reclaimed ${formatTokens(departure.reclaimed)}`
+      : "";
+    return `Removed by a recorded compaction${departure.turn ? ` at turn ${departure.turn}` : ""}${reclaimed}.`;
+  }
+  if (departure.kind === "branch-diverged") {
+    return `The conversation moved to a different Claude Code branch at turn ${departure.turn}; this was not an eviction.`;
+  }
+  return `The item disappeared before turn ${departure.turn}, but the log records no cause.`;
+}
+
+function LifecyclePanel({
+  report,
+  loading,
+  onClose,
+}: {
+  report: LifecycleReport | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  if (!report && !loading) return null;
+  return (
+    <section className="panel lifecycle-panel" id="item-lifecycle" aria-labelledby="lifecycle-heading" aria-busy={loading}>
+      {loading && !report ? (
+        <Spinner label="Tracing this item across every turn…" />
+      ) : report ? (
+        <>
+          <div className="panel-heading lifecycle-heading">
+            <div>
+              <span className="eyebrow">Item lifecycle</span>
+              <h2 id="lifecycle-heading" title={report.label}>{report.label}</h2>
+              <p>{report.category} · {report.source}</p>
+            </div>
+            <button className="lifecycle-close" onClick={onClose} aria-label="Close item lifecycle">×</button>
+          </div>
+          <div className="lifecycle-metrics">
+            <div><span>First in prompt</span><strong>{report.firstPresent ?? "—"}</strong></div>
+            <div><span>Last in prompt</span><strong>{report.lastPresent ?? "—"}</strong></div>
+            <div><span>Turns present</span><strong>{report.turnsPresent}</strong></div>
+            <div><span>Runs</span><strong>{report.runs.length}</strong></div>
+          </div>
+          <div className="lifecycle-runs" aria-label="Observed presence ranges">
+            {report.runs.map((run) => (
+              <span key={`${run.from}-${run.to}`}>
+                {run.from === run.to ? `turn ${run.from}` : `turns ${run.from}–${run.to}`}
+                <small>{run.turns} observed</small>
+              </span>
+            ))}
+          </div>
+          <p className={`lifecycle-departure ${report.departure?.kind ?? "present"}`}>
+            {departureText(report)}
+          </p>
+          {report.firstSeenDisagrees && (
+            <p className="lifecycle-note">
+              The log wrote this item at turn {report.recordedFirstSeen}, while reconstruction first observed it in a prompt at turn {report.firstPresent}. Both facts are preserved.
+            </p>
+          )}
+          {report.unknownTurns.length > 0 && (
+            <p className="lifecycle-note">
+              Presence is unknown at unreadable turn(s): {report.unknownTurns.join(", ")}.
+            </p>
+          )}
+          {report.otherThreadTurns > 0 && (
+            <p className="lifecycle-note">
+              {report.otherThreadTurns} turn(s) on the other main/subagent context were excluded.
+            </p>
+          )}
+        </>
+      ) : null}
     </section>
   );
 }
@@ -453,6 +551,11 @@ function SessionWorkspace({
   contextLoading,
   doctor,
   doctorLoading,
+  lifecycle,
+  lifecycleLoading,
+  lifecycleItem,
+  onContributor,
+  onCloseLifecycle,
   onRunDoctor,
   onTurn,
 }: {
@@ -461,6 +564,11 @@ function SessionWorkspace({
   contextLoading: boolean;
   doctor: DoctorReport | null;
   doctorLoading: boolean;
+  lifecycle: LifecycleReport | null;
+  lifecycleLoading: boolean;
+  lifecycleItem: string | null;
+  onContributor: (item: string) => void;
+  onCloseLifecycle: () => void;
   onRunDoctor: () => void;
   onTurn: (turn: number) => void;
 }) {
@@ -574,8 +682,17 @@ function SessionWorkspace({
         <>
           <div className={contextLoading ? "context-grid refreshing" : "context-grid"}>
             <ContextComposition context={context} />
-            <Contributors context={context} />
+            <Contributors
+              context={context}
+              selectedItem={lifecycleItem}
+              onSelect={onContributor}
+            />
           </div>
+          <LifecyclePanel
+            report={lifecycle}
+            loading={lifecycleLoading}
+            onClose={onCloseLifecycle}
+          />
           <ContextDoctor
             turn={context.turn}
             report={doctor?.turn === context.turn ? doctor : null}
@@ -608,11 +725,15 @@ export default function App() {
   const [loadingContext, setLoadingContext] = useState(false);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [loadingDoctor, setLoadingDoctor] = useState(false);
+  const [lifecycle, setLifecycle] = useState<LifecycleReport | null>(null);
+  const [lifecycleItem, setLifecycleItem] = useState<string | null>(null);
+  const [loadingLifecycle, setLoadingLifecycle] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
+  const lifecycleRequest = useRef(0);
   const catalogRequest = useRef(0);
 
   const refreshSessions = useCallback(async () => {
@@ -698,25 +819,33 @@ export default function App() {
       sessionRequest.current += 1;
       turnRequest.current += 1;
       doctorRequest.current += 1;
+      lifecycleRequest.current += 1;
       setDetail(null);
       setDetailForId(null);
       setContext(null);
       setDoctor(null);
+      setLifecycle(null);
+      setLifecycleItem(null);
       setLoadingDetail(false);
       setLoadingContext(false);
       setLoadingDoctor(false);
+      setLoadingLifecycle(false);
       return;
     }
     const request = ++sessionRequest.current;
     turnRequest.current += 1;
     doctorRequest.current += 1;
+    lifecycleRequest.current += 1;
     setDetail(null);
     setDetailForId(null);
     setContext(null);
     setDoctor(null);
+    setLifecycle(null);
+    setLifecycleItem(null);
     setLoadingDetail(true);
     setLoadingContext(false);
     setLoadingDoctor(false);
+    setLoadingLifecycle(false);
     setError(null);
     Promise.all([api.inspectSession(selectedId), api.getContext(selectedId)])
       .then(([nextDetail, nextContext]) => {
@@ -738,10 +867,14 @@ export default function App() {
       if (!selectedId || turn === context?.turn) return;
       const request = ++turnRequest.current;
       doctorRequest.current += 1;
+      lifecycleRequest.current += 1;
       const session = selectedId;
       setContext(null);
       setDoctor(null);
+      setLifecycle(null);
+      setLifecycleItem(null);
       setLoadingDoctor(false);
+      setLoadingLifecycle(false);
       setLoadingContext(true);
       setError(null);
       try {
@@ -784,6 +917,36 @@ export default function App() {
       if (request === doctorRequest.current) setLoadingDoctor(false);
     }
   }, [context, selectedId]);
+
+  const inspectContributor = useCallback(
+    async (item: string) => {
+      if (!selectedId) return;
+      const request = ++lifecycleRequest.current;
+      const session = selectedId;
+      setLifecycleItem(item);
+      setLifecycle(null);
+      setLoadingLifecycle(true);
+      setError(null);
+      try {
+        const report = await api.getLifecycle(session, item);
+        if (request === lifecycleRequest.current && session === selectedId) {
+          setLifecycle(report);
+        }
+      } catch (loadError) {
+        if (request === lifecycleRequest.current) setError(errorMessage(loadError));
+      } finally {
+        if (request === lifecycleRequest.current) setLoadingLifecycle(false);
+      }
+    },
+    [selectedId],
+  );
+
+  const closeLifecycle = useCallback(() => {
+    lifecycleRequest.current += 1;
+    setLifecycle(null);
+    setLifecycleItem(null);
+    setLoadingLifecycle(false);
+  }, []);
 
   const visibleDetail = detailForId === selectedId ? detail : null;
 
@@ -929,6 +1092,11 @@ export default function App() {
             contextLoading={loadingContext}
             doctor={doctor}
             doctorLoading={loadingDoctor}
+            lifecycle={lifecycle}
+            lifecycleLoading={loadingLifecycle}
+            lifecycleItem={lifecycleItem}
+            onContributor={inspectContributor}
+            onCloseLifecycle={closeLifecycle}
             onRunDoctor={runDoctor}
             onTurn={selectTurn}
           />

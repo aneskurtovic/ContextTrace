@@ -136,3 +136,34 @@ export interface DoctorReport {
   unreadableRecords: number;
   secrets: SecretFindingSummary[];
 }
+
+export interface TurnRunSummary {
+  from: number;
+  to: number;
+  turns: number;
+}
+
+export interface DepartureSummary {
+  kind: "compaction" | "branch-diverged" | "unexplained";
+  turn: number | null;
+  reclaimed: number | null;
+}
+
+export interface LifecycleReport {
+  id: string;
+  label: string;
+  category: string;
+  source: string;
+  firstPresent: number | null;
+  lastPresent: number | null;
+  turnsPresent: number;
+  runs: TurnRunSummary[];
+  departure: DepartureSummary | null;
+  stillPresent: boolean;
+  unknownTurns: number[];
+  scannedTurns: number;
+  otherThreadTurns: number;
+  lastScannedTurn: number | null;
+  recordedFirstSeen: number | null;
+  firstSeenDisagrees: boolean;
+}

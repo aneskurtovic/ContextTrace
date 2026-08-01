@@ -1,6 +1,7 @@
-use ct_application::{timeline, ContextTrace, SessionFilter};
+use ct_application::{timeline, ContextTrace, Departure, LifecycleSweep, SessionFilter};
 use ct_domain::{
-    AgentKind, CategoryBreakdown, Confidence, ContextSource, SessionDescriptor, TurnNumber,
+    AgentKind, CategoryBreakdown, Confidence, ContextItemId, ContextSource, SessionDescriptor,
+    TurnNumber,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -13,6 +14,7 @@ pub struct AppState {
     app: ContextTrace,
     warnings: Vec<String>,
     sessions: Mutex<HashMap<String, CachedSession>>,
+    lifecycles: Mutex<HashMap<String, LifecycleSweep>>,
 }
 
 struct CachedSession {
@@ -34,6 +36,7 @@ impl AppState {
             app,
             warnings,
             sessions: Mutex::new(HashMap::new()),
+            lifecycles: Mutex::new(HashMap::new()),
         }
     }
 
@@ -145,6 +148,10 @@ impl AppState {
         self.sessions
             .lock()
             .map_err(|_| "the in-memory session cache is unavailable".to_string())?
+            .clear();
+        self.lifecycles
+            .lock()
+            .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?
             .clear();
         let parsed_agent = match agent.as_deref() {
             Some(agent) => Some(
@@ -380,6 +387,69 @@ impl AppState {
             })
         })
     }
+
+    fn lifecycle(&self, id: &str, item: &str) -> Result<LifecycleReport, String> {
+        let needs_sweep = !self
+            .lifecycles
+            .lock()
+            .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?
+            .contains_key(id);
+        if needs_sweep {
+            let sweep = self.with_session(id, |cached| {
+                Ok(self.app.sweep_lifecycles(&cached.session, cached.binding))
+            })?;
+            self.lifecycles
+                .lock()
+                .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?
+                .insert(id.to_string(), sweep);
+        }
+
+        let lifecycles = self
+            .lifecycles
+            .lock()
+            .map_err(|_| "the in-memory lifecycle cache is unavailable".to_string())?;
+        let sweep = lifecycles
+            .get(id)
+            .expect("a lifecycle sweep was inserted immediately above");
+        let item_id = ContextItemId::new(item);
+        let record = sweep.item(&item_id).ok_or_else(|| {
+            "this contributor is no longer present after the session cache was refreshed"
+                .to_string()
+        })?;
+        let life = sweep.lifecycle_of(record);
+        let first_present = life.first_present();
+        let last_present = life.last_present();
+        let turns_present = life.turns_present();
+        let first_seen_disagrees = life.first_seen_disagrees();
+        let departure = life.departure.map(DepartureSummary::from);
+
+        Ok(LifecycleReport {
+            id: life.id.to_string(),
+            label: life.label,
+            category: life.category.label().to_string(),
+            source: format_source(&life.source),
+            first_present,
+            last_present,
+            turns_present,
+            runs: life
+                .runs
+                .into_iter()
+                .map(|run| TurnRunSummary {
+                    from: run.from,
+                    to: run.to,
+                    turns: run.turns,
+                })
+                .collect(),
+            departure,
+            still_present: life.still_present,
+            unknown_turns: life.unknown_turns,
+            scanned_turns: life.scanned_turns,
+            other_thread_turns: life.other_thread_turns,
+            last_scanned_turn: life.last_scanned_turn,
+            recorded_first_seen: life.recorded_first_seen,
+            first_seen_disagrees,
+        })
+    }
 }
 
 #[derive(Serialize)]
@@ -578,6 +648,65 @@ pub struct DoctorReport {
     secrets: Vec<SecretFindingSummary>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnRunSummary {
+    from: u32,
+    to: u32,
+    turns: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DepartureSummary {
+    kind: String,
+    turn: Option<u32>,
+    reclaimed: Option<u32>,
+}
+
+impl From<Departure> for DepartureSummary {
+    fn from(value: Departure) -> Self {
+        match value {
+            Departure::Compaction { turn, reclaimed } => Self {
+                kind: "compaction".to_string(),
+                turn,
+                reclaimed,
+            },
+            Departure::BranchDiverged { turn } => Self {
+                kind: "branch-diverged".to_string(),
+                turn: Some(turn),
+                reclaimed: None,
+            },
+            Departure::Unexplained { turn } => Self {
+                kind: "unexplained".to_string(),
+                turn: Some(turn),
+                reclaimed: None,
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleReport {
+    id: String,
+    label: String,
+    category: String,
+    source: String,
+    first_present: Option<u32>,
+    last_present: Option<u32>,
+    turns_present: usize,
+    runs: Vec<TurnRunSummary>,
+    departure: Option<DepartureSummary>,
+    still_present: bool,
+    unknown_turns: Vec<u32>,
+    scanned_turns: usize,
+    other_thread_turns: usize,
+    last_scanned_turn: Option<u32>,
+    recorded_first_seen: Option<u32>,
+    first_seen_disagrees: bool,
+}
+
 #[tauri::command]
 pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
     state.startup()
@@ -632,6 +761,15 @@ pub fn run_doctor(
     state: tauri::State<'_, AppState>,
 ) -> Result<DoctorReport, String> {
     state.doctor(&id, turn)
+}
+
+#[tauri::command]
+pub fn get_lifecycle(
+    id: String,
+    item: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<LifecycleReport, String> {
+    state.lifecycle(&id, &item)
 }
 
 fn format_source(source: &ContextSource) -> String {
@@ -825,8 +963,9 @@ mod tests {
         assert!(context.total_tokens > 0);
         assert!(!context.categories.is_empty());
         assert!(!context.contributors.is_empty());
+        let item_id = context.contributors[0].id.clone();
 
-        let json = serde_json::to_value(context).expect("context detail serializes for IPC");
+        let json = serde_json::to_value(&context).expect("context detail serializes for IPC");
         assert!(json["totalTokens"].is_number());
         assert!(json["residualIsMeaningful"].is_boolean());
         assert!(json.get("total_tokens").is_none());
@@ -841,6 +980,16 @@ mod tests {
         assert!(json["lowEntropy"].is_array());
         assert!(json["secrets"].is_array());
         assert!(json.get("secret_occurrences").is_none());
+
+        let lifecycle = state
+            .lifecycle(id, &item_id)
+            .expect("trace a listed context contributor");
+        assert_eq!(lifecycle.id, item_id);
+        assert!(lifecycle.turns_present > 0);
+        let json = serde_json::to_value(lifecycle).expect("lifecycle serializes for IPC");
+        assert!(json["runs"].is_array());
+        assert!(json["stillPresent"].is_boolean());
+        assert!(json.get("first_present").is_none());
     }
 
     #[test]

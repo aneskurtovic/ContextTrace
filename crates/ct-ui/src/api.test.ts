@@ -4,7 +4,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-import { getContext, runDoctor, searchSessions } from "./api";
+import { getContext, getLifecycle, runDoctor, searchSessions } from "./api";
 
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -99,5 +99,35 @@ describe("desktop IPC response validation", () => {
     await expect(runDoctor("session-1", 7)).rejects.toThrow(
       "invalid response from Context Doctor",
     );
+  });
+
+  it("validates and forwards the item lifecycle contract", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      id: "codex:42",
+      label: "Read BACKLOG.md",
+      category: "File contents",
+      source: "file: BACKLOG.md",
+      firstPresent: 3,
+      lastPresent: 8,
+      turnsPresent: 6,
+      runs: [{ from: 3, to: 8, turns: 6 }],
+      departure: { kind: "compaction", turn: 9, reclaimed: 20_000 },
+      stillPresent: false,
+      unknownTurns: [],
+      scannedTurns: 10,
+      otherThreadTurns: 0,
+      lastScannedTurn: 10,
+      recordedFirstSeen: 3,
+      firstSeenDisagrees: false,
+    });
+
+    await expect(getLifecycle("session-1", "codex:42")).resolves.toMatchObject({
+      turnsPresent: 6,
+    });
+    expect(invoke).toHaveBeenCalledWith("get_lifecycle", {
+      id: "session-1",
+      item: "codex:42",
+    });
   });
 });

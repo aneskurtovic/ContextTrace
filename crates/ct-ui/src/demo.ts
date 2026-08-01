@@ -2,6 +2,7 @@ import type {
   ContextDetail,
   DoctorReport,
   GrowthPoint,
+  LifecycleReport,
   SessionDetail,
   SessionSummary,
   StartupSummary,
@@ -192,5 +193,27 @@ export function demoDoctor(turn = 32): DoctorReport {
     scannedRecords: 196,
     unreadableRecords: 0,
     secrets: [],
+  };
+}
+
+export function demoLifecycle(item: string): LifecycleReport {
+  const contributor = demoContext().contributors.find((candidate) => candidate.id === item);
+  return {
+    id: item,
+    label: contributor?.label ?? "Context item",
+    category: contributor?.category ?? "Unknown",
+    source: contributor?.source ?? "unknown",
+    firstPresent: 9,
+    lastPresent: 32,
+    turnsPresent: 24,
+    runs: [{ from: 9, to: 32, turns: 24 }],
+    departure: null,
+    stillPresent: true,
+    unknownTurns: [],
+    scannedTurns: 32,
+    otherThreadTurns: 0,
+    lastScannedTurn: 32,
+    recordedFirstSeen: 8,
+    firstSeenDisagrees: true,
   };
 }

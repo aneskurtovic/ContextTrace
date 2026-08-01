@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import * as api from "./api";
-import { demoContext, demoDetail, demoDoctor, demoSessions } from "./demo";
+import { demoContext, demoDetail, demoDoctor, demoLifecycle, demoSessions } from "./demo";
 import type {
   ContextDetail,
   SessionDetail,
@@ -18,6 +18,7 @@ vi.mock("./api", () => ({
   inspectSession: vi.fn(),
   getContext: vi.fn(),
   runDoctor: vi.fn(),
+  getLifecycle: vi.fn(),
 }));
 
 const startup: StartupSummary = {
@@ -54,6 +55,7 @@ beforeEach(() => {
   mockedApi.inspectSession.mockImplementation(async (id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_id, turn) => demoContext(turn));
   mockedApi.runDoctor.mockImplementation(async (_id, turn) => demoDoctor(turn));
+  mockedApi.getLifecycle.mockImplementation(async (_id, item) => demoLifecycle(item));
 });
 
 afterEach(() => {
@@ -328,5 +330,29 @@ describe("desktop accessibility and state handling", () => {
     expect(screen.getByText("Repeated content")).not.toBeNull();
     expect(screen.getByText("Low-information blocks")).not.toBeNull();
     expect(screen.getByText("196 record(s) checked")).not.toBeNull();
+  });
+
+  it("opens and closes a contributor lifecycle without a terminal", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+
+    const contributor = await screen.findByRole("button", {
+      name: /tool: shell_command → test output/,
+    });
+    expect(contributor.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(contributor);
+
+    await waitFor(() =>
+      expect(mockedApi.getLifecycle).toHaveBeenCalledWith(demoSessions[0].id, "demo-0"),
+    );
+    expect(contributor.getAttribute("aria-expanded")).toBe("true");
+    expect(await screen.findByText("turns 9–32")).not.toBeNull();
+    expect(screen.getByText("24 observed")).not.toBeNull();
+    expect(screen.getByText(/Still present at the last scanned turn/)).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close item lifecycle" }));
+    expect(screen.queryByRole("heading", { name: "tool: shell_command → test output" })).toBeNull();
+    expect(contributor.getAttribute("aria-expanded")).toBe("false");
   });
 });
