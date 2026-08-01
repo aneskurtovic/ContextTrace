@@ -12,6 +12,7 @@ import {
 import type {
   Agent,
   ContextDetail,
+  DoctorReport,
   GrowthPoint,
   SessionDetail,
   SessionSummary,
@@ -292,15 +293,175 @@ function Contributors({ context }: { context: ContextDetail }) {
   );
 }
 
+function ContextDoctor({
+  turn,
+  report,
+  loading,
+  onRun,
+}: {
+  turn: number;
+  report: DoctorReport | null;
+  loading: boolean;
+  onRun: () => void;
+}) {
+  const clean =
+    report &&
+    report.duplicateGroups === 0 &&
+    report.lowEntropyItems === 0 &&
+    report.secretOccurrences === 0;
+
+  return (
+    <section className="panel doctor-panel" aria-labelledby="doctor-heading" aria-busy={loading}>
+      <div className="panel-heading doctor-heading">
+        <div>
+          <span className="eyebrow">Context Doctor</span>
+          <h2 id="doctor-heading">Find avoidable context and potential credential exposure</h2>
+        </div>
+        <button className="doctor-run" onClick={onRun} disabled={loading}>
+          {loading ? "Scanning locally…" : report ? "Scan again" : `Analyze turn ${turn}`}
+        </button>
+      </div>
+
+      {!report && !loading && (
+        <p className="doctor-intro">
+          Opt in to a deeper local read. ContextTrace fingerprints and compresses model-visible
+          records, then scans credential shapes without returning their values. Nothing leaves
+          this computer.
+        </p>
+      )}
+      {loading && <Spinner label="Fingerprinting, compressing, and checking local records…" />}
+      {report && !loading && (
+        <>
+          <div className="doctor-summary" aria-live="polite">
+            <div>
+              <span>Exact repeats</span>
+              <strong>{formatTokens(report.repeatedTokens)}</strong>
+              <small>{report.duplicateGroups} duplicate group(s)</small>
+            </div>
+            <div>
+              <span>Low-information score</span>
+              <strong>{formatTokens(report.wasteScoreTokens)}</strong>
+              <small>{report.lowEntropyItems} qualifying block(s)</small>
+            </div>
+            <div className={report.secretOccurrences ? "doctor-alert" : "doctor-clean"}>
+              <span>Potential secrets</span>
+              <strong>{report.secretOccurrences}</strong>
+              <small>{report.scannedRecords} record(s) checked</small>
+            </div>
+          </div>
+
+          {clean && (
+            <p className="doctor-clean-state">
+              No exact repeats, qualifying low-information blocks, or recognised credential
+              shapes were found for this view.
+            </p>
+          )}
+
+          {report.duplicates.length > 0 && (
+            <div className="doctor-section">
+              <div className="doctor-section-title">
+                <strong>Repeated content</strong>
+                <span>Exact model-visible matches · turn {report.turn}</span>
+              </div>
+              {report.duplicates.map((finding, index) => (
+                <div className="doctor-row" key={`duplicate-${index}-${finding.items[0]?.label}`}>
+                  <div className="doctor-row-copy">
+                    <strong title={finding.items[0]?.label}>{finding.items[0]?.label}</strong>
+                    <span>
+                      {finding.copies} copies · {formatTokens(finding.totalTokens)} total · {formatPercent(finding.share)} of prompt
+                    </span>
+                    <small title={finding.items.map((item) => item.source).join(" · ")}>
+                      {finding.items.map((item) => item.source).join(" · ")}
+                    </small>
+                  </div>
+                  <div className="doctor-row-number">
+                    <strong>{formatTokens(finding.repeatedTokens)}</strong>
+                    <span>repeated</span>
+                  </div>
+                </div>
+              ))}
+              {report.duplicateGroups > report.duplicates.length && (
+                <p className="doctor-more">
+                  {report.duplicateGroups - report.duplicates.length} smaller duplicate group(s) included in the total.
+                </p>
+              )}
+            </div>
+          )}
+
+          {report.lowEntropy.length > 0 && (
+            <div className="doctor-section">
+              <div className="doctor-section-title">
+                <strong>Low-information blocks</strong>
+                <span>Large payloads compressed to 75% or less</span>
+              </div>
+              {report.lowEntropy.map((finding) => (
+                <div className="doctor-row" key={`entropy-${finding.label}-${finding.source}`}>
+                  <div className="doctor-row-copy">
+                    <strong title={finding.label}>{finding.label}</strong>
+                    <span>{finding.source} · {formatTokens(finding.tokens)} · {formatPercent(finding.share)} of prompt</span>
+                    <small>{formatPercent(finding.compressionRatio)} compressed/original; score is a ranking, not a savings claim</small>
+                  </div>
+                  <div className="doctor-row-number">
+                    <strong>{formatTokens(finding.wasteScoreTokens)}</strong>
+                    <span>waste score</span>
+                  </div>
+                </div>
+              ))}
+              {report.lowEntropyItems > report.lowEntropy.length && (
+                <p className="doctor-more">
+                  {report.lowEntropyItems - report.lowEntropy.length} smaller block(s) included in the total.
+                </p>
+              )}
+            </div>
+          )}
+
+          {report.secrets.length > 0 && (
+            <div className="doctor-section secret-section">
+              <div className="doctor-section-title">
+                <strong>Potential credentials</strong>
+                <span>Values are deliberately never returned</span>
+              </div>
+              {report.secrets.map((finding, index) => (
+                <div className="secret-row" key={`${finding.line}-${finding.kind}-${index}`}>
+                  <strong>{finding.kind}</strong>
+                  <span>{finding.occurrences} occurrence(s)</span>
+                  <code>line {finding.line}{finding.turn ? ` · turn ${finding.turn}` : ""} · {finding.eventType}</code>
+                </div>
+              ))}
+              {report.secretFindings > report.secrets.length && (
+                <p className="doctor-more">
+                  {report.secretFindings - report.secrets.length} additional location(s) included in the total.
+                </p>
+              )}
+            </div>
+          )}
+
+          {report.unreadableRecords > 0 && (
+            <p className="doctor-warning">
+              {report.unreadableRecords} context-bearing record(s) could not be read; the secret scan is incomplete.
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function SessionWorkspace({
   detail,
   context,
   contextLoading,
+  doctor,
+  doctorLoading,
+  onRunDoctor,
   onTurn,
 }: {
   detail: SessionDetail;
   context: ContextDetail | null;
   contextLoading: boolean;
+  doctor: DoctorReport | null;
+  doctorLoading: boolean;
+  onRunDoctor: () => void;
   onTurn: (turn: number) => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
@@ -410,10 +571,18 @@ function SessionWorkspace({
       {contextLoading && !context ? (
         <Spinner label="Reconstructing context…" />
       ) : context ? (
-        <div className={contextLoading ? "context-grid refreshing" : "context-grid"}>
-          <ContextComposition context={context} />
-          <Contributors context={context} />
-        </div>
+        <>
+          <div className={contextLoading ? "context-grid refreshing" : "context-grid"}>
+            <ContextComposition context={context} />
+            <Contributors context={context} />
+          </div>
+          <ContextDoctor
+            turn={context.turn}
+            report={doctor?.turn === context.turn ? doctor : null}
+            loading={doctorLoading}
+            onRun={onRunDoctor}
+          />
+        </>
       ) : (
         <p className="empty-inline">This session has no reconstructable prompt turn.</p>
       )}
@@ -437,10 +606,13 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
+  const [doctor, setDoctor] = useState<DoctorReport | null>(null);
+  const [loadingDoctor, setLoadingDoctor] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
+  const doctorRequest = useRef(0);
   const catalogRequest = useRef(0);
 
   const refreshSessions = useCallback(async () => {
@@ -525,20 +697,26 @@ export default function App() {
     if (!selectedId) {
       sessionRequest.current += 1;
       turnRequest.current += 1;
+      doctorRequest.current += 1;
       setDetail(null);
       setDetailForId(null);
       setContext(null);
+      setDoctor(null);
       setLoadingDetail(false);
       setLoadingContext(false);
+      setLoadingDoctor(false);
       return;
     }
     const request = ++sessionRequest.current;
     turnRequest.current += 1;
+    doctorRequest.current += 1;
     setDetail(null);
     setDetailForId(null);
     setContext(null);
+    setDoctor(null);
     setLoadingDetail(true);
     setLoadingContext(false);
+    setLoadingDoctor(false);
     setError(null);
     Promise.all([api.inspectSession(selectedId), api.getContext(selectedId)])
       .then(([nextDetail, nextContext]) => {
@@ -559,8 +737,11 @@ export default function App() {
     async (turn: number) => {
       if (!selectedId || turn === context?.turn) return;
       const request = ++turnRequest.current;
+      doctorRequest.current += 1;
       const session = selectedId;
       setContext(null);
+      setDoctor(null);
+      setLoadingDoctor(false);
       setLoadingContext(true);
       setError(null);
       try {
@@ -580,6 +761,29 @@ export default function App() {
     },
     [context?.turn, selectedId],
   );
+
+  const runDoctor = useCallback(async () => {
+    if (!selectedId || !context) return;
+    const request = ++doctorRequest.current;
+    const session = selectedId;
+    const turn = context.turn;
+    setLoadingDoctor(true);
+    setError(null);
+    try {
+      const report = await api.runDoctor(session, turn);
+      if (
+        request === doctorRequest.current &&
+        session === selectedId &&
+        turn === context.turn
+      ) {
+        setDoctor(report);
+      }
+    } catch (loadError) {
+      if (request === doctorRequest.current) setError(errorMessage(loadError));
+    } finally {
+      if (request === doctorRequest.current) setLoadingDoctor(false);
+    }
+  }, [context, selectedId]);
 
   const visibleDetail = detailForId === selectedId ? detail : null;
 
@@ -723,6 +927,9 @@ export default function App() {
             detail={visibleDetail}
             context={context}
             contextLoading={loadingContext}
+            doctor={doctor}
+            doctorLoading={loadingDoctor}
+            onRunDoctor={runDoctor}
             onTurn={selectTurn}
           />
         ) : (

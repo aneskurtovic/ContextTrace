@@ -4,7 +4,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-import { getContext, searchSessions } from "./api";
+import { getContext, runDoctor, searchSessions } from "./api";
 
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -55,6 +55,49 @@ describe("desktop IPC response validation", () => {
 
     await expect(searchSessions()).rejects.toThrow(
       "ContextTrace received an invalid response from session search. Refresh and try again.",
+    );
+  });
+
+  it("validates and forwards the Context Doctor contract", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      turn: 7,
+      duplicateGroups: 0,
+      repeatedTokens: 0,
+      duplicates: [],
+      lowEntropyItems: 0,
+      wasteScoreTokens: 0,
+      lowEntropy: [],
+      secretFindings: 0,
+      secretOccurrences: 0,
+      scannedRecords: 12,
+      unreadableRecords: 0,
+      secrets: [],
+    });
+
+    await expect(runDoctor("session-1", 7)).resolves.toMatchObject({ turn: 7 });
+    expect(invoke).toHaveBeenCalledWith("run_doctor", { id: "session-1", turn: 7 });
+  });
+
+  it("rejects malformed Context Doctor findings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      turn: 7,
+      duplicateGroups: 1,
+      repeatedTokens: 100,
+      duplicates: [{ copies: "two" }],
+      lowEntropyItems: 0,
+      wasteScoreTokens: 0,
+      lowEntropy: [],
+      secretFindings: 0,
+      secretOccurrences: 0,
+      scannedRecords: 12,
+      unreadableRecords: 0,
+      secrets: [],
+    });
+
+    await expect(runDoctor("session-1", 7)).rejects.toThrow(
+      "invalid response from Context Doctor",
     );
   });
 });

@@ -4,7 +4,9 @@
 //! and tokenizer selection here ensures they execute the same use cases with
 //! the same measurement policy.
 
-use ct_adapters::{ClaudeCodeAdapter, CodexAdapter, HeuristicEstimator, TiktokenEstimator};
+use ct_adapters::{
+    ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, TiktokenEstimator,
+};
 use ct_application::{AgentBinding, ContextTrace};
 use ct_domain::ports::TokenEstimator;
 use ct_domain::services::DerivedRatio;
@@ -67,4 +69,12 @@ pub fn calibrate_session(
 /// cached sessions remain simple data and can be invalidated cheaply.
 pub fn heuristic_estimator(chars_per_token: f32) -> HeuristicEstimator {
     HeuristicEstimator::with_ratio(chars_per_token)
+}
+
+/// Open one session's JSONL as a lazy raw-record source.
+///
+/// Kept in the shared composition root so desktop and CLI analyses use the
+/// same filesystem adapter without making UI code construct driven adapters.
+pub fn raw_event_source(path: &str) -> impl ct_domain::ports::RawEventSource {
+    FileRawEventSource::for_session(path)
 }

@@ -20,6 +20,7 @@ struct CachedSession {
     descriptor: SessionDescriptor,
     binding: usize,
     chars_per_token: Option<f32>,
+    content_analyzed: bool,
 }
 
 impl AppState {
@@ -55,6 +56,7 @@ impl AppState {
                     descriptor: resolved.descriptor,
                     binding: resolved.binding,
                     chars_per_token: ratio.map(|ratio| ratio.chars_per_token),
+                    content_analyzed: false,
                 },
             );
         }
@@ -62,6 +64,42 @@ impl AppState {
             sessions
                 .get(id)
                 .expect("a session was inserted immediately above"),
+        )
+    }
+
+    fn with_analyzed_session<T>(
+        &self,
+        id: &str,
+        use_session: impl FnOnce(&CachedSession) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "the in-memory session cache is unavailable".to_string())?;
+        let needs_analysis = sessions
+            .get(id)
+            .is_none_or(|cached| !cached.content_analyzed);
+        if needs_analysis {
+            let (session, resolved) = self
+                .app
+                .load_with_content_analysis(id)
+                .map_err(|error| error.to_string())?;
+            let (_, ratio) = ct_runtime::calibrate_session(&self.app, &session, resolved.binding);
+            sessions.insert(
+                id.to_string(),
+                CachedSession {
+                    session,
+                    descriptor: resolved.descriptor,
+                    binding: resolved.binding,
+                    chars_per_token: ratio.map(|ratio| ratio.chars_per_token),
+                    content_analyzed: true,
+                },
+            );
+        }
+        use_session(
+            sessions
+                .get(id)
+                .expect("an analyzed session was inserted immediately above"),
         )
     }
 
@@ -243,6 +281,105 @@ impl AppState {
             })
         })
     }
+
+    fn doctor(&self, id: &str, turn: Option<u32>) -> Result<DoctorReport, String> {
+        self.with_analyzed_session(id, |cached| {
+            let turn = match turn {
+                Some(turn) => TurnNumber::new(turn).map_err(|error| error.to_string())?,
+                None => self
+                    .app
+                    .peak_turn(&cached.session)
+                    .ok_or_else(|| "this session has no turn with prompt usage".to_string())?,
+            };
+            let estimator = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
+            let snapshot = match estimator.as_ref() {
+                Some(estimator) => {
+                    self.app
+                        .snapshot_with(&cached.session, cached.binding, turn, estimator)
+                }
+                None => self.app.snapshot(&cached.session, cached.binding, turn),
+            }
+            .map_err(|error| error.to_string())?;
+
+            let duplicate_content = snapshot.duplicate_content();
+            let duplicate_groups = duplicate_content.len();
+            let repeated_tokens = duplicate_content.iter().fold(0u32, |total, group| {
+                total.saturating_add(group.repeated_tokens)
+            });
+            let duplicates = duplicate_content
+                .into_iter()
+                .take(8)
+                .map(|group| DuplicateSummary {
+                    copies: group.items.len(),
+                    total_tokens: group.total_tokens,
+                    repeated_tokens: group.repeated_tokens,
+                    share: group.share,
+                    confidence: group.confidence,
+                    items: group
+                        .items
+                        .into_iter()
+                        .take(4)
+                        .map(|item| DiagnosticItemSummary {
+                            label: item.label,
+                            source: format_source(&item.source),
+                            tokens: item.tokens,
+                        })
+                        .collect(),
+                })
+                .collect();
+
+            let low_entropy_content = snapshot.low_entropy_content();
+            let low_entropy_items = low_entropy_content.len();
+            let waste_score_tokens = low_entropy_content.iter().fold(0u32, |total, item| {
+                total.saturating_add(item.waste_score_tokens)
+            });
+            let low_entropy = low_entropy_content
+                .into_iter()
+                .take(8)
+                .map(|item| LowEntropySummary {
+                    label: item.label,
+                    source: format_source(&item.source),
+                    tokens: item.tokens,
+                    compression_ratio: item.compression_ratio,
+                    waste_score_tokens: item.waste_score_tokens,
+                    share: item.share,
+                    confidence: item.confidence,
+                })
+                .collect();
+
+            let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+            let secret_scan = self.app.scan_secrets(&cached.session, &raw);
+            let secret_occurrences = secret_scan.occurrence_count();
+            let secret_findings = secret_scan.findings.len();
+            let secrets = secret_scan
+                .findings
+                .into_iter()
+                .take(12)
+                .map(|finding| SecretFindingSummary {
+                    kind: finding.kind.label().to_string(),
+                    occurrences: finding.occurrences,
+                    turn: finding.turn.map(|turn| turn.get()),
+                    line: finding.line_no,
+                    event_type: finding.event_type,
+                })
+                .collect();
+
+            Ok(DoctorReport {
+                turn: turn.get(),
+                duplicate_groups,
+                repeated_tokens,
+                duplicates,
+                low_entropy_items,
+                waste_score_tokens,
+                low_entropy,
+                secret_findings,
+                secret_occurrences,
+                scanned_records: secret_scan.scanned_records,
+                unreadable_records: secret_scan.unreadable_records,
+                secrets,
+            })
+        })
+    }
 }
 
 #[derive(Serialize)]
@@ -383,6 +520,64 @@ pub struct ContextDetail {
     contributors: Vec<ContributorSummary>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticItemSummary {
+    label: String,
+    source: String,
+    tokens: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateSummary {
+    copies: usize,
+    total_tokens: u32,
+    repeated_tokens: u32,
+    share: f32,
+    confidence: Confidence,
+    items: Vec<DiagnosticItemSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LowEntropySummary {
+    label: String,
+    source: String,
+    tokens: u32,
+    compression_ratio: f32,
+    waste_score_tokens: u32,
+    share: f32,
+    confidence: Confidence,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretFindingSummary {
+    kind: String,
+    occurrences: usize,
+    turn: Option<u32>,
+    line: u32,
+    event_type: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoctorReport {
+    turn: u32,
+    duplicate_groups: usize,
+    repeated_tokens: u32,
+    duplicates: Vec<DuplicateSummary>,
+    low_entropy_items: usize,
+    waste_score_tokens: u32,
+    low_entropy: Vec<LowEntropySummary>,
+    secret_findings: usize,
+    secret_occurrences: usize,
+    scanned_records: usize,
+    unreadable_records: usize,
+    secrets: Vec<SecretFindingSummary>,
+}
+
 #[tauri::command]
 pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
     state.startup()
@@ -428,6 +623,15 @@ pub fn get_context(
     state: tauri::State<'_, AppState>,
 ) -> Result<ContextDetail, String> {
     state.context(&id, turn)
+}
+
+#[tauri::command]
+pub fn run_doctor(
+    id: String,
+    turn: Option<u32>,
+    state: tauri::State<'_, AppState>,
+) -> Result<DoctorReport, String> {
+    state.doctor(&id, turn)
 }
 
 fn format_source(source: &ContextSource) -> String {
@@ -626,6 +830,17 @@ mod tests {
         assert!(json["totalTokens"].is_number());
         assert!(json["residualIsMeaningful"].is_boolean());
         assert!(json.get("total_tokens").is_none());
+
+        let doctor = state
+            .doctor(id, Some(peak_turn))
+            .expect("run content diagnostics for the peak turn");
+        assert_eq!(doctor.turn, peak_turn);
+        assert!(doctor.scanned_records > 0);
+        let json = serde_json::to_value(doctor).expect("doctor report serializes for IPC");
+        assert!(json["duplicates"].is_array());
+        assert!(json["lowEntropy"].is_array());
+        assert!(json["secrets"].is_array());
+        assert!(json.get("secret_occurrences").is_none());
     }
 
     #[test]

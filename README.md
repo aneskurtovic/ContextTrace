@@ -19,8 +19,10 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 > **Status: the CLI is complete and the first useful desktop slice now runs; a
 > public 0.1 release is not ready.** The Tauri app browses local Codex and
 > Claude Code sessions, charts prompt growth and compactions, switches between
-> measured turns, and shows context composition and largest contributors using
-> the same Rust application service as the CLI.
+> measured turns, shows context composition and largest contributors, and can
+> opt into a local Context Doctor for exact repeats, low-information blocks and
+> potential credential locations using the same Rust application service as
+> the CLI.
 >
 > On 2026-08-01, `ct doctor --dir` parsed **816 local sessions** (717 Claude Code
 > and 99 Codex), recognised all **148,970 events**, and finished in 5.88
@@ -61,27 +63,28 @@ Ports and adapters, with the dependency rule enforced by Cargo rather than by
 convention.
 
 ```
-                  ct-cli  (driving adapter + composition root)
-                 /   |   \
-                /    |    \
-  ct-application     |     ct-adapters   (Codex ACL, Claude Code ACL,
-           |         |    /               tokenizers, filesystem)
-            \        |   /
-              ct-domain   (entities, value objects, aggregates,
-                           domain services, and the port traits)
+             ct-cli              ct-ui
+                 \                /
+                  \  ct-runtime  /
+                   /            \
+      ct-application            ct-adapters
+                   \            /
+                    ct-domain
 ```
 
 Every arrow points inward. `ct-domain` depends on nothing but `serde` and
 `chrono`. `ct-adapters` implements ports declared in `ct-domain` and never calls
-into `ct-application`. Only `ct-cli` knows which concrete adapters exist, and its
-job at the boundary is to construct them and inject them.
+into `ct-application`. `ct-runtime` is the shared composition root that selects
+concrete adapters and tokenizers once for both driving interfaces.
 
 | Crate | Responsibility |
 |---|---|
 | `ct-domain` | Entities, value objects, the `AgentSession` and `ContextSnapshot` aggregates, domain services, port traits. No I/O. |
 | `ct-application` | Use cases orchestrating domain services over ports. |
 | `ct-adapters` | Driven adapters: per-agent ACLs, token estimators, filesystem raw-event source. |
-| `ct-cli` | The `ct` binary: driving adapter and composition root. |
+| `ct-runtime` | Shared composition root used by CLI and desktop. |
+| `ct-cli` | The `ct` binary and terminal presentation. |
+| `ct-ui` | Tauri v2 desktop driving adapter and React interface. |
 
 ### Two invariants worth knowing
 
@@ -404,13 +407,13 @@ false; CI now checks 1.88 explicitly.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented, 68 tests |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the thirteen commands below | Implemented, 23 tests |
-| `ct-ui` — Tauri v2 + React paged session search, growth, composition and contributors | Desktop MVP accepted: 5 Rust IPC tests, 17 frontend tests, real-corpus installed search/filtering and native 1024×680/1440×900 checks |
+| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributors and Context Doctor | Desktop MVP accepted: 5 Rust IPC tests, 20 frontend tests, real-corpus installed search/filtering and native 1024×680/1440×900 checks; Doctor responsive pass complete |
 | Standalone JSONL fixture files | Implemented, 14 tests |
 | Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |
 | Session metadata search | Implemented server-side with explicit paging |
 | SQLite index | Deferred until measured desktop performance requires it |
 
-**298 Rust tests and 17 frontend tests** passing, `cargo fmt --check` clean,
+**298 Rust tests and 20 frontend tests** passing, `cargo fmt --check` clean,
 `clippy` clean at zero warnings, the React production bundle and Tauri command
 bridge build, the release CLI answers `ct --help`, and `ct doctor --dir`
 recognises every event type across the current local corpus. The Windows CI

@@ -1,5 +1,6 @@
 import type {
   ContextDetail,
+  DoctorReport,
   GrowthPoint,
   SessionDetail,
   SessionSummary,
@@ -151,5 +152,45 @@ export function demoContext(turn = 32): ContextDetail {
       share: sized(Number(tokens)) / total,
       confidence: confidence as "observed" | "derived" | "estimated",
     })),
+  };
+}
+
+export function demoDoctor(turn = 32): DoctorReport {
+  return {
+    turn,
+    duplicateGroups: 3,
+    repeatedTokens: 18_240,
+    duplicates: [
+      {
+        copies: 3,
+        totalTokens: 27_360,
+        repeatedTokens: 18_240,
+        share: 0.15,
+        confidence: "derived",
+        items: [
+          { label: "Repeated test output", source: "tool: shell_command", tokens: 9_120 },
+          { label: "Repeated test output", source: "tool: shell_command", tokens: 9_120 },
+          { label: "Repeated test output", source: "tool: shell_command", tokens: 9_120 },
+        ],
+      },
+    ],
+    lowEntropyItems: 2,
+    wasteScoreTokens: 13_480,
+    lowEntropy: [
+      {
+        label: "Compilation and linker diagnostics",
+        source: "tool: cargo",
+        tokens: 17_200,
+        compressionRatio: 0.22,
+        wasteScoreTokens: 13_416,
+        share: 0.14,
+        confidence: "derived",
+      },
+    ],
+    secretFindings: 0,
+    secretOccurrences: 0,
+    scannedRecords: 196,
+    unreadableRecords: 0,
+    secrets: [],
   };
 }

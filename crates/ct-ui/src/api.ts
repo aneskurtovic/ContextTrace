@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ContextDetail,
+  DoctorReport,
   SessionDetail,
   SessionPage,
   SessionSummary,
@@ -9,6 +10,7 @@ import type {
 import {
   demoContext,
   demoDetail,
+  demoDoctor,
   demoSessions,
   demoStartup,
 } from "./demo";
@@ -171,6 +173,65 @@ function asContext(value: unknown): ContextDetail {
   return value as unknown as ContextDetail;
 }
 
+function isConfidence(value: unknown): boolean {
+  return typeof value === "string" && confidenceLevels.has(value);
+}
+
+function asDoctor(value: unknown): DoctorReport {
+  const validItem = (item: unknown) =>
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.source === "string" &&
+    typeof item.tokens === "number";
+  const validDuplicate = (finding: unknown) =>
+    isRecord(finding) &&
+    typeof finding.copies === "number" &&
+    typeof finding.totalTokens === "number" &&
+    typeof finding.repeatedTokens === "number" &&
+    typeof finding.share === "number" &&
+    isConfidence(finding.confidence) &&
+    Array.isArray(finding.items) &&
+    finding.items.every(validItem);
+  const validLowEntropy = (finding: unknown) =>
+    isRecord(finding) &&
+    typeof finding.label === "string" &&
+    typeof finding.source === "string" &&
+    typeof finding.tokens === "number" &&
+    typeof finding.compressionRatio === "number" &&
+    typeof finding.wasteScoreTokens === "number" &&
+    typeof finding.share === "number" &&
+    isConfidence(finding.confidence);
+  const validSecret = (finding: unknown) =>
+    isRecord(finding) &&
+    typeof finding.kind === "string" &&
+    typeof finding.occurrences === "number" &&
+    isNumberOrNull(finding.turn) &&
+    typeof finding.line === "number" &&
+    typeof finding.eventType === "string";
+
+  if (
+    !isRecord(value) ||
+    typeof value.turn !== "number" ||
+    typeof value.duplicateGroups !== "number" ||
+    typeof value.repeatedTokens !== "number" ||
+    !Array.isArray(value.duplicates) ||
+    !value.duplicates.every(validDuplicate) ||
+    typeof value.lowEntropyItems !== "number" ||
+    typeof value.wasteScoreTokens !== "number" ||
+    !Array.isArray(value.lowEntropy) ||
+    !value.lowEntropy.every(validLowEntropy) ||
+    typeof value.secretFindings !== "number" ||
+    typeof value.secretOccurrences !== "number" ||
+    typeof value.scannedRecords !== "number" ||
+    typeof value.unreadableRecords !== "number" ||
+    !Array.isArray(value.secrets) ||
+    !value.secrets.every(validSecret)
+  ) {
+    throw malformed("Context Doctor");
+  }
+  return value as unknown as DoctorReport;
+}
+
 export function getStartup(): Promise<StartupSummary> {
   if (!inTauri()) return Promise.resolve(demoStartup);
   return invoke<unknown>("get_startup").then(asStartup);
@@ -239,4 +300,9 @@ export function inspectSession(id: string): Promise<SessionDetail> {
 export function getContext(id: string, turn?: number): Promise<ContextDetail> {
   if (!inTauri()) return Promise.resolve(demoContext(turn));
   return invoke<unknown>("get_context", { id, turn: turn ?? null }).then(asContext);
+}
+
+export function runDoctor(id: string, turn?: number): Promise<DoctorReport> {
+  if (!inTauri()) return Promise.resolve(demoDoctor(turn));
+  return invoke<unknown>("run_doctor", { id, turn: turn ?? null }).then(asDoctor);
 }

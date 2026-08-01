@@ -9,7 +9,8 @@ pub fn run() {
             commands::list_sessions,
             commands::search_sessions,
             commands::inspect_session,
-            commands::get_context
+            commands::get_context,
+            commands::run_doctor
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ContextTrace desktop");

@@ -88,3 +88,51 @@ export interface ContextDetail {
   categories: CategorySummary[];
   contributors: ContributorSummary[];
 }
+
+export interface DiagnosticItemSummary {
+  label: string;
+  source: string;
+  tokens: number;
+}
+
+export interface DuplicateSummary {
+  copies: number;
+  totalTokens: number;
+  repeatedTokens: number;
+  share: number;
+  confidence: Confidence;
+  items: DiagnosticItemSummary[];
+}
+
+export interface LowEntropySummary {
+  label: string;
+  source: string;
+  tokens: number;
+  compressionRatio: number;
+  wasteScoreTokens: number;
+  share: number;
+  confidence: Confidence;
+}
+
+export interface SecretFindingSummary {
+  kind: string;
+  occurrences: number;
+  turn: number | null;
+  line: number;
+  eventType: string;
+}
+
+export interface DoctorReport {
+  turn: number;
+  duplicateGroups: number;
+  repeatedTokens: number;
+  duplicates: DuplicateSummary[];
+  lowEntropyItems: number;
+  wasteScoreTokens: number;
+  lowEntropy: LowEntropySummary[];
+  secretFindings: number;
+  secretOccurrences: number;
+  scannedRecords: number;
+  unreadableRecords: number;
+  secrets: SecretFindingSummary[];
+}

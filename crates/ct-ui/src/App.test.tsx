@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import * as api from "./api";
-import { demoContext, demoDetail, demoSessions } from "./demo";
+import { demoContext, demoDetail, demoDoctor, demoSessions } from "./demo";
 import type {
   ContextDetail,
   SessionDetail,
@@ -17,6 +17,7 @@ vi.mock("./api", () => ({
   searchSessions: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
+  runDoctor: vi.fn(),
 }));
 
 const startup: StartupSummary = {
@@ -52,6 +53,7 @@ beforeEach(() => {
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
   mockedApi.inspectSession.mockImplementation(async (id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_id, turn) => demoContext(turn));
+  mockedApi.runDoctor.mockImplementation(async (_id, turn) => demoDoctor(turn));
 });
 
 afterEach(() => {
@@ -308,5 +310,23 @@ describe("desktop accessibility and state handling", () => {
       await screen.findByText("Unattributed remainder: 0 tokens for this reconstruction."),
     ).not.toBeNull();
     expect(screen.queryByText(/Unattributed remainder: not measurable/)).toBeNull();
+  });
+
+  it("runs the deeper Context Doctor only after explicit consent", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+
+    const analyze = await screen.findByRole("button", { name: "Analyze turn 32" });
+    expect(mockedApi.runDoctor).not.toHaveBeenCalled();
+    fireEvent.click(analyze);
+
+    await waitFor(() =>
+      expect(mockedApi.runDoctor).toHaveBeenCalledWith(demoSessions[0].id, 32),
+    );
+    expect((await screen.findAllByText("18.2k")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Repeated content")).not.toBeNull();
+    expect(screen.getByText("Low-information blocks")).not.toBeNull();
+    expect(screen.getByText("196 record(s) checked")).not.toBeNull();
   });
 });

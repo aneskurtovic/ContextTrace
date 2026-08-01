@@ -37,6 +37,39 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
+### CT-046 · Trace a contributor through the desktop timeline
+`status: next` · `tier: A` · `size: S` · `source: desktop product strategy`
+
+**Why:** the context view answers what is large now, but the next question is
+when a suspicious file or tool result entered, how long it survived, and what
+removed it. The lifecycle engine already answers this in the CLI, so making
+largest-contributor rows open a timeline is mostly desktop presentation work
+and gives the app a debugger-like interaction neither harness provides.
+**Done when:** selecting a contributor shows its first/last presence, every
+present interval, departure reason and compaction boundary where applicable,
+with ambiguous or unavailable lineage stated rather than guessed.
+
+### CT-047 · Add a desktop compaction autopsy
+`status: next` · `tier: A` · `size: S` · `source: desktop product strategy`
+
+**Why:** Codex records literal replacement history, so ContextTrace can show
+exactly what a compaction discarded—evidence Codex itself does not turn into an
+inspectable view. The diff engine already exists; the prompt-growth chart
+already exposes the natural entry point.
+**Done when:** selecting a Codex compaction marker lists dropped, preserved and
+replacement-only items with sizes and confidence; unsupported agents explain
+the evidence limit without fabricating a diff.
+
+### CT-048 · Compare two turns in the desktop app
+`status: next` · `tier: A` · `size: M` · `source: desktop product strategy`
+
+**Why:** a single snapshot says what is wrong; a comparison says what changed
+when the agent's behaviour changed. The application diff use case already
+normalises categories, tools, residuals and measurement comparability.
+**Done when:** a user can pin a baseline turn, choose a comparison turn and see
+the largest category/tool/residual deltas with incompatible measurements
+clearly bounded.
+
 ### CT-043 · Ship an installable 0.1.0
 `status: next` · `tier: A` · `size: L` · `source: MVP review`
 
@@ -91,6 +124,27 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-045 · Put Context Doctor in the desktop app
+`status: done` · `tier: A` · `size: S` · `source: desktop product strategy`
+
+**Why:** duplicate detection, low-entropy ranking and credential-shape scanning
+are valuable local-log deductions that Codex and Claude Code do not expose, but
+they previously required terminal commands.
+**Done when:** a user can explicitly run all three analyses from a selected
+desktop turn, see actionable names and token footprints, and no secret value
+can cross the IPC boundary.
+
+**Accepted on 2026-08-01.** The new on-demand Context Doctor fingerprints and
+compresses model-visible records, reports exact repeated-token footprint, ranks
+large compressible blocks with the existing non-savings waste score, and scans
+the full session for credential shapes while returning only type and log
+location. Ordinary browsing keeps the cheap parse path; the analyzed session
+is cached after opt-in. IPC validation, two-agent fixture coverage and frontend
+consent/state tests pass. A current 208-turn Codex session produced 16 exact
+duplicate groups, 42 low-entropy blocks and two potential-secret locations; the
+underlying release analysis paths completed in 0.43 and 0.55 seconds. Responsive
+1024×680 and 1440×900 checks show no horizontal overflow.
 
 ### CT-044 · Complete desktop MVP acceptance
 `status: done` · `tier: A` · `size: L` · `source: product decision`
