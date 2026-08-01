@@ -2,22 +2,34 @@
 
 **DevTools for AI coding-agent context.**
 
-ContextTrace is a local-first tool for inspecting what an AI coding agent actually had in its context window, turn by turn — what was in it, where each piece came from, how large it was, and how it evolved during the session.
+ContextTrace is a local-first tool for inspecting what an AI coding agent
+actually had in its context window, turn by turn — what was in it, where
+each piece came from, how large it was, and how it evolved during the
+session.
 
 [![CI](https://github.com/aneskurtovic/ContextTrace/actions/workflows/ci.yml/badge.svg)](https://github.com/aneskurtovic/ContextTrace/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: 0.1 is not released.** The CLI is complete, and the desktop app runs the same discovery-to-diagnosis workflow through a native Windows UI. On 2026-08-01, `ct doctor --dir` parsed **816 local sessions** (717 Claude Code, 99 Codex) and recognised all **148,970 events** in 5.88 seconds. See [MVP status](docs/MVP-STATUS.md) for the evidence, gates and distance to a public release.
+> **Status: 0.1 is not released.** The CLI is complete, and the desktop app
+> runs the same discovery-to-diagnosis workflow through a native Windows UI.
+> On 2026-08-01, `ct doctor --dir` parsed **816 local sessions** (717 Claude
+> Code, 99 Codex) and recognised all **148,970 events** in 5.88 seconds. See
+> [MVP status](docs/MVP-STATUS.md) for the evidence, gates and distance to a
+> public release.
 
 ![ContextTrace desktop app — session overview with prompt growth, context composition and largest contributors](docs/images/desktop.png)
 
-*The desktop app's overview panel: prompt growth over the session, what filled the context window, and the largest contributors for the selected turn.*
+*The desktop app's overview panel: prompt growth over the session, what
+filled the context window, and the largest contributors for the selected
+turn.*
 
 ## What it is
 
 It is not a chat-history viewer. The workflow it exists for is:
 
-> *Why did the agent do that?* → inspect the turn → see the context → trace each item to its source → find the 38k-token garbage tool result → understand the behaviour.
+> *Why did the agent do that?* → inspect the turn → see the context → trace
+> each item to its source → find the 38k-token garbage tool result →
+> understand the behaviour.
 
 Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 
@@ -42,12 +54,20 @@ What runs today, on either surface:
 
 ## Install
 
-Windows x64 is the supported surface. There is no public download yet, so the working path is a local build from source; it produces the same two artifacts the release workflow packages.
+Windows x64 is the supported surface. There is no public download yet, so
+the working path is a local build from source; it produces the same two
+artifacts the release workflow packages.
 
 ### Prerequisites
 
-- **Rust 1.88+.** `rust-toolchain.toml` selects the channel and adds `rustfmt` and `clippy`. On Windows the MSVC host toolchain — Visual Studio's "Desktop development with C++" workload — is required, because without it nothing links.
-- **Node.js 22**, for the desktop app only. Node 18 runs `npm ci` successfully and then silently omits an optional native binding, so the failure surfaces much later as `Cannot find native binding`; see CT-061 in [BACKLOG.md](BACKLOG.md).
+- **Rust 1.88+.** `rust-toolchain.toml` selects the channel and adds
+  `rustfmt` and `clippy`. On Windows the MSVC host toolchain — Visual
+  Studio's "Desktop development with C++" workload — is required, because
+  without it nothing links.
+- **Node.js 22**, for the desktop app only. Node 18 runs `npm ci`
+  successfully and then silently omits an optional native binding, so the
+  failure surfaces much later as `Cannot find native binding`; see CT-061 in
+  [BACKLOG.md](BACKLOG.md).
 
 ### The `ct` CLI
 
@@ -55,7 +75,8 @@ Windows x64 is the supported surface. There is no public download yet, so the wo
 cargo build --release -p ct-cli
 ```
 
-`target\release\ct.exe` is portable: copy it anywhere on `PATH` and it needs no installer, configuration or arguments to find your sessions.
+`target\release\ct.exe` is portable: copy it anywhere on `PATH` and it needs
+no installer, configuration or arguments to find your sessions.
 
 ```powershell
 .\target\release\ct.exe roots            # which local directories it reads
@@ -70,15 +91,29 @@ npm ci
 npm run tauri build
 ```
 
-Budget time for the first run: a cold release build of the workspace plus the native webview stack took **39 minutes** on a recent laptop, most of it silent. The bundling step also downloads its own NSIS toolchain from GitHub the first time, so that step needs network access even though nothing it builds does.
+Budget time for the first run: a cold release build of the workspace plus
+the native webview stack took **39 minutes** on a recent laptop, most of it
+silent. The bundling step also downloads its own NSIS toolchain from GitHub
+the first time, so that step needs network access even though nothing it
+builds does.
 
-That writes an installer to `target\release\bundle\nsis\ContextTrace_<version>_x64-setup.exe`. Running it installs ContextTrace for the current user under `%LOCALAPPDATA%`, so it never asks for administrator rights. Upgrade by running a newer installer over the old one; remove it through Windows "Installed apps". The build is unsigned, so expect a SmartScreen warning on first launch.
+That writes an installer to
+`target\release\bundle\nsis\ContextTrace_<version>_x64-setup.exe`. Running
+it installs ContextTrace for the current user under `%LOCALAPPDATA%`, so it
+never asks for administrator rights. Upgrade by running a newer installer
+over the old one; remove it through Windows "Installed apps". The build is
+unsigned, so expect a SmartScreen warning on first launch.
 
-To run the app without installing it, use `npm run tauri dev` instead — that is the native app against the real read-only local adapters.
+To run the app without installing it, use `npm run tauri dev` instead —
+that is the native app against the real read-only local adapters.
 
 ### From a release candidate
 
-Each `v<version>` tag produces a **draft** GitHub release, not yet public, containing `ContextTrace-<version>-windows-x64-setup.exe` (the per-user desktop installer), `ContextTrace-<version>-windows-x64-cli.zip` (the companion `ct.exe` and license), and `SHA256SUMS.txt` (SHA-256 hashes for both).
+Each `v<version>` tag produces a **draft** GitHub release, not yet public,
+containing `ContextTrace-<version>-windows-x64-setup.exe` (the per-user
+desktop installer), `ContextTrace-<version>-windows-x64-cli.zip` (the
+companion `ct.exe` and license), and `SHA256SUMS.txt` (SHA-256 hashes for
+both).
 
 Before running a candidate, compare its hash with `SHA256SUMS.txt`:
 
@@ -87,13 +122,21 @@ Get-FileHash .\ContextTrace-<version>-windows-x64-setup.exe -Algorithm SHA256
 Get-FileHash .\ContextTrace-<version>-windows-x64-cli.zip -Algorithm SHA256
 ```
 
-The desktop installer targets the current user and does not require administrator access. To upgrade, run the newer installer over the existing version; ContextTrace does not own or modify the Codex/Claude session directories it reads. The CLI ZIP is portable: extract it and run `.\ct.exe --help`.
+The desktop installer targets the current user and does not require
+administrator access. To upgrade, run the newer installer over the existing
+version; ContextTrace does not own or modify the Codex/Claude session
+directories it reads. The CLI ZIP is portable: extract it and run
+`.\ct.exe --help`.
 
-Until a release candidate has a verified Windows signature, expect SmartScreen to warn about the unsigned installer. See [MVP status](docs/MVP-STATUS.md) for the current evidence ceiling and [the release procedure](docs/RELEASING.md) for operator checks.
+Until a release candidate has a verified Windows signature, expect
+SmartScreen to warn about the unsigned installer. See
+[MVP status](docs/MVP-STATUS.md) for the current evidence ceiling and
+[the release procedure](docs/RELEASING.md) for operator checks.
 
 ## Quickstart
 
-Real output from this machine on 2026-08-01. Your own `sessions`/`context` output will show your own local sessions instead.
+Real output from this machine on 2026-08-01. Your own `sessions`/`context`
+output will show your own local sessions instead.
 
 ```
 > ct roots
@@ -159,28 +202,55 @@ filters: --source <kind[:text]>  --category <name>
 
 ## Roadmap
 
-Next up: a desktop compaction autopsy — the exact Codex compaction diff, surfaced in the desktop app (CT-047); turn comparison in the desktop app (CT-048); an installable 0.1.0 — clean-machine install/upgrade validation and a release-candidate soak (CT-043).
+Next up: a desktop compaction autopsy — the exact Codex compaction diff,
+surfaced in the desktop app (CT-047); turn comparison in the desktop app
+(CT-048); an installable 0.1.0 — clean-machine install/upgrade validation
+and a release-candidate soak (CT-043).
 
-Deliberately deferred: a persistent SQLite index, until measured performance requires one; crates.io publication; Windows code signing, until the production-release decision.
+Deliberately deferred: a persistent SQLite index, until measured
+performance requires one; crates.io publication; Windows code signing,
+until the production-release decision.
 
 No dates, no promises. [BACKLOG.md](BACKLOG.md) is the authoritative list.
 
 ## How to read the numbers
 
-Percentages in `ct context` and `ct largest` are shares of an **observed** total — the agent's own reported prompt size — so they are trustworthy on their own. Individual Claude Code item sizes are **calibrated estimates**: Anthropic ships no local tokenizer, so each session's characters-per-token ratio is fitted from its own turn-to-turn deltas, and `ct context` prints both the derived ratio and the scale factor it applied. Codex items can be measured exactly with `--exact`, but even that covers only the items whose content is plain text — encrypted, structured or image content keeps its estimate, and the header says how many did.
+Percentages in `ct context` and `ct largest` are shares of an **observed**
+total — the agent's own reported prompt size — so they are trustworthy on
+their own. Individual Claude Code item sizes are **calibrated estimates**:
+Anthropic ships no local tokenizer, so each session's characters-per-token
+ratio is fitted from its own turn-to-turn deltas, and `ct context` prints
+both the derived ratio and the scale factor it applied. Codex items can be
+measured exactly with `--exact`, but even that covers only the items whose
+content is plain text — encrypted, structured or image content keeps its
+estimate, and the header says how many did.
 
 Two limitations are stated by the tool rather than hidden by it:
 
-- On sessions where reconstruction over-counts logged content relative to the reported prompt, the unlogged remainder cannot be separated from the over-count — `ct context` says so instead of printing a zero residual that would imply a complete inventory.
-- `ct doctor` reports turns whose figures came from several API calls folded into one record, and reasoning events whose text the log redacted — both cases where a number is weaker than its presentation suggests.
+- On sessions where reconstruction over-counts logged content relative to
+  the reported prompt, the unlogged remainder cannot be separated from the
+  over-count — `ct context` says so instead of printing a zero residual
+  that would imply a complete inventory.
+- `ct doctor` reports turns whose figures came from several API calls
+  folded into one record, and reasoning events whose text the log redacted
+  — both cases where a number is weaker than its presentation suggests.
 
-**The main known gap** is that over-counting: on roughly one Claude Code session in seven, the reconstruction accounts for more content than the prompt held, and the cause is not established. ContextTrace detects the discrepancy and reports it rather than modelling a behaviour it cannot observe.
+**The main known gap** is that over-counting: on roughly one Claude Code
+session in seven, the reconstruction accounts for more content than the
+prompt held, and the cause is not established. ContextTrace detects the
+discrepancy and reports it rather than modelling a behaviour it cannot
+observe.
 
-See [methodology](docs/methodology.md) for how the ratio is derived, what `--exact` does and does not cover, and the evidence behind each claim above.
+See [methodology](docs/methodology.md) for how the ratio is derived, what
+`--exact` does and does not cover, and the evidence behind each claim above.
 
 ## Privacy
 
-**Local-first.** Session data contains source code, prompts, terminal output and potentially secrets. ContextTrace has no upload, telemetry or cloud code. The desktop capability set is core-only and its content-security policy permits only local Tauri IPC; session data stays on the machine.
+**Local-first.** Session data contains source code, prompts, terminal
+output and potentially secrets. ContextTrace has no upload, telemetry or
+cloud code. The desktop capability set is core-only and its
+content-security policy permits only local Tauri IPC; session data stays on
+the machine.
 
 **Read-only.** Agent directories are inputs. ContextTrace never writes to them.
 
@@ -197,7 +267,9 @@ See [methodology](docs/methodology.md) for how the ratio is derived, what `--exa
 
 ## Contributing
 
-[BACKLOG.md](BACKLOG.md) is the authoritative work list; [IDEAS.md](IDEAS.md) is an unscheduled pool — nothing in it is planned until it is pulled into BACKLOG.md with a `CT-nnn` id.
+[BACKLOG.md](BACKLOG.md) is the authoritative work list; [IDEAS.md](IDEAS.md)
+is an unscheduled pool — nothing in it is planned until it is pulled into
+BACKLOG.md with a `CT-nnn` id.
 
 These are the gates CI enforces:
 
@@ -214,7 +286,14 @@ npm run build
 npm run tauri dev
 ```
 
-Node 18 runs `npm ci` successfully and then silently omits an optional native binding, so the failure surfaces later as `Cannot find native binding` — use Node 22. The minimum Rust version is **1.88**; CI checks it explicitly.
+`npm run dev` by itself opens a browser preview backed by synthetic sessions;
+`npm run tauri dev` runs the native app against the real read-only local
+adapters.
+
+Node 18 runs `npm ci` successfully and then silently omits an optional
+native binding, so the failure surfaces later as `Cannot find native
+binding` — use Node 22. The minimum Rust version is **1.88**; CI checks it
+explicitly.
 
 ## License
 

@@ -47,6 +47,11 @@ concrete adapters and tokenizers once for both driving interfaces.
 | `ct-cli` | The `ct` binary and terminal presentation. |
 | `ct-ui` | Tauri v2 desktop driving adapter and React interface. |
 
+The analysis crates and CLI keep a deliberately small dependency surface.
+Tauri necessarily adds the native window/webview stack; it is isolated in
+`ct-ui`, and both interfaces share their concrete adapter and tokenizer choices
+through `ct-runtime`.
+
 ## Invariants worth knowing
 
 **Confidence never launders upward.** Combining an observed fact with an
