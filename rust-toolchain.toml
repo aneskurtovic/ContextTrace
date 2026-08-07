@@ -1,7 +1,9 @@
 [toolchain]
-# Use the stable toolchain for the host platform. A host-neutral channel keeps
-# the repository buildable on Windows, macOS and Linux; rustup selects the
-# native target. The previous Windows-GNU pin stopped linking when the local
-# LLVM-MinGW installation no longer supplied GCC runtime libraries.
+# Use the stable toolchain for the host platform: a host-neutral channel lets
+# rustup select the native target rather than pinning one. The previous
+# Windows-GNU pin stopped linking when the local LLVM-MinGW installation no
+# longer supplied GCC runtime libraries. Only Windows is verified: every job
+# in `.github/workflows/ci.yml` and `release.yml` runs on `windows-latest`,
+# and nothing has built this workspace on macOS or Linux.
 channel = "stable"
 components = ["rustfmt", "clippy"]

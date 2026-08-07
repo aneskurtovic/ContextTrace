@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master branch, 2026-08-05
         with:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
@@ -152,3 +152,87 @@ jobs:
           $context = & .\target\release\ct.exe context $codex[0].id --json | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($null -eq $context) { throw 'Codex fixture context analysis produced no JSON.' }
+
+      - name: Assert Codex compaction diff smoke
+        shell: pwsh
+        run: |
+          $sessions = & .\target\release\ct.exe sessions --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $codex = @($sessions | Where-Object { $_.agent -eq 'codex' })
+          if ($codex.Count -ne 1) { throw 'Expected the committed codex fixture for the compaction smoke check.' }
+
+          $compactions = & .\target\release\ct.exe compactions $codex[0].id --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (@($compactions).Count -lt 1) { throw 'Expected at least one compaction event in the codex fixture.' }
+
+          $available = @($compactions | Where-Object { $_.status -eq 'available' })
+          if ($available.Count -lt 1) { throw 'Expected a structurally diffable compaction (replacement_history present).' }
+
+          $dropped = @($available[0].items | Where-Object { $_.disposition.kind -eq 'dropped' })
+          if ($dropped.Count -lt 1) { throw 'Expected the compaction to report at least one dropped item.' }
+
+      - name: Arrange dedicated secrets fixture
+        shell: pwsh
+        run: |
+          $secretsRoot = Join-Path $env:RUNNER_TEMP 'contexttrace-secrets-fixture'
+          $secretsSessions = Join-Path $secretsRoot 'codex\sessions\2026\07\25'
+          New-Item -ItemType Directory -Force -Path $secretsSessions | Out-Null
+          Copy-Item tests/fixtures/secrets/codex/rollout.jsonl (Join-Path $secretsSessions 'rollout.jsonl')
+          "CONTEXTTRACE_SECRETS_CODEX_HOME=$($secretsRoot)\codex" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Runs against a session file that lives only under this isolated
+      # CODEX_HOME, never under the CODEX_HOME used above, so this cannot be
+      # satisfied by the compaction fixture accidentally containing a
+      # credential shape too.
+      - name: Smoke test secret scanning and redacted export
+        shell: pwsh
+        env:
+          CODEX_HOME: ${{ env.CONTEXTTRACE_SECRETS_CODEX_HOME }}
+        run: |
+          $sessions = & .\target\release\ct.exe sessions --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $codexSecrets = @($sessions | Where-Object { $_.agent -eq 'codex' })
+          if ($codexSecrets.Count -ne 1) { throw 'Expected exactly the dedicated credential fixture under the isolated CODEX_HOME.' }
+          $id = $codexSecrets[0].id
+
+          # Values only this fixture carries. None may survive a redacted
+          # export, and `ct secrets` must never print any of them either -- it
+          # reports a kind and a location, never the matched text.
+          $leakedSecrets = @(
+            'sk-proj-abcdefghijklmnopqrstuvwxyz012345',
+            'sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345',
+            'ghp_abcdefghijklmnopqrstuvwxyz0123456789AB',
+            'AKIAIOSFODNN7EXAMPLE',
+            'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDemoOnlyFakeKey'
+          )
+
+          $secretsOutput = & .\target\release\ct.exe secrets $id
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $secretsText = $secretsOutput -join "`n"
+          if ($secretsText -notmatch 'Found (\d+) potential secret occurrence') {
+            throw 'Expected ct secrets to report findings against the credential fixture.'
+          }
+          if ([int]$Matches[1] -le 0) { throw 'Expected a non-zero secret finding count.' }
+          foreach ($label in @('OpenAI API key', 'Anthropic API key', 'GitHub token', 'AWS access key id', 'private key')) {
+            if ($secretsText -notmatch [regex]::Escape($label)) { throw "Expected a '$label' finding." }
+          }
+          foreach ($secret in $leakedSecrets) {
+            if ($secretsText.Contains($secret)) { throw 'ct secrets must never print a matched credential value.' }
+          }
+
+          $exportStderr = Join-Path $env:RUNNER_TEMP 'export-secrets-stderr.txt'
+          $exportLines = & .\target\release\ct.exe export $id --redact-secrets 2>$exportStderr
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exportText = $exportLines -join "`n"
+          if ($exportText -notmatch '"redaction":"secrets"') {
+            throw 'Expected the export header to record that secrets redaction ran.'
+          }
+          foreach ($secret in $leakedSecrets) {
+            if ($exportText.Contains($secret)) { throw 'Redacted export still contains a credential.' }
+          }
+
+          $exportStderrText = Get-Content $exportStderr -Raw
+          if ($exportStderrText -notmatch 'Redacted (\d+) potential secret occurrence') {
+            throw 'Expected a redaction summary on stderr.'
+          }
+          if ([int]$Matches[1] -le 0) { throw 'Expected the redacted export to have changed at least one field.' }
