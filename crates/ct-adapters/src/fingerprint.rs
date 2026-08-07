@@ -41,11 +41,16 @@ fn bytes(value: &[u8]) -> ContentMeasurement {
     )
 }
 
-// Kept here instead of adding a hashing crate because this repository targets
-// a deliberately minimal Windows GNU toolchain. The common Rust crypto stack
-// brings build scripts that require MinGW libraries absent from that setup.
+// Kept here instead of adding a hashing crate because this project's
+// dependency graph is the thing that makes "nothing leaves this machine" a
+// structural property rather than a promise: CT-032 (DuckDB export) and
+// CT-033 (Replay-to-Prompt) were both dropped specifically to keep the graph
+// small and free of any network-capable crate, and every crate this
+// workspace does carry is auditable at this size. Pulling in the common Rust
+// crypto stack for one function would trade that property for convenience.
 // This is the standard FIPS 180-4 compression function, used only for content
-// identity (never authentication).
+// identity (never authentication), and is checked below against FIPS 180-4's
+// published empty-string and "abc" test vectors plus a block-boundary case.
 fn sha256(input: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
