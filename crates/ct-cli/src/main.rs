@@ -92,6 +92,18 @@ enum Command {
         /// a membership question that does not depend on the estimator at all.
         #[arg(long)]
         exact: bool,
+        /// Skip fingerprinting and compressing every item's content
+        ///
+        /// Declining this costs you the exact-duplicate and low-information
+        /// sections below the category breakdown: with no measurement to
+        /// compare, both report every item as unmeasured rather than
+        /// searched, so the sections stay honest instead of going quiet.
+        /// The saving is a fraction of a second on a session of a few
+        /// megabytes and grows with the size of the payloads, so this is
+        /// worth reaching for on a very large session or in a loop, and not
+        /// otherwise.
+        #[arg(long)]
+        no_content_analysis: bool,
         #[command(flatten)]
         filter: FilterArgs,
         #[arg(long)]
@@ -464,11 +476,16 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             id,
             turn,
             exact,
+            no_content_analysis,
             filter,
             json,
         } => {
             let filter = filter.build()?;
-            let (session, resolved) = app.load_with_content_analysis(&id)?;
+            let (session, resolved) = if no_content_analysis {
+                app.load(&id)?
+            } else {
+                app.load_with_content_analysis(&id)?
+            };
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let (snapshot, recount) =
