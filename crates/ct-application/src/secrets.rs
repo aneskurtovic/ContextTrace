@@ -17,11 +17,14 @@ pub enum SecretKind {
     OpenAiApiKey,
     AnthropicApiKey,
     GitHubToken,
+    GitLabToken,
+    NpmToken,
     AwsAccessKey,
     GoogleApiKey,
     SlackToken,
     StripeLiveKey,
     BearerToken,
+    JsonWebToken,
     PrivateKey,
     EnvironmentSecret,
 }
@@ -32,11 +35,14 @@ impl SecretKind {
             SecretKind::OpenAiApiKey => "OpenAI API key",
             SecretKind::AnthropicApiKey => "Anthropic API key",
             SecretKind::GitHubToken => "GitHub token",
+            SecretKind::GitLabToken => "GitLab token",
+            SecretKind::NpmToken => "npm token",
             SecretKind::AwsAccessKey => "AWS access key id",
             SecretKind::GoogleApiKey => "Google API key",
             SecretKind::SlackToken => "Slack token",
             SecretKind::StripeLiveKey => "Stripe live secret",
             SecretKind::BearerToken => "Bearer token",
+            SecretKind::JsonWebToken => "JSON Web Token",
             SecretKind::PrivateKey => "private key",
             SecretKind::EnvironmentSecret => "secret-like assignment",
         }
@@ -47,11 +53,14 @@ impl SecretKind {
             SecretKind::OpenAiApiKey => "openai-api-key",
             SecretKind::AnthropicApiKey => "anthropic-api-key",
             SecretKind::GitHubToken => "github-token",
+            SecretKind::GitLabToken => "gitlab-token",
+            SecretKind::NpmToken => "npm-token",
             SecretKind::AwsAccessKey => "aws-access-key-id",
             SecretKind::GoogleApiKey => "google-api-key",
             SecretKind::SlackToken => "slack-token",
             SecretKind::StripeLiveKey => "stripe-live-secret",
             SecretKind::BearerToken => "bearer-token",
+            SecretKind::JsonWebToken => "jwt",
             SecretKind::PrivateKey => "private-key",
             SecretKind::EnvironmentSecret => "environment-secret",
         }
@@ -310,6 +319,31 @@ fn find_secrets(text: &str) -> Vec<SecretMatch> {
         SecretKind::GitHubToken,
         &mut found,
     );
+    // GitLab personal/project access tokens are `glpat-` followed by a
+    // base64url-ish body; GitLab has shipped 20-character bodies since the
+    // format's introduction and newer tokens append a routing suffix, so the
+    // floor is the original fixed length and the ceiling just bounds the scan
+    // rather than asserting a real maximum.
+    find_prefixed(
+        text,
+        "glpat-",
+        20,
+        50,
+        token_char,
+        SecretKind::GitLabToken,
+        &mut found,
+    );
+    // npm access tokens are `npm_` followed by exactly 36 alphanumeric
+    // characters (no separators) — an npm-specific, tighter class than the
+    // GitHub/GitLab tokens, which is why it gets its own predicate.
+    find_fixed(
+        text,
+        "npm_",
+        36,
+        alnum_char,
+        SecretKind::NpmToken,
+        &mut found,
+    );
     for prefix in ["AKIA", "ASIA"] {
         find_fixed(
             text,
@@ -362,10 +396,16 @@ fn find_secrets(text: &str) -> Vec<SecretMatch> {
         );
     }
     find_private_keys(text, &mut found);
+    find_bare_jwts(text, &mut found);
     find_secret_assignments(text, &mut found);
 
     // Prefer the longest match at a shared start, then discard overlaps. This
-    // keeps an Anthropic `sk-ant-...` from also becoming a generic OpenAI key.
+    // keeps an Anthropic `sk-ant-...` from also becoming a generic OpenAI key,
+    // a `Bearer <jwt>` match from also becoming a duplicate bare-JWT finding
+    // (the bearer match starts earlier and spans the whole token, so it wins),
+    // and a provider-specific `glpat-`/`npm_` match from double-reporting
+    // alongside the generic secret-like-assignment detector when both land on
+    // the same value.
     found.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
     let mut disjoint = Vec::with_capacity(found.len());
     for candidate in found {
@@ -471,6 +511,9 @@ fn find_private_keys(text: &str, found: &mut Vec<SecretMatch>) {
         "RSA PRIVATE KEY",
         "EC PRIVATE KEY",
         "OPENSSH PRIVATE KEY",
+        "ENCRYPTED PRIVATE KEY",
+        "DSA PRIVATE KEY",
+        "PGP PRIVATE KEY BLOCK",
     ] {
         let begin = format!("-----BEGIN {label}-----");
         let end_marker = format!("-----END {label}-----");
@@ -643,6 +686,85 @@ fn bearer_char(byte: u8) -> bool {
     token_char(byte) || matches!(byte, b'.' | b'~' | b'+' | b'/' | b'=')
 }
 
+/// npm token bodies are strictly alphanumeric, unlike the GitHub/GitLab
+/// bodies which also allow `_`/`-`, so they get their own character class.
+fn alnum_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+}
+
+/// A JWT segment is base64url: alphanumeric plus `-`/`_`, no padding.
+fn jwt_seg_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+}
+
+/// Minimum plausible lengths for each dot-separated JWT segment.
+///
+/// These are floors, not the length of any specific algorithm's output: a
+/// minimal real-world header (`{"alg":"HS256","typ":"JWT"}`, base64url) is
+/// about 20 characters, a minimal payload is rarely under 8, and requiring a
+/// non-trivial signature excludes the `alg: none` shape (an already-insecure,
+/// rarely-encountered variant) rather than accepting an empty third segment.
+const JWT_MIN_HEADER: usize = 16;
+const JWT_MIN_PAYLOAD: usize = 8;
+const JWT_MIN_SIGNATURE: usize = 10;
+
+/// Match a bare JSON Web Token: three dot-separated base64url segments where
+/// the first begins `eyJ`.
+///
+/// `eyJ` is the base64url encoding of `{"`, which every JWT header starts
+/// with (`{"alg":...`); requiring it literally — rather than decoding the
+/// segment — is the same low-cost heuristic other secret scanners use, and it
+/// is what keeps this from flagging arbitrary dotted or base64-shaped text in
+/// tool output (a source-map's embedded base64 JSON blob, for instance, has
+/// no internal dots at all and fails the very next check). No new dependency
+/// is pulled in to actually decode and validate the base64.
+fn find_bare_jwts(text: &str, found: &mut Vec<SecretMatch>) {
+    let bytes = text.as_bytes();
+    for (start, _) in text.match_indices("eyJ") {
+        if start > 0 && jwt_seg_char(bytes[start - 1]) {
+            continue;
+        }
+        let mut pos = start;
+        let header_len = bytes[pos..]
+            .iter()
+            .take_while(|b| jwt_seg_char(**b))
+            .count();
+        if header_len < JWT_MIN_HEADER {
+            continue;
+        }
+        pos += header_len;
+        if bytes.get(pos) != Some(&b'.') {
+            continue;
+        }
+        pos += 1;
+        let payload_len = bytes[pos..]
+            .iter()
+            .take_while(|b| jwt_seg_char(**b))
+            .count();
+        if payload_len < JWT_MIN_PAYLOAD {
+            continue;
+        }
+        pos += payload_len;
+        if bytes.get(pos) != Some(&b'.') {
+            continue;
+        }
+        pos += 1;
+        let signature_len = bytes[pos..]
+            .iter()
+            .take_while(|b| jwt_seg_char(**b))
+            .count();
+        if signature_len < JWT_MIN_SIGNATURE {
+            continue;
+        }
+        pos += signature_len;
+        found.push(SecretMatch {
+            kind: SecretKind::JsonWebToken,
+            start,
+            end: pos,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -767,6 +889,162 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(redacted, "tool output: [REDACTED:private-key]");
         assert!(!redacted.contains("MIIEowIBAAKCAQEA"));
+    }
+
+    #[test]
+    fn recognises_gitlab_and_npm_tokens_but_not_short_lookalikes() {
+        // Bodies of exactly the minimum length: 20 characters for GitLab,
+        // and exactly 36 (npm's fixed length) for npm.
+        let gitlab_body = "abcdEFGH12345678wxyz";
+        assert_eq!(gitlab_body.len(), 20);
+        let npm_body: String = "aB3".repeat(12);
+        assert_eq!(npm_body.len(), 36);
+
+        let text = format!("gitlab=glpat-{gitlab_body} npm=npm_{npm_body}");
+        let matches = find_secrets(&text);
+        let kinds: Vec<_> = matches.iter().map(|m| m.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![SecretKind::GitLabToken, SecretKind::NpmToken],
+            "found: {matches:?}"
+        );
+
+        // A GitLab body under the 20-character floor, and an npm body one
+        // short of the fixed 36-character length, must not match.
+        assert!(find_secrets("glpat-tooshortbody1").is_empty());
+        let npm_short = "aB3".repeat(11) + "aB"; // 35 characters
+        assert_eq!(npm_short.len(), 35);
+        assert!(find_secrets(&format!("npm_{npm_short}")).is_empty());
+    }
+
+    #[test]
+    fn a_gitlab_token_is_redacted_by_kind() {
+        let (redacted, count) = redact_text("glpat-abcdEFGH12345678wxyz");
+        assert_eq!(count, 1);
+        assert_eq!(redacted, "[REDACTED:gitlab-token]");
+    }
+
+    #[test]
+    fn an_npm_token_is_redacted_by_kind() {
+        let npm_body: String = "aB3".repeat(12);
+        let text = format!("npm_{npm_body}");
+        let (redacted, count) = redact_text(&text);
+        assert_eq!(count, 1);
+        assert_eq!(redacted, "[REDACTED:npm-token]");
+    }
+
+    #[test]
+    fn a_provider_specific_token_wins_over_the_generic_assignment_detector() {
+        // "npmToken"/"gitlabToken" both satisfy `secretish_name` (last word
+        // TOKEN), so the generic assignment scanner and the provider-prefix
+        // scanner land on the exact same span. The specific kind must win,
+        // not double-report alongside `EnvironmentSecret`.
+        let npm_body: String = "aB3".repeat(12);
+        let gitlab_body = "abcdEFGH12345678wxyz";
+        let record =
+            format!(r#"{{"npmToken":"npm_{npm_body}","gitlabToken":"glpat-{gitlab_body}"}}"#);
+
+        let matches = find_secrets(&record);
+        assert_eq!(matches.len(), 2, "found: {matches:?}");
+        let kinds: Vec<_> = matches.iter().map(|m| m.kind).collect();
+        assert_eq!(kinds, vec![SecretKind::NpmToken, SecretKind::GitLabToken]);
+        assert!(
+            !kinds.contains(&SecretKind::EnvironmentSecret),
+            "the specific kind must suppress the generic one on an identical span"
+        );
+    }
+
+    #[test]
+    fn recognises_new_pem_labels_including_the_pgp_block() {
+        for (label, body) in [
+            ("ENCRYPTED PRIVATE KEY", "encrypted-body"),
+            ("DSA PRIVATE KEY", "dsa-body"),
+            ("PGP PRIVATE KEY BLOCK", "pgp-body"),
+        ] {
+            let pem =
+                format!("before -----BEGIN {label}-----\n{body}\n-----END {label}----- after");
+            let (redacted, count) = redact_text(&pem);
+            assert_eq!(count, 1, "label {label} did not match: {pem}");
+            assert_eq!(redacted, "before [REDACTED:private-key] after");
+        }
+    }
+
+    #[test]
+    fn a_pgp_block_cut_off_mid_body_still_redacts_to_the_end_of_the_record() {
+        // CT-049's unterminated-block behaviour must hold for every label,
+        // including the newly added PGP one.
+        let truncated = concat!(
+            "tool output: -----BEGIN PGP PRIVATE KEY BLOCK-----\n",
+            "lQOYBFtest0BCAC7base64looking0content0that0never0closes[truncated"
+        );
+        let (redacted, count) = redact_text(truncated);
+        assert_eq!(count, 1);
+        assert_eq!(redacted, "tool output: [REDACTED:private-key]");
+    }
+
+    #[test]
+    fn recognises_a_bare_jwt_with_no_bearer_prefix() {
+        // The jwt.io debugger's own example token: a real three-segment JWT.
+        let jwt = concat!(
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.",
+            "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.",
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        );
+        let text = format!("token seen in output: {jwt} end");
+        let matches = find_secrets(&text);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].kind, SecretKind::JsonWebToken);
+
+        let (redacted, count) = redact_text(&text);
+        assert_eq!(count, 1);
+        assert_eq!(redacted, "token seen in output: [REDACTED:jwt] end");
+    }
+
+    #[test]
+    fn a_bare_jwt_does_not_double_report_after_a_bearer_prefix() {
+        let jwt = concat!(
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.",
+            "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.",
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        );
+        let text = format!("Authorization: Bearer {jwt}");
+        let matches = find_secrets(&text);
+        assert_eq!(
+            matches.len(),
+            1,
+            "the bearer-token match must win over the overlapping bare-JWT match: {matches:?}"
+        );
+        assert_eq!(matches[0].kind, SecretKind::BearerToken);
+    }
+
+    #[test]
+    fn a_too_short_eyj_prefixed_header_does_not_match_even_with_three_segments() {
+        // Exercises the JWT_MIN_HEADER floor directly: a full three-segment,
+        // dot-separated, `eyJ`-prefixed shape whose header segment is still
+        // too short to be a real header.
+        assert!(
+            find_secrets("eyJhbGc.payloadsegmentlongenough.signaturesegmentlongenough").is_empty()
+        );
+    }
+
+    #[test]
+    fn a_two_segment_jwt_lookalike_does_not_match() {
+        // Missing the third (signature) segment entirely.
+        assert!(
+            find_secrets("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.onlyonepayloadsegmenthere")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_sourcemap_style_base64_blob_is_not_mistaken_for_a_jwt() {
+        // Realistic tool/build output: an inline source map data URI. The
+        // embedded base64 JSON payload happens to start with the JWT header
+        // signature `eyJ`, but it is one continuous run with no internal
+        // dots, so it must not be reported as a bare JWT.
+        let line = "//# sourceMappingURL=data:application/json;base64,\
+eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYnVuZGxlLmpzIiwic291cmNlcyI6W119Cg==";
+        assert!(find_secrets(line).is_empty());
     }
 
     struct Lines(&'static str);

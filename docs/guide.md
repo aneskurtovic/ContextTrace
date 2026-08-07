@@ -58,14 +58,23 @@ so the 99 MB session with 88 turns exports in 0.46 s while the 25 MB one with
 
 `ct secrets <id>` re-reads only context-bearing session records and reports a
 credential type, turn, line and event type. It recognises provider-shaped
-OpenAI, Anthropic, GitHub, AWS, Google, Slack and Stripe credentials, bearer
-tokens, PEM private keys, and secret-like assignments in either syntax a session
-uses — `API_KEY=…` and the JSON member `"apiKey": "…"` alike, since names are
-matched by word rather than by underscore. A PEM block whose `-----END-----`
-never arrives is treated as running to the end of the record, because a
-truncated record is exactly where half a key gets written. The matched value is
-never stored in a finding, shown in a preview, or made serializable; this is why
-the command deliberately has no `--json` mode.
+OpenAI, Anthropic, GitHub, GitLab, npm, AWS, Google, Slack and Stripe
+credentials, bearer tokens, bare JSON Web Tokens that arrive without a
+`Bearer` prefix, PEM private keys, and secret-like assignments in either
+syntax a session uses — `API_KEY=…` and the JSON member `"apiKey": "…"` alike,
+since names are matched by word rather than by underscore. The recognised PEM
+labels are `PRIVATE KEY`, `RSA PRIVATE KEY`, `EC PRIVATE KEY`,
+`OPENSSH PRIVATE KEY`, `ENCRYPTED PRIVATE KEY`, `DSA PRIVATE KEY` and
+`PGP PRIVATE KEY BLOCK`; a block whose `-----END-----` never arrives is
+treated as running to the end of the record, because a truncated record is
+exactly where half a key gets written. A bare JWT is recognised by its shape —
+three dot-separated base64url segments whose first begins `eyJ`, the base64url
+encoding of `{"` that every JWT header starts with — rather than by decoding
+and validating it, so an `alg: none` token with an empty signature is not
+reported. Credential shapes outside this list, including providers not named
+above, pass through unflagged. The matched value is never stored in a finding,
+shown in a preview, or made serializable; this is why the command deliberately
+has no `--json` mode.
 
 Records are scanned once even when their content survives for hundreds of
 turns. Codex replacement histories and the recorded base instructions are
