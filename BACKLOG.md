@@ -109,57 +109,6 @@ switches below 1 ms, so 0.1 has no evidence that a persistent index is needed.
 **Done when:** derived metadata is cached, disposable and rebuildable, and no
 domain type depends on it.
 
-### CT-051 · Widen the credential vocabulary the scanner claims to know
-`status: todo` · `tier: B` · `size: S` · `source: review`
-
-**Why:** the PEM label list covers four spellings and omits
-`ENCRYPTED PRIVATE KEY`, `DSA PRIVATE KEY` and `PGP PRIVATE KEY BLOCK`, so
-those blocks are not detected at all. GitLab `glpat-`, npm `npm_` and bare JWTs
-that arrive without a `Bearer` prefix are likewise absent. A scanner that names
-a fixed set is honest only if the set is written down where a user can see it.
-**Done when:** the missing key labels and token shapes are recognised, and the
-documented list of what is and is not detected matches the code.
-
-### CT-054 · Give the desktop caches a lifetime that fits how they are used
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** the `sessions` and `lifecycles` maps grow without bound — nothing
-evicts, so clicking through a catalog retains every parsed session for the life
-of the process. The only thing that ever clears them is `search_sessions`,
-which clears both on every call including plain pagination, so pressing "Load
-more" throws away all the parsing the user just waited for. The two policies
-are exactly backwards.
-**Done when:** the caches are bounded, and paging through results does not
-discard sessions already parsed.
-
-### CT-055 · Identify a session by agent and id together
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** `App.tsx` keys its React list and its load-more dedup set on
-`${agent}:${id}`, conceding that an id alone is not unique across agents — but
-`selectedId` holds the bare id, `selected={selectedId === session.id}` matches
-on it, and `api.inspectSession(selectedId)` resolves on it. Two sessions from
-different agents sharing an id highlight together and load whichever the
-backend resolves first.
-**Done when:** selection and lookup carry the agent alongside the id, and a
-test covers a colliding pair.
-
-### CT-056 · Retire the superseded `list_sessions` command
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** `App.tsx` calls only `searchSessions`, so `list_sessions` and its
-`api.ts` wrapper are dead — yet the command stays registered in
-`invoke_handler`, and its behaviour changed underneath its own compatibility
-note. It now forwards `project` as the free-text `query`, which
-`search_sessions` matches against id, path and agent as well, with
-`SessionFilter.project` pinned to `None`. A caller filtering by project would
-get sessions from other projects whose path merely contains the string, and its
-fixed `limit: 500` truncates silently against the 816 sessions this machine
-holds. Keeping a dead command whose contract quietly broke is worse than
-deleting it.
-**Done when:** the command is removed, or its documented project-filter
-contract is restored and exercised by a test.
-
 ### CT-057 · Benchmark the path the desktop actually runs
 `status: todo` · `tier: A` · `size: S` · `source: review`
 
@@ -195,82 +144,6 @@ limits everywhere else; here it states a clean bill of health instead.
 **Done when:** both detectors report the number of items they could not
 measure, and the CLI and desktop surfaces show it.
 
-### CT-060 · Separate the two ordinals in a compaction diff
-`status: todo` · `tier: B` · `size: S` · `source: review`
-
-**Why:** `compare` emits one flat `Vec<CompactionDiffItem>` in which
-`Preserved` and `Dropped` rows carry their index into the pre-compaction
-history while `AddedByReplacement` rows carry their index into the replacement
-array. Two unrelated numbering schemes share one field name, so a renderer
-showing "ordinal" prints colliding values that mean different things. A
-preserved item also records no position in the replacement list, so the report
-cannot say where anything moved to.
-**Done when:** a reader can tell which list an ordinal indexes, and a preserved
-item records both of its positions.
-
-### CT-061 · Declare the Node version the frontend requires
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** CI pins Node 22 in all three workflows, but `package.json` carries no
-`engines` field and the repository has no `.nvmrc`. On Node 18 `npm ci` reports
-success and then silently omits an optional native binding, so the first `npm
-test` fails inside a transitive dependency with `Cannot find native binding` and
-a rolldown stack trace that names nothing in this project. Verified on this
-machine: Node 18.16.0 installs cleanly and cannot run a single test; the same
-checkout under Node 22.14.0 passes all 22.
-**Done when:** the required Node version is declared where npm will enforce it,
-and an unsupported version fails with a message that names the requirement.
-
-### CT-062 · Verify the macOS and Linux build claim, or drop it
-`status: todo` · `tier: B` · `size: S` · `source: review`
-
-**Why:** `rust-toolchain.toml` now says a host-neutral channel "keeps the
-repository buildable on Windows, macOS and Linux", but every job in `ci.yml`
-and `release.yml` runs on `windows-latest`. Nothing has ever compiled this
-workspace on the two platforms the comment vouches for.
-**Done when:** either CI builds on the platforms the comment names, or the
-comment says Windows is the only verified host.
-
-### CT-063 · Pin the actions that hold write access and signing secrets
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** `release.yml` grants `contents: write`, imports a signing certificate
-and publishes artifacts, while referring to `dtolnay/rust-toolchain@stable`,
-`Swatinem/rust-cache@v2`, `actions/setup-node@v4` and
-`softprops/action-gh-release@v2` by mutable tags; the CI Rust job goes further
-and uses `@master`. Any of those refs can be moved under the repository without
-a commit here. Separately, `${{ steps.signing.outputs.thumbprint }}` is
-interpolated straight into a PowerShell script rather than passed through
-`env:`, which is the pattern the rest of the workflow correctly uses for
-`inputs.tag`.
-**Done when:** release-path actions are pinned to commit SHAs, the workflow
-`permissions` are narrowed to the job that needs write, and no step output is
-spliced into a shell body.
-
-### CT-064 · Revisit the hand-written SHA-256
-`status: todo` · `tier: B` · `size: S` · `source: review`
-
-**Why:** `fingerprint.rs` implements the compression function by hand and
-justifies it by "a deliberately minimal Windows GNU toolchain" whose crypto
-crates need MinGW libraries. The same changeset removed that constraint —
-`rust-toolchain.toml` moved off the GNU pin to a host-neutral stable channel.
-The rationale in the comment no longer describes the repository, so the code is
-now carrying maintenance risk for a reason that has expired. The
-implementation itself passes the standard vectors; this is about whether it
-should still be here.
-**Done when:** the hashing either moves to a maintained crate or keeps a
-rationale that is true of the current toolchain.
-
-### CT-065 · Smoke-test the commands this release added
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** the `cli-smoke` job exercises `sessions`, `inspect` and `context`. The
-three commands added since — `compactions`, `secrets`, and `export
---redact-secrets` — read raw session bytes and are the ones whose failure
-matters most, and none of them runs in CI against a fixture.
-**Done when:** the smoke job runs all three against the committed fixtures and
-asserts something about each result.
-
 ### CT-066 · Match compaction history without a quadratic scan
 `status: todo` · `tier: C` · `size: S` · `source: review`
 
@@ -302,6 +175,275 @@ rather than hand-edited, and match character-for-character.
 ---
 
 ## Done
+
+### CT-051 · Widen the credential vocabulary the scanner claims to know
+`status: done` · `tier: B` · `size: S` · `source: review`
+
+**Why:** the PEM label list covers four spellings and omits
+`ENCRYPTED PRIVATE KEY`, `DSA PRIVATE KEY` and `PGP PRIVATE KEY BLOCK`, so
+those blocks are not detected at all. GitLab `glpat-`, npm `npm_` and bare JWTs
+that arrive without a `Bearer` prefix are likewise absent. A scanner that names
+a fixed set is honest only if the set is written down where a user can see it.
+**Done when:** the missing key labels and token shapes are recognised, and the
+documented list of what is and is not detected matches the code.
+
+**Accepted on 2026-08-07.** The PEM list now carries seven labels, the three
+missing spellings included, and `glpat-`, `npm_` and bare JWTs are recognised
+alongside the existing provider prefixes. `docs/guide.md` states the full set
+and, for the first time, what is *not* detected. Nothing new was special-cased
+into the precedence logic: `Bearer <jwt>` still wins over the bare JWT inside
+it because it starts earlier and spans further, and a provider-specific token
+beats the generic assignment detector on a stable-sort tie. Both were proved by
+test rather than reasoned about, which matters because they are the two places
+a widened vocabulary could have started double-reporting. The JWT rule is three
+base64url segments behind the literal `eyJ` header prefix, and its negative
+case is a real inline source-map data URI whose embedded blob also begins `eyJ`
+but carries no dots. `alg: none` tokens with an empty signature are
+deliberately not detected: requiring a non-trivial signature is the stronger
+structural filter, and the document says so rather than leaving the gap
+unstated. `SecretFinding` still carries no matched text and still refuses to
+serialize.
+
+### CT-054 · Give the desktop caches a lifetime that fits how they are used
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** the `sessions` and `lifecycles` maps grow without bound — nothing
+evicts, so clicking through a catalog retains every parsed session for the life
+of the process. The only thing that ever clears them is `search_sessions`,
+which clears both on every call including plain pagination, so pressing "Load
+more" throws away all the parsing the user just waited for. The two policies
+are exactly backwards.
+**Done when:** the caches are bounded, and paging through results does not
+discard sessions already parsed.
+
+**Accepted on 2026-08-07.** Both maps are now a `BoundedCache<K, V>` with LRU
+eviction at eight entries each, and `search_sessions` clears them only when the
+caller asks for a refresh, which only the refresh button does. The two policies
+were backwards in exactly the way this entry described: paging discarded parses
+the user had just waited for, while nothing ever bounded growth. Four tests
+hold both halves down: eviction order, pagination preserving the cache, an
+explicit refresh still dropping a session that vanished from disk, and the
+frontend sending the flag on a refresh click and not on a page. The capacity of
+eight is a judgment call and not a measurement. There is no telemetry on how
+broadly anyone browses a catalog, and the constant is doc-commented as a
+judgment rather than left to read as derived.
+
+### CT-055 · Identify a session by agent and id together
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `App.tsx` keys its React list and its load-more dedup set on
+`${agent}:${id}`, conceding that an id alone is not unique across agents — but
+`selectedId` holds the bare id, `selected={selectedId === session.id}` matches
+on it, and `api.inspectSession(selectedId)` resolves on it. Two sessions from
+different agents sharing an id highlight together and load whichever the
+backend resolves first.
+**Done when:** selection and lookup carry the agent alongside the id, and a
+test covers a colliding pair.
+
+**Accepted on 2026-08-07.** Selection, highlighting, load-more dedup and every
+per-session IPC call now carry `{agent, id}`, and the desktop's caches are keyed
+on the pair.
+
+**The half worth recording was underneath the frontend.** `ContextTrace::resolve`
+took an id alone and returned the first binding's exact match, so on a real
+collision the second agent's session could not be opened however it was clicked.
+Checking the agent after the load would only have converted a wrong answer into
+a refusal, which is better but is not what this entry asks for.
+`resolve_in_agent` scopes the search before it starts, and that is what makes
+the second session reachable at all. The unscoped `resolve` stays for the CLI,
+whose arguments carry no agent, and now says in its own doc comment that it
+answers with whichever binding was wired first rather than leaving that to be
+discovered. The test opens both sides of a colliding pair and asserts their
+event counts differ, so resolving twice to the same session would fail it —
+an assertion on identity, not on the absence of an error.
+
+### CT-056 · Retire the superseded `list_sessions` command
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `App.tsx` calls only `searchSessions`, so `list_sessions` and its
+`api.ts` wrapper are dead — yet the command stays registered in
+`invoke_handler`, and its behaviour changed underneath its own compatibility
+note. It now forwards `project` as the free-text `query`, which
+`search_sessions` matches against id, path and agent as well, with
+`SessionFilter.project` pinned to `None`. A caller filtering by project would
+get sessions from other projects whose path merely contains the string, and its
+fixed `limit: 500` truncates silently against the 816 sessions this machine
+holds. Keeping a dead command whose contract quietly broke is worse than
+deleting it.
+**Done when:** the command is removed, or its documented project-filter
+contract is restored and exercised by a test.
+
+**Accepted on 2026-08-07.** Removed from `commands.rs`, from `invoke_handler!`
+and from `api.ts`. Nothing called it: the frontend has used `search_sessions`
+since it gained paging, and the documented project filter had already broken
+underneath its own compatibility note. Tests that used it as setup were pointed
+at `search_sessions` through a new helper rather than deleted, because they were
+never testing the dead command in the first place.
+
+### CT-060 · Separate the two ordinals in a compaction diff
+`status: done` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `compare` emits one flat `Vec<CompactionDiffItem>` in which
+`Preserved` and `Dropped` rows carry their index into the pre-compaction
+history while `AddedByReplacement` rows carry their index into the replacement
+array. Two unrelated numbering schemes share one field name, so a renderer
+showing "ordinal" prints colliding values that mean different things. A
+preserved item also records no position in the replacement list, so the report
+cannot say where anything moved to.
+**Done when:** a reader can tell which list an ordinal indexes, and a preserved
+item records both of its positions.
+
+**Accepted on 2026-08-07.** `ordinal` is gone. Each disposition now names its
+own position: `Dropped { history_index }`, `AddedByReplacement
+{ replacement_index }`, and `Preserved { history_index, replacement_index }` —
+the second of which `compare` had been computing and then discarding. The
+renderer prints `history #0 -> replacement #0` and states which list each label
+indexes.
+
+**The ambiguity belonged in the type rather than in a caption.** The JSON form
+carried two rows reading `"ordinal": 1` that meant positions in different
+arrays, and the terminal table never printed the field at all — so the
+collision was invisible from the surface most people read and wrong on the one
+they script against. Dropped, preserved and replacement-only answers are
+unchanged: the existing tests still assert the same membership and now pin exact
+indices, and a new test places a preserved item at different positions in the
+two lists, which the committed fixture cannot demonstrate because there it sits
+at zero in both.
+
+### CT-061 · Declare the Node version the frontend requires
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** CI pins Node 22 in all three workflows, but `package.json` carries no
+`engines` field and the repository has no `.nvmrc`. On Node 18 `npm ci` reports
+success and then silently omits an optional native binding, so the first `npm
+test` fails inside a transitive dependency with `Cannot find native binding` and
+a rolldown stack trace that names nothing in this project. Verified on this
+machine: Node 18.16.0 installs cleanly and cannot run a single test; the same
+checkout under Node 22.14.0 passes all 22.
+**Done when:** the required Node version is declared where npm will enforce it,
+and an unsupported version fails with a message that names the requirement.
+
+**Accepted on 2026-08-07.** `engines.node` is `>=22.13.0`, the strictest floor
+among the installed dependencies and set by jsdom 29, with `engine-strict=true`
+in `crates/ct-ui/.npmrc` so npm enforces it instead of warning, and a `.nvmrc`
+beside it. Both files live in `crates/ct-ui/` rather than at the repository
+root because npm reads project config from the working directory and every
+`npm ci` here runs with `working-directory: crates/ct-ui`; a root `.npmrc`
+would never have been read, which is the quiet way this fix could have shipped
+doing nothing. Enforcement was proved by temporarily raising the floor to
+`>=99.0.0`, watching `npm ci` fail with `EBADENGINE` naming the requirement,
+and reverting.
+
+### CT-062 · Verify the macOS and Linux build claim, or drop it
+`status: done` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `rust-toolchain.toml` now says a host-neutral channel "keeps the
+repository buildable on Windows, macOS and Linux", but every job in `ci.yml`
+and `release.yml` runs on `windows-latest`. Nothing has ever compiled this
+workspace on the two platforms the comment vouches for.
+**Done when:** either CI builds on the platforms the comment names, or the
+comment says Windows is the only verified host.
+
+**Accepted on 2026-08-07.** The comment now says what is measured: every job in
+`ci.yml` and `release.yml` runs on `windows-latest`, and nothing has built this
+workspace on macOS or Linux. The two claims it already made truthfully — the
+host-neutral channel, and why the Windows-GNU pin was abandoned — are kept.
+Adding the two platforms to CI was considered and deferred rather than dropped.
+It would surface real failures on hosts nobody has compiled here, and that is a
+separate piece of work from correcting a claim that costs one comment.
+
+### CT-063 · Pin the actions that hold write access and signing secrets
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `release.yml` grants `contents: write`, imports a signing certificate
+and publishes artifacts, while referring to `dtolnay/rust-toolchain@stable`,
+`Swatinem/rust-cache@v2`, `actions/setup-node@v4` and
+`softprops/action-gh-release@v2` by mutable tags; the CI Rust job goes further
+and uses `@master`. Any of those refs can be moved under the repository without
+a commit here. Separately, `${{ steps.signing.outputs.thumbprint }}` is
+interpolated straight into a PowerShell script rather than passed through
+`env:`, which is the pattern the rest of the workflow correctly uses for
+`inputs.tag`.
+**Done when:** release-path actions are pinned to commit SHAs, the workflow
+`permissions` are narrowed to the job that needs write, and no step output is
+spliced into a shell body.
+
+**Accepted on 2026-08-07.** Every action in the write-privileged
+`package-windows` job is pinned to a commit SHA with its version in a trailing
+comment, `permissions` is `contents: read` at the top level with
+`contents: write` on that job alone, and the signing thumbprint reaches
+PowerShell through `env:` rather than being spliced into the script body — the
+convention the same workflow already used for `inputs.tag`, and now used by
+every step that needs a value. `ci.yml`'s `dtolnay/rust-toolchain@master` is
+pinned as well, being the worst of the mutable refs.
+
+**The remaining `ci.yml` tags were left deliberately**, not overlooked: those
+jobs hold `contents: read` and touch no secrets, and this entry's condition
+names the release path. Recording the boundary is the point — a narrowed scope
+nobody wrote down reads later as a scope nobody noticed. Every SHA was resolved
+through the GitHub API and then re-verified against it afterwards rather than
+taken on trust. Pinning `dtolnay/rust-toolchain` freezes the action, not the
+Rust release it installs, which is the intended reading and not a gap.
+
+### CT-064 · Revisit the hand-written SHA-256
+`status: done` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `fingerprint.rs` implements the compression function by hand and
+justifies it by "a deliberately minimal Windows GNU toolchain" whose crypto
+crates need MinGW libraries. The same changeset removed that constraint —
+`rust-toolchain.toml` moved off the GNU pin to a host-neutral stable channel.
+The rationale in the comment no longer describes the repository, so the code is
+now carrying maintenance risk for a reason that has expired. The
+implementation itself passes the standard vectors; this is about whether it
+should still be here.
+**Done when:** the hashing either moves to a maintained crate or keeps a
+rationale that is true of the current toolchain.
+
+**Accepted on 2026-08-07.** The implementation stays; the reason it gave for
+staying has been replaced. The MinGW rationale expired the moment
+`rust-toolchain.toml` left the GNU pin, and a comment that no longer describes
+the repository is worse than no comment, because it invites the next reader to
+act on a constraint that is gone. What is true now is the property CT-032 and
+CT-033 were dropped to protect: a dependency graph small enough to audit and
+holding no network-capable crate, which is what makes "nothing leaves this
+machine" structural rather than promised.
+
+The note also stops calling all three checks standard vectors. Two are FIPS
+180-4's published empty-string and `abc` examples; the third is a
+block-boundary case written here. Saying which is which costs nothing, and this
+is a file whose whole justification is that it can be checked.
+
+### CT-065 · Smoke-test the commands this release added
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** the `cli-smoke` job exercises `sessions`, `inspect` and `context`. The
+three commands added since — `compactions`, `secrets`, and `export
+--redact-secrets` — read raw session bytes and are the ones whose failure
+matters most, and none of them runs in CI against a fixture.
+**Done when:** the smoke job runs all three against the committed fixtures and
+asserts something about each result.
+
+**Accepted on 2026-08-07.** `compactions`, `secrets` and `export
+--redact-secrets` now run in `cli-smoke` and assert on what they find rather
+than on having exited. The compaction check requires a structurally diffable
+event and at least one dropped item.
+
+**The credential checks needed a fixture before they could assert anything.**
+Neither committed fixture contained a single secret-shaped string, so a green
+"no findings" would have been indistinguishable from a scanner matching
+nothing — the exact failure this item exists to catch. A dedicated Codex
+session now carries five fake but validly-shaped credentials under its own
+isolated `CODEX_HOME`, so a shape drifting into the other fixtures cannot
+satisfy it either. The job asserts a non-zero finding count, each expected kind
+by name, a non-zero redaction count, the `"redaction":"secrets"` header, and in
+both directions that none of the five values appears in `ct secrets` output or
+in the redacted export.
+
+The credentials sit in shell *commands* rather than only in tool outputs,
+because the exported label is the field `--redact-secrets` actually touches and
+tool-output preview text never reaches an export at all. Verified locally
+against a release build before being trusted in CI: 6 occurrences found, 8
+fields redacted, zero raw values anywhere in the output.
 
 ### CT-067 · Make the README a front door before the repository is public
 `status: done` · `tier: A` · `size: M` · `source: review`
