@@ -282,10 +282,16 @@ measure, and the CLI and desktop surfaces show it.
 **Accepted on 2026-08-08.** Both detectors' surfaces now carry the number of
 items they could not examine. `FilteredView::unmeasured_items` counts over the
 same matched set that `duplicate_content` and `low_entropy_content` rank, so the
-caveat always describes the answers printed beside it; a count taken over the
-whole snapshot would have been right only by coincidence and wrong the moment a
-filter was active. It reaches the terminal, `--json` through `CompositionReport`,
-the desktop's `DoctorReport`, and the doctor panel.
+caveat always describes the answers printed beside it, rather than describing
+items those sections never considered. It reaches the terminal, `--json` through
+`CompositionReport`, the desktop's `DoctorReport`, and the doctor panel.
+
+The rule is that the count comes from whatever set the sections beside it were
+computed over — not that every caller reaches it the same way. The desktop
+counts over the whole snapshot, which is correct there and not an inconsistency:
+its doctor runs `ContextSnapshot::duplicate_content`, which applies no filter, so
+the snapshot is its matched set. On the CLI path, where a filter can be active,
+the two sets diverge and only the view's answer is right.
 
 **`--json` was the surface that mattered most and was nearly missed.** The first
 implementation added a free function and called it from the two terminal
@@ -345,8 +351,22 @@ shrank, while the observed total and residual stayed pinned; `ct largest` with n
 labelled as a record of a past state, and re-capturing it would have destroyed
 the evidence its own sentence depends on.
 
+**A sixth site turned up only because the check was run over every block rather
+than the five named ones.** `ct growth` in `docs/guide.md` was two defects, not
+one: the session had grown from 889 turns to 994, changing the sparkline, the
+peak column width and the turn labels — and the block had silently dropped two
+of the five "Largest changes" rows the binary prints, with no elision marker to
+say so. An unmarked abridgement is the same failure as a hand-edit: it shows a
+reader a complete-looking answer that the binary never gave. Re-captured, with
+all five rows restored. Its truncated session id is kept, as a redaction the
+reader can see, and the verification treats a visible ellipsis as the marked
+abridgement it is.
+
 Two further defects were found and are filed as CT-071 rather than fixed here,
-because neither can be re-captured and both need an editorial decision.
+because neither can be re-captured and both need an editorial decision. CT-071's
+claim that everything re-runnable was swept is now measured rather than asserted:
+the four reproducible blocks are checked line-by-line against fresh captures, and
+the `ct doctor --dir` block is excluded on the record as a historical one.
 
 ### CT-051 · Widen the credential vocabulary the scanner claims to know
 `status: done` · `tier: B` · `size: S` · `source: review`

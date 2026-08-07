@@ -23,10 +23,12 @@
 //! "cold" here means "first read of this file in this process". That is
 //! weaker than it sounds: the OS page cache measurably outlives one process,
 //! so a second run against the same session is a warm-cache lower bound and
-//! not a repeat cold measurement. The gap between the two widens with file
-//! size -- a load large enough to be dominated by disk I/O drops sharply on
-//! the second run, while one dominated by hashing and deflating does not
-//! move. Take `load_content_analysis_cold_ms` only from a run against a file
+//! not a repeat cold measurement. How much the two differ depends on whether
+//! a given session's load is dominated by reading bytes or by hashing and
+//! deflating them, which is a property of that session and not something this
+//! comment can state once for all of them. See CT-057's note in `BACKLOG.md`
+//! for figures, each with the session and cache state it was taken under.
+//! Take `load_content_analysis_cold_ms` only from a run against a file
 //! this machine has not read recently, and record what state it was in;
 //! measurements taken any other way belong in the backlog note with that
 //! caveat attached, not in this comment as if they were repeatable.

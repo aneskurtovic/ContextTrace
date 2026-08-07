@@ -357,20 +357,22 @@ header has still read something true.
 ```
 $ ct growth 25e27e70
 Context growth  25e27e70-…  claude-code
-  Turns      889, 4 of which the agent recorded no size for and are drawn as gaps
+  Turns      994, 4 of which the agent recorded no size for and are drawn as gaps
   Peak       383,810 tokens at turn 778
 
-  ▃▄▅▅▆▇▇▇▃▄▄▄▅▅▅▆▆▆▇▇▇▃▃▄▄▄▅▅▆▆▄▄▄▄▅▅▂▃▃▃▄▄▅▅▆▆▆▇▇███▃▄▄▄▅▅▆▂
-         c             c       c     cc              c       c
-  turn 1                                              turn 889
+  ▃▄▅▅▇▇▇▃▄▄▄▅▅▆▆▆▇▇▇▃▄▄▄▅▅▆▄▄▄▄▅▅▃▃▃▄▄▅▅▆▆▇▇███▃▄▄▅▅▆▂▂▃▃▃▄▄
+        c           c      c     cc            c      c
+  turn 1                                             turn 994
 
-  Each column is 15 turns, drawn at the largest prompt among them
+  Each column is 17 turns, drawn at the largest prompt among them
   against a zero baseline. A fall within a column does not show.
   'c' marks a column containing a compaction; there are 7.
 
 Largest changes
   turn 779       -324,720  383,810 -> 59,090
   turn 115       -268,935  333,079 -> 64,144
+  turn 316       -265,016  322,795 -> 57,779
+  turn 441       -185,300  245,828 -> 60,528
   turn 886       -184,590  243,082 -> 58,492  (across 1 unrecorded turn(s))
 ```
 
