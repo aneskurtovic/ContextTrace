@@ -233,7 +233,8 @@ function asDoctor(value: unknown): DoctorReport {
     typeof value.scannedRecords !== "number" ||
     typeof value.unreadableRecords !== "number" ||
     !Array.isArray(value.secrets) ||
-    !value.secrets.every(validSecret)
+    !value.secrets.every(validSecret) ||
+    typeof value.unmeasuredItems !== "number"
   ) {
     throw malformed("Context Doctor");
   }

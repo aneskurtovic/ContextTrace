@@ -549,6 +549,12 @@ function ContextDoctor({
               {report.unreadableRecords} context-bearing record(s) could not be read; the secret scan is incomplete.
             </p>
           )}
+
+          {report.unmeasuredItems > 0 && (
+            <p className="doctor-warning">
+              {report.unmeasuredItems} item(s) had no content measurement and were not checked for duplicates or low-information content.
+            </p>
+          )}
         </>
       )}
     </section>

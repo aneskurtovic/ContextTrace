@@ -192,6 +192,7 @@ export function demoDoctor(turn = 32): DoctorReport {
     secretOccurrences: 0,
     scannedRecords: 196,
     unreadableRecords: 0,
+    unmeasuredItems: 12,
     secrets: [],
   };
 }

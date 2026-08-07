@@ -134,6 +134,10 @@ export interface DoctorReport {
   secretOccurrences: number;
   scannedRecords: number;
   unreadableRecords: number;
+  /** Items the duplicate and low-information detectors could not examine,
+   *  because their logs exposed no content to measure. An empty `duplicates`
+   *  means "none found among the rest", not "none present". */
+  unmeasuredItems: number;
   secrets: SecretFindingSummary[];
 }
 

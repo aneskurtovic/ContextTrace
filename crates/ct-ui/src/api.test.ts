@@ -5,6 +5,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 import { getContext, getLifecycle, runDoctor, searchSessions } from "./api";
+import { demoDoctor } from "./demo";
 
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -92,13 +93,59 @@ describe("desktop IPC response validation", () => {
       scannedRecords: 12,
       unreadableRecords: 0,
       secrets: [],
+      unmeasuredItems: 4,
     });
 
-    await expect(runDoctor("codex", "session-1", 7)).resolves.toMatchObject({ turn: 7 });
+    await expect(runDoctor("codex", "session-1", 7)).resolves.toMatchObject({
+      turn: 7,
+      unmeasuredItems: 4,
+    });
     expect(invoke).toHaveBeenCalledWith("run_doctor", {
       id: "session-1",
       agent: "codex",
       turn: 7,
+    });
+  });
+
+  it("rejects a Context Doctor payload missing the unmeasured-item count", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      turn: 7,
+      duplicateGroups: 0,
+      repeatedTokens: 0,
+      duplicates: [],
+      lowEntropyItems: 0,
+      wasteScoreTokens: 0,
+      lowEntropy: [],
+      secretFindings: 0,
+      secretOccurrences: 0,
+      scannedRecords: 12,
+      unreadableRecords: 0,
+      secrets: [],
+      // unmeasuredItems intentionally omitted -- CT-059 requires the doctor
+      // report to always carry this count, even when it is zero, because a
+      // structured consumer cannot tell "zero unmeasured" from "field never
+      // wired up" any other way.
+    });
+
+    await expect(runDoctor("codex", "session-1", 7)).rejects.toThrow(
+      "invalid response from Context Doctor",
+    );
+  });
+
+  it("holds the demo doctor payload to the same contract as the real backend", async () => {
+    // The demo path returns `demoDoctor()` without validating it, so nothing
+    // else in this suite would notice demo data drifting away from the
+    // contract the backend is held to -- every other test stubs
+    // `__TAURI_INTERNALS__` and therefore only ever exercises the IPC branch.
+    // Feeding the demo payload through that branch is what makes the drift
+    // detectable: a field added to `DoctorReport` and wired into the Rust
+    // struct but forgotten in `demo.ts` fails here.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue(demoDoctor(7));
+
+    await expect(runDoctor("codex", "session-1", 7)).resolves.toMatchObject({
+      unmeasuredItems: expect.any(Number),
     });
   });
 
@@ -117,6 +164,7 @@ describe("desktop IPC response validation", () => {
       scannedRecords: 12,
       unreadableRecords: 0,
       secrets: [],
+      unmeasuredItems: 0,
     });
 
     await expect(runDoctor("codex", "session-1", 7)).rejects.toThrow(

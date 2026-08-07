@@ -20,8 +20,9 @@
 //! a field.
 
 use super::context::{
-    find_duplicate_content, find_low_entropy_content, CategoryBreakdown, ContextCategory,
-    ContextItem, ContextSnapshot, ContextSource, Contributor, DuplicateContent, LowEntropyContent,
+    find_duplicate_content, find_low_entropy_content, unmeasured_content_items, CategoryBreakdown,
+    ContextCategory, ContextItem, ContextSnapshot, ContextSource, Contributor, DuplicateContent,
+    LowEntropyContent,
 };
 use super::identity::{SessionId, TurnNumber};
 use super::provenance::Confidence;
@@ -405,6 +406,18 @@ impl<'a> FilteredView<'a> {
         find_low_entropy_content(self.matched.iter().copied(), self.snapshot.total().tokens())
     }
 
+    /// How many surviving items carry no content measurement, and so were
+    /// invisible to both detectors above.
+    ///
+    /// Taken over `matched` for the same reason the two detectors are: a count
+    /// gathered from any other set would not describe the answers beside it.
+    /// Without this, an empty duplicate list means either "searched, found
+    /// nothing" or "nothing here could be searched", and the two read
+    /// identically.
+    pub fn unmeasured_items(&self) -> usize {
+        unmeasured_content_items(self.matched.iter().copied())
+    }
+
     /// Distinct categories present in the *unfiltered* snapshot, with sizes.
     ///
     /// For the empty-result case: telling someone their filter matched nothing
@@ -473,6 +486,7 @@ impl<'a> FilteredView<'a> {
             categories: self.by_category(),
             duplicates: self.duplicate_content(),
             low_entropy: self.low_entropy_content(),
+            unmeasured_items: self.unmeasured_items(),
         }
     }
 
@@ -539,6 +553,10 @@ pub struct CompositionReport {
     pub categories: Vec<CategoryBreakdown>,
     pub duplicates: Vec<DuplicateContent>,
     pub low_entropy: Vec<LowEntropyContent>,
+    /// Matched items with no content measurement, which neither `duplicates`
+    /// nor `low_entropy` could examine. A consumer reading either list as
+    /// exhaustive needs this number to know how much it is exhaustive *of*.
+    pub unmeasured_items: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -616,6 +634,78 @@ mod tests {
 
     fn filtered(filter: ItemFilter) -> (ContextSnapshot, ItemFilter) {
         (snapshot(), filter)
+    }
+
+    #[test]
+    fn the_unmeasured_count_narrows_with_the_filter_that_produced_it() {
+        // Two of the three items get a measurement; the tool output does not.
+        let measured = |mut item: ContextItem| {
+            item.content_measurement = Some(ContentMeasurement::new(
+                ContentFingerprint::new([7; 32]),
+                8_000,
+                7_900,
+            ));
+            item
+        };
+        let snapshot = ContextSnapshot::assemble(
+            SessionId::new("s1").unwrap(),
+            AgentKind::ClaudeCode,
+            TurnNumber::FIRST,
+            None,
+            vec![
+                item(
+                    "npm test output",
+                    ContextCategory::ToolOutputs,
+                    ContextSource::ToolExecution {
+                        tool: "Bash".into(),
+                    },
+                    600,
+                ),
+                measured(item(
+                    "schema.ts",
+                    ContextCategory::FileContents,
+                    ContextSource::FileRead {
+                        path: "src/schema.ts".into(),
+                    },
+                    200,
+                )),
+                measured(item(
+                    "prompt",
+                    ContextCategory::CurrentPrompt,
+                    ContextSource::UserPrompt,
+                    100,
+                )),
+            ],
+            TokenCount::observed(1000),
+            100,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Unfiltered, the one unmeasured item is counted.
+        assert_eq!(snapshot.filtered(&ItemFilter::ALL).unmeasured_items(), 1);
+
+        // Filtered to a category that excludes it, the count must follow the
+        // filter rather than the turn. A count taken over the whole snapshot
+        // would still say 1 here and would be describing items the sections
+        // beside it never considered.
+        let only_files = ItemFilter {
+            category: Some(ContextCategory::FileContents),
+            ..ItemFilter::ALL
+        };
+        assert_eq!(snapshot.filtered(&only_files).unmeasured_items(), 0);
+
+        // And the JSON surface carries the same number the terminal prints --
+        // `--json` is documented as the complete view, so a caveat that
+        // reached only the terminal would make it the less honest one.
+        assert_eq!(
+            snapshot
+                .filtered(&ItemFilter::ALL)
+                .composition_report()
+                .unmeasured_items,
+            1
+        );
     }
 
     #[test]

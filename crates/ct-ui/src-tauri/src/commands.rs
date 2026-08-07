@@ -1,4 +1,5 @@
 use ct_application::{timeline, ContextTrace, Departure, LifecycleSweep, SessionFilter};
+use ct_domain::model::context::unmeasured_content_items;
 use ct_domain::{
     AgentKind, CategoryBreakdown, Confidence, ContextItemId, ContextSource, SessionDescriptor,
     TurnNumber,
@@ -410,6 +411,12 @@ impl AppState {
         }
         .map_err(|error| error.to_string())?;
 
+        // Neither section below can see an item with no content measurement --
+        // that pass is what `analyzed: true` above requested. One count covers
+        // both: they share the same gate, so a per-detector split would just
+        // print the same number twice under two names. See CT-059.
+        let unmeasured_items = unmeasured_content_items(snapshot.items());
+
         let duplicate_content = snapshot.duplicate_content();
         let duplicate_groups = duplicate_content.len();
         let repeated_tokens = duplicate_content.iter().fold(0u32, |total, group| {
@@ -489,6 +496,7 @@ impl AppState {
             scanned_records: secret_scan.scanned_records,
             unreadable_records: secret_scan.unreadable_records,
             secrets,
+            unmeasured_items,
         })
     }
 
@@ -745,6 +753,10 @@ pub struct DoctorReport {
     scanned_records: usize,
     unreadable_records: usize,
     secrets: Vec<SecretFindingSummary>,
+    /// Items this turn held with no content measurement, therefore invisible
+    /// to both the duplicate and low-information sections above. See
+    /// [`unmeasured_content_items`].
+    unmeasured_items: usize,
 }
 
 #[derive(Serialize)]
@@ -1158,6 +1170,8 @@ mod tests {
         assert!(json["lowEntropy"].is_array());
         assert!(json["secrets"].is_array());
         assert!(json.get("secret_occurrences").is_none());
+        assert!(json["unmeasuredItems"].is_number());
+        assert!(json.get("unmeasured_items").is_none());
 
         let lifecycle = state
             .lifecycle(kind, id, &item_id)

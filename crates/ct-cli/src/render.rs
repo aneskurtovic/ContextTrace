@@ -398,6 +398,14 @@ pub fn context(
         );
     }
 
+    // Neither the duplicate nor the low-entropy detector below can look at an
+    // item with no content measurement -- that is an opt-in pass over raw
+    // payloads (`ct context --no-content-analysis` skips it entirely, and
+    // items whose logs expose no content never get one either). The view
+    // counts these over the same matched set it ranks the two sections from,
+    // so "none detected" and "nothing was measurable" never read the same.
+    let unmeasured = view.unmeasured_items();
+
     let duplicates = view.duplicate_content();
     if duplicates.is_empty() {
         println!(
@@ -408,6 +416,11 @@ pub fn context(
                 ""
             }
         );
+        if unmeasured > 0 {
+            println!(
+                "  {unmeasured} item(s) had no content measurement and were not checked for duplicates."
+            );
+        }
     } else {
         const SHOWN_GROUPS: usize = 10;
         let copies = duplicates
@@ -460,6 +473,11 @@ pub fn context(
             "\n  Total is the footprint of every copy; repeated is the avoidable cost after\n  \
              keeping the first. Matching is byte-exact over model-visible content."
         );
+        if unmeasured > 0 {
+            println!(
+                "  {unmeasured} more item(s) had no content measurement and were not checked."
+            );
+        }
     }
 
     let low_entropy = view.low_entropy_content();
@@ -472,6 +490,11 @@ pub fn context(
                 ""
             }
         );
+        if unmeasured > 0 {
+            println!(
+                "  {unmeasured} item(s) had no content measurement and were not checked for low-information content."
+            );
+        }
     } else {
         const SHOWN_ITEMS: usize = 10;
         let total_score = low_entropy.iter().fold(0u32, |sum, item| {
@@ -510,6 +533,11 @@ pub fn context(
              a ranking heuristic for repetition, not a claim that those tokens are removable.\n  \
              Only visible payloads of at least 4 KiB with a ratio at or below 75% qualify."
         );
+        if unmeasured > 0 {
+            println!(
+                "  {unmeasured} more item(s) had no content measurement and were not checked."
+            );
+        }
     }
 
     // The narrative below describes the whole turn -- the unlogged remainder,

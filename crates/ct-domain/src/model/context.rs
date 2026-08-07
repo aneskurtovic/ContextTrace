@@ -494,6 +494,24 @@ impl ContextSnapshot {
     }
 }
 
+/// How many of `items` carry no [`ContentMeasurement`], and are therefore
+/// invisible to both [`find_duplicate_content`] and [`find_low_entropy_content`]
+/// -- neither runs a fingerprint or a compression pass on an item it was never
+/// handed one for.
+///
+/// This counts absence of measurement, not absence of a finding: an unmeasured
+/// item might have been a duplicate, or might have compressed well past the
+/// low-entropy threshold, or might not. It answers "how much of this turn could
+/// the detectors not even look at", not "how much did they miss" -- the second
+/// question has no honest answer without measuring it, which is exactly what
+/// did not happen here.
+pub fn unmeasured_content_items<'a>(items: impl IntoIterator<Item = &'a ContextItem>) -> usize {
+    items
+        .into_iter()
+        .filter(|item| item.content_measurement.is_none())
+        .count()
+}
+
 pub(crate) fn find_duplicate_content<'a>(
     items: impl IntoIterator<Item = &'a ContextItem>,
     turn_total: u32,
@@ -791,6 +809,46 @@ mod tests {
 
         let snap = assemble(vec![small, dense], 2_000, 0).unwrap();
         assert!(snap.low_entropy_content().is_empty());
+    }
+
+    #[test]
+    fn unmeasured_content_items_counts_only_items_without_a_measurement() {
+        let mut measured_a = item("measured a", ContextCategory::ToolOutputs, 100);
+        measured_a.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([9; 32]),
+            1_000,
+            900,
+        ));
+        let mut measured_b = item("measured b", ContextCategory::ToolOutputs, 100);
+        measured_b.content_measurement = Some(ContentMeasurement::new(
+            ContentFingerprint::new([10; 32]),
+            1_000,
+            900,
+        ));
+        // Three items with no measurement at all -- distinct from the case
+        // above, where a measurement exists but the item is filtered out by
+        // the low-entropy size/ratio gates. This is "never looked at",
+        // not "looked at and did not qualify".
+        let unmeasured_a = item("unmeasured a", ContextCategory::Reasoning, 100);
+        let unmeasured_b = item("unmeasured b", ContextCategory::Reasoning, 100);
+        let unmeasured_c = item("unmeasured c", ContextCategory::Reasoning, 100);
+
+        let snap = assemble(
+            vec![
+                measured_a,
+                measured_b,
+                unmeasured_a,
+                unmeasured_b,
+                unmeasured_c,
+            ],
+            500,
+            0,
+        )
+        .unwrap();
+
+        // Exactly 3, not merely non-zero: two of the five items are measured
+        // and must not be counted.
+        assert_eq!(unmeasured_content_items(snap.items()), 3);
     }
 
     #[test]
