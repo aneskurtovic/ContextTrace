@@ -6,7 +6,6 @@ pub fn run() {
         .manage(commands::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_startup,
-            commands::list_sessions,
             commands::search_sessions,
             commands::inspect_session,
             commands::get_context,

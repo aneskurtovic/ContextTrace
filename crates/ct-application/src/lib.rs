@@ -161,10 +161,42 @@ impl ContextTrace {
     }
 
     /// Find one session by id or unambiguous id prefix.
+    ///
+    /// An id is unique within an agent but not across them, and this signature
+    /// carries no agent to separate them by. Where two agents hold the same id
+    /// the exact-match short circuit below returns whichever binding was wired
+    /// first, so a caller that already knows the agent should say so through
+    /// [`ContextTrace::resolve_in_agent`] rather than rely on that order.
     pub fn resolve(&self, id_or_prefix: &str) -> Result<ResolvedSession, AppError> {
+        self.resolve_scoped(None, id_or_prefix)
+    }
+
+    /// Find one session by id or unambiguous id prefix within a single agent.
+    ///
+    /// The desktop's catalog rows carry both halves of a session's identity, so
+    /// they can ask this question exactly. Scoping the search first is what
+    /// makes the second of two colliding ids reachable at all: an unscoped
+    /// lookup answers with the first agent's session every time, and the other
+    /// one cannot be opened however it is asked for.
+    pub fn resolve_in_agent(
+        &self,
+        agent: AgentKind,
+        id_or_prefix: &str,
+    ) -> Result<ResolvedSession, AppError> {
+        self.resolve_scoped(Some(agent), id_or_prefix)
+    }
+
+    fn resolve_scoped(
+        &self,
+        agent: Option<AgentKind>,
+        id_or_prefix: &str,
+    ) -> Result<ResolvedSession, AppError> {
         let mut matches: Vec<ResolvedSession> = Vec::new();
 
         for (index, binding) in self.bindings.iter().enumerate() {
+            if agent.is_some_and(|wanted| binding.adapter.agent() != wanted) {
+                continue;
+            }
             let Ok(sessions) = binding.adapter.discover() else {
                 continue;
             };
@@ -202,11 +234,16 @@ impl ContextTrace {
 
     /// Resolve and fully parse a session.
     pub fn load(&self, id_or_prefix: &str) -> Result<(AgentSession, ResolvedSession), AppError> {
-        let resolved = self.resolve(id_or_prefix)?;
-        let session = self.bindings[resolved.binding]
-            .adapter
-            .load(&resolved.descriptor)?;
-        Ok((session, resolved))
+        self.parse(self.resolve(id_or_prefix)?)
+    }
+
+    /// Resolve and fully parse a session known to belong to one agent.
+    pub fn load_in_agent(
+        &self,
+        agent: AgentKind,
+        id_or_prefix: &str,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        self.parse(self.resolve_in_agent(agent, id_or_prefix)?)
     }
 
     /// Resolve and parse a session for analyses that compare or compress item
@@ -219,7 +256,32 @@ impl ContextTrace {
         &self,
         id_or_prefix: &str,
     ) -> Result<(AgentSession, ResolvedSession), AppError> {
-        let resolved = self.resolve(id_or_prefix)?;
+        self.parse_with_content_analysis(self.resolve(id_or_prefix)?)
+    }
+
+    /// The content-analysis load, scoped to one agent.
+    pub fn load_with_content_analysis_in_agent(
+        &self,
+        agent: AgentKind,
+        id_or_prefix: &str,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        self.parse_with_content_analysis(self.resolve_in_agent(agent, id_or_prefix)?)
+    }
+
+    fn parse(
+        &self,
+        resolved: ResolvedSession,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        let session = self.bindings[resolved.binding]
+            .adapter
+            .load(&resolved.descriptor)?;
+        Ok((session, resolved))
+    }
+
+    fn parse_with_content_analysis(
+        &self,
+        resolved: ResolvedSession,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
         let session = self.bindings[resolved.binding]
             .adapter
             .load_with_content_analysis(&resolved.descriptor)?;

@@ -14,7 +14,6 @@ import type {
 vi.mock("./api", () => ({
   isDemoData: vi.fn(),
   getStartup: vi.fn(),
-  listSessions: vi.fn(),
   searchSessions: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
@@ -56,10 +55,10 @@ beforeEach(() => {
   mockedApi.isDemoData.mockReturnValue(false);
   mockedApi.getStartup.mockResolvedValue(startup);
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
-  mockedApi.inspectSession.mockImplementation(async (id) => demoDetail(id));
-  mockedApi.getContext.mockImplementation(async (_id, turn) => demoContext(turn));
-  mockedApi.runDoctor.mockImplementation(async (_id, turn) => demoDoctor(turn));
-  mockedApi.getLifecycle.mockImplementation(async (_id, item) => demoLifecycle(item));
+  mockedApi.inspectSession.mockImplementation(async (_agent, id) => demoDetail(id));
+  mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
+  mockedApi.runDoctor.mockImplementation(async (_agent, _id, turn) => demoDoctor(turn));
+  mockedApi.getLifecycle.mockImplementation(async (_agent, _id, item) => demoLifecycle(item));
 });
 
 afterEach(() => {
@@ -144,7 +143,9 @@ describe("desktop accessibility and state handling", () => {
 
     const chartTurn = await screen.findByRole("button", { name: /Inspect turn 1:/ });
     fireEvent.keyDown(chartTurn, { key: "Enter" });
-    await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith(demoSessions[0].id, 1));
+    await waitFor(() =>
+      expect(mockedApi.getContext).toHaveBeenCalledWith(demoSessions[0].agent, demoSessions[0].id, 1),
+    );
   });
 
   it("searches the complete backend catalog after the query debounce", async () => {
@@ -168,6 +169,7 @@ describe("desktop accessibility and state handling", () => {
           "semantic-search",
           0,
           200,
+          false,
         ),
       { timeout: 1_000 },
     );
@@ -186,7 +188,7 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Load more (1)" }));
 
     await waitFor(() =>
-      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 1, 200),
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 1, 200, false),
     );
     expect(
       await screen.findByRole("button", { name: /Claude Code session: atlas-dashboard/ }),
@@ -201,19 +203,23 @@ describe("desktop accessibility and state handling", () => {
     const firstContext = deferred<ContextDetail>();
     const latestContext = deferred<ContextDetail>();
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([first, latest]));
-    mockedApi.inspectSession.mockImplementation((id) =>
+    mockedApi.inspectSession.mockImplementation((_agent, id) =>
       id === first.id ? firstDetail.promise : latestDetail.promise,
     );
-    mockedApi.getContext.mockImplementation((id) =>
+    mockedApi.getContext.mockImplementation((_agent, id) =>
       id === first.id ? firstContext.promise : latestContext.promise,
     );
 
     render(<App />);
 
-    await waitFor(() => expect(mockedApi.inspectSession).toHaveBeenCalledWith(first.id));
+    await waitFor(() =>
+      expect(mockedApi.inspectSession).toHaveBeenCalledWith(first.agent, first.id),
+    );
     fireEvent.click(await screen.findByRole("button", { name: /Codex session: ContextTrace/ }));
     fireEvent.click(screen.getByRole("button", { name: /Claude Code session: atlas-dashboard/ }));
-    await waitFor(() => expect(mockedApi.inspectSession).toHaveBeenCalledWith(latest.id));
+    await waitFor(() =>
+      expect(mockedApi.inspectSession).toHaveBeenCalledWith(latest.agent, latest.id),
+    );
     expect(await screen.findByText("Reading session…")).not.toBeNull();
     expect(screen.queryByRole("heading", { name: "ContextTrace" })).toBeNull();
 
@@ -231,7 +237,7 @@ describe("desktop accessibility and state handling", () => {
     const firstTurn = deferred<ContextDetail>();
     const latestTurn = deferred<ContextDetail>();
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
-    mockedApi.getContext.mockImplementation((_id, turn) => {
+    mockedApi.getContext.mockImplementation((_agent, _id, turn) => {
       if (turn === 1) return firstTurn.promise;
       if (turn === 2) return latestTurn.promise;
       return Promise.resolve(demoContext(turn));
@@ -241,7 +247,9 @@ describe("desktop accessibility and state handling", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Inspect turn 1:/ }));
     fireEvent.click(screen.getByRole("button", { name: /Inspect turn 2:/ }));
-    await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith(demoSessions[0].id, 2));
+    await waitFor(() =>
+      expect(mockedApi.getContext).toHaveBeenCalledWith(demoSessions[0].agent, demoSessions[0].id, 2),
+    );
 
     latestTurn.resolve(demoContext(2));
     expect(await screen.findByLabelText("Inspect turn 2")).not.toBeNull();
@@ -328,7 +336,7 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.click(analyze);
 
     await waitFor(() =>
-      expect(mockedApi.runDoctor).toHaveBeenCalledWith(demoSessions[0].id, 32),
+      expect(mockedApi.runDoctor).toHaveBeenCalledWith(demoSessions[0].agent, demoSessions[0].id, 32),
     );
     expect((await screen.findAllByText("18.2k")).length).toBeGreaterThan(0);
     expect(screen.getByText("Repeated content")).not.toBeNull();
@@ -348,7 +356,11 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.click(contributor);
 
     await waitFor(() =>
-      expect(mockedApi.getLifecycle).toHaveBeenCalledWith(demoSessions[0].id, "demo-0"),
+      expect(mockedApi.getLifecycle).toHaveBeenCalledWith(
+        demoSessions[0].agent,
+        demoSessions[0].id,
+        "demo-0",
+      ),
     );
     expect(contributor.getAttribute("aria-expanded")).toBe("true");
     expect(await screen.findByText("turns 9–32")).not.toBeNull();
@@ -358,5 +370,63 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close item lifecycle" }));
     expect(screen.queryByRole("heading", { name: "tool: shell_command → test output" })).toBeNull();
     expect(contributor.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("only marks an explicit refresh click as cache-busting, not paging or query changes", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]], 2));
+
+    render(<App />);
+
+    // Initial catalog load must not ask the backend to treat its cache as stale.
+    await waitFor(() =>
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 0, 200, false),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
+    await waitFor(() =>
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 0, 200, true),
+    );
+  });
+
+  it("keeps a same-id collision across agents from cross-selecting or cross-loading", async () => {
+    const codexSession: SessionSummary = {
+      ...demoSessions[0],
+      id: "collision-id",
+      agent: "codex",
+      project: "collision-codex-project",
+    };
+    const claudeSession: SessionSummary = {
+      ...demoSessions[1],
+      id: "collision-id",
+      agent: "claude-code",
+      project: "collision-claude-project",
+    };
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([codexSession, claudeSession]));
+
+    render(<App />);
+
+    const codexRow = await screen.findByRole("button", {
+      name: /Codex session: collision-codex-project/,
+    });
+    const claudeRow = await screen.findByRole("button", {
+      name: /Claude Code session: collision-claude-project/,
+    });
+
+    // The first session in the page is selected by default; only its row
+    // highlights even though the other agent's session shares its id.
+    await waitFor(() =>
+      expect(mockedApi.inspectSession).toHaveBeenCalledWith("codex", "collision-id"),
+    );
+    expect(codexRow.getAttribute("aria-current")).toBe("true");
+    expect(claudeRow.getAttribute("aria-current")).toBeNull();
+
+    mockedApi.inspectSession.mockClear();
+    fireEvent.click(claudeRow);
+
+    await waitFor(() =>
+      expect(mockedApi.inspectSession).toHaveBeenCalledWith("claude-code", "collision-id"),
+    );
+    expect(claudeRow.getAttribute("aria-current")).toBe("true");
+    expect(codexRow.getAttribute("aria-current")).toBeNull();
   });
 });

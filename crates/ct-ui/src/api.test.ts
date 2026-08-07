@@ -16,7 +16,7 @@ describe("desktop IPC response validation", () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     invoke.mockResolvedValue({ turn: 3, totalTokens: "not-a-number", categories: [] });
 
-    await expect(getContext("fixture-session", 3)).rejects.toThrow(
+    await expect(getContext("codex", "fixture-session", 3)).rejects.toThrow(
       "ContextTrace received an invalid response from context reconstruction. Refresh and try again.",
     );
   });
@@ -41,7 +41,26 @@ describe("desktop IPC response validation", () => {
       query: "older",
       offset: 500,
       limit: 200,
+      refresh: false,
     });
+  });
+
+  it("only asks the backend to discard its caches on an explicit refresh", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const page = { sessions: [], total: 0, offset: 0, hasMore: false };
+    invoke.mockResolvedValue(page);
+
+    await searchSessions("codex", "query", 200, 200);
+    expect(invoke).toHaveBeenLastCalledWith(
+      "search_sessions",
+      expect.objectContaining({ refresh: false }),
+    );
+
+    await searchSessions("codex", "query", 0, 200, true);
+    expect(invoke).toHaveBeenLastCalledWith(
+      "search_sessions",
+      expect.objectContaining({ refresh: true }),
+    );
   });
 
   it("rejects malformed paged session responses", async () => {
@@ -75,8 +94,12 @@ describe("desktop IPC response validation", () => {
       secrets: [],
     });
 
-    await expect(runDoctor("session-1", 7)).resolves.toMatchObject({ turn: 7 });
-    expect(invoke).toHaveBeenCalledWith("run_doctor", { id: "session-1", turn: 7 });
+    await expect(runDoctor("codex", "session-1", 7)).resolves.toMatchObject({ turn: 7 });
+    expect(invoke).toHaveBeenCalledWith("run_doctor", {
+      id: "session-1",
+      agent: "codex",
+      turn: 7,
+    });
   });
 
   it("rejects malformed Context Doctor findings", async () => {
@@ -96,7 +119,7 @@ describe("desktop IPC response validation", () => {
       secrets: [],
     });
 
-    await expect(runDoctor("session-1", 7)).rejects.toThrow(
+    await expect(runDoctor("codex", "session-1", 7)).rejects.toThrow(
       "invalid response from Context Doctor",
     );
   });
@@ -122,11 +145,12 @@ describe("desktop IPC response validation", () => {
       firstSeenDisagrees: false,
     });
 
-    await expect(getLifecycle("session-1", "codex:42")).resolves.toMatchObject({
+    await expect(getLifecycle("codex", "session-1", "codex:42")).resolves.toMatchObject({
       turnsPresent: 6,
     });
     expect(invoke).toHaveBeenCalledWith("get_lifecycle", {
       id: "session-1",
+      agent: "codex",
       item: "codex:42",
     });
   });

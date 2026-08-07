@@ -4,11 +4,97 @@ use ct_domain::{
     TurnNumber,
 };
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
 const MAX_SESSION_PAGE_SIZE: usize = 1_000;
+
+/// How many parsed sessions the desktop keeps warm at once.
+///
+/// Each entry holds an entire parsed `AgentSession` plus its calibration
+/// ratio, not a lightweight summary. The realistic case is a user comparing a
+/// handful of sessions in one sitting, not browsing the full local catalog
+/// (hundreds of sessions on a real machine) and expecting every one of them
+/// to stay parsed for the life of the process. Eight slots covers that
+/// realistic back-and-forth — the current session plus a few just-visited
+/// ones — without retaining the whole history.
+const SESSION_CACHE_CAPACITY: usize = 8;
+
+/// How many per-item lifecycle sweeps the desktop keeps warm at once.
+///
+/// A sweep walks every turn of one session once; it is cheap to redo and
+/// only ever serves the session currently open, so it gets the same small
+/// cap as the session cache and for the same reason.
+const LIFECYCLE_CACHE_CAPACITY: usize = 8;
+
+/// Sessions are identified by agent and id together: the same id string can
+/// legitimately appear under two different agents, and an id alone is not a
+/// safe cache or lookup key.
+type SessionKey = (AgentKind, String);
+
+/// A capacity-bounded cache that evicts the least-recently-used entry.
+///
+/// Insertion order is the eviction order by default; `get` promotes an entry
+/// to most-recently-used so a session someone keeps returning to survives
+/// while ones only glanced at age out first.
+struct BoundedCache<K, V> {
+    capacity: usize,
+    entries: HashMap<K, V>,
+    // Front = least recently used, back = most recently used.
+    order: VecDeque<K>,
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V: Clone> BoundedCache<K, V> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, key: &K) -> Option<V> {
+        let value = self.entries.get(key).cloned();
+        if value.is_some() {
+            self.touch(key);
+        }
+        value
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        if self.entries.contains_key(&key) {
+            self.entries.insert(key.clone(), value);
+            self.touch(&key);
+            return;
+        }
+        while self.entries.len() >= self.capacity {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+        self.order.push_back(key.clone());
+        self.entries.insert(key, value);
+    }
+
+    fn touch(&mut self, key: &K) {
+        if let Some(pos) = self.order.iter().position(|existing| existing == key) {
+            let existing = self.order.remove(pos).expect("position was just found");
+            self.order.push_back(existing);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
 
 /// Caches hold `Arc` handles rather than values so a command can take what it
 /// needs and release the lock before analysing anything. Tauri dispatches
@@ -18,8 +104,8 @@ const MAX_SESSION_PAGE_SIZE: usize = 1_000;
 pub struct AppState {
     app: ContextTrace,
     warnings: Vec<String>,
-    sessions: Mutex<HashMap<String, Arc<CachedSession>>>,
-    lifecycles: Mutex<HashMap<String, Arc<LifecycleSweep>>>,
+    sessions: Mutex<BoundedCache<SessionKey, Arc<CachedSession>>>,
+    lifecycles: Mutex<BoundedCache<SessionKey, Arc<LifecycleSweep>>>,
 }
 
 struct CachedSession {
@@ -40,8 +126,8 @@ impl AppState {
         Self {
             app,
             warnings,
-            sessions: Mutex::new(HashMap::new()),
-            lifecycles: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(BoundedCache::new(SESSION_CACHE_CAPACITY)),
+            lifecycles: Mutex::new(BoundedCache::new(LIFECYCLE_CACHE_CAPACITY)),
         }
     }
 
@@ -52,13 +138,13 @@ impl AppState {
     /// disk, not state a half-finished write can leave inconsistent, so
     /// recovering the map beats failing every later command until the desktop
     /// is restarted.
-    fn sessions(&self) -> MutexGuard<'_, HashMap<String, Arc<CachedSession>>> {
+    fn sessions(&self) -> MutexGuard<'_, BoundedCache<SessionKey, Arc<CachedSession>>> {
         self.sessions
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn lifecycles(&self) -> MutexGuard<'_, HashMap<String, Arc<LifecycleSweep>>> {
+    fn lifecycles(&self) -> MutexGuard<'_, BoundedCache<SessionKey, Arc<LifecycleSweep>>> {
         self.lifecycles
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -71,17 +157,31 @@ impl AppState {
     /// cannot stop the session list from answering on another thread. Two
     /// threads may therefore load the same session at once, which costs a
     /// duplicate parse and never a wrong answer.
-    fn cached_session(&self, id: &str, analyzed: bool) -> Result<Arc<CachedSession>, String> {
-        if let Some(existing) = self.usable_cached_session(id, analyzed) {
+    ///
+    /// `agent` scopes the lookup rather than merely checking it afterwards. An
+    /// id is unique within an agent and not across them, and a catalog row
+    /// carries both halves, so the backend is asked the question the row can
+    /// actually answer. Resolving on the id alone would return whichever
+    /// binding was wired first and leave the other session unreachable however
+    /// it was clicked.
+    fn cached_session(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        analyzed: bool,
+    ) -> Result<Arc<CachedSession>, String> {
+        let key = (agent, id.to_string());
+        if let Some(existing) = self.usable_cached_session(&key, analyzed) {
             return Ok(existing);
         }
 
         let (session, resolved) = if analyzed {
-            self.app.load_with_content_analysis(id)
+            self.app.load_with_content_analysis_in_agent(agent, id)
         } else {
-            self.app.load(id)
+            self.app.load_in_agent(agent, id)
         }
         .map_err(|error| error.to_string())?;
+        debug_assert_eq!(resolved.descriptor.agent, agent);
         let (_, ratio) = ct_runtime::calibrate_session(&self.app, &session, resolved.binding);
         let cached = Arc::new(CachedSession {
             session,
@@ -95,20 +195,23 @@ impl AppState {
         // Another thread may have finished a content-analysed load while this
         // one was parsing; the richer entry stays.
         if let Some(existing) = sessions
-            .get(id)
+            .get(&key)
             .filter(|existing| existing.content_analyzed && !analyzed)
         {
-            return Ok(Arc::clone(existing));
+            return Ok(existing);
         }
-        sessions.insert(id.to_string(), Arc::clone(&cached));
+        sessions.insert(key, Arc::clone(&cached));
         Ok(cached)
     }
 
-    fn usable_cached_session(&self, id: &str, analyzed: bool) -> Option<Arc<CachedSession>> {
+    fn usable_cached_session(
+        &self,
+        key: &SessionKey,
+        analyzed: bool,
+    ) -> Option<Arc<CachedSession>> {
         self.sessions()
-            .get(id)
+            .get(key)
             .filter(|cached| cached.content_analyzed || !analyzed)
-            .map(Arc::clone)
     }
 
     fn startup(&self) -> StartupSummary {
@@ -126,37 +229,29 @@ impl AppState {
         }
     }
 
-    fn list_sessions(
-        &self,
-        agent: Option<String>,
-        project: Option<String>,
-        limit: Option<usize>,
-    ) -> Result<Vec<SessionSummary>, String> {
-        Ok(self
-            .search_sessions(agent, project, Some(0), limit)?
-            .sessions)
-    }
-
     /// Search the complete local catalog before taking a page.
     ///
-    /// The older list command remains for existing desktop clients, but it
-    /// deliberately has no way to say whether a caller's fixed limit hid a
-    /// result. New clients should use this page contract so a narrow query can
-    /// find a session that falls after an unfiltered first page.
+    /// `refresh` distinguishes a genuine catalog refresh from an ordinary
+    /// page request: the two need opposite cache policies. Paging through
+    /// results the user already saw, or narrowing a query, must not discard
+    /// sessions already parsed — that only wastes the parse the user just
+    /// waited for. An explicit refresh means the caller wants to treat the
+    /// cache as possibly stale (a file could have changed or disappeared on
+    /// disk since it was cached), so only that case clears both caches.
     fn search_sessions(
         &self,
         agent: Option<String>,
         query: Option<String>,
         offset: Option<usize>,
         limit: Option<usize>,
+        refresh: Option<bool>,
     ) -> Result<SessionPage, String> {
-        self.sessions().clear();
-        self.lifecycles().clear();
+        if refresh.unwrap_or(false) {
+            self.sessions().clear();
+            self.lifecycles().clear();
+        }
         let parsed_agent = match agent.as_deref() {
-            Some(agent) => Some(
-                AgentKind::parse(agent)
-                    .ok_or_else(|| format!("unknown agent '{agent}'; use claude-code or codex"))?,
-            ),
+            Some(agent) => Some(parse_agent(agent)?),
             None => None,
         };
         let filter = SessionFilter {
@@ -199,8 +294,8 @@ impl AppState {
         })
     }
 
-    fn inspect_session(&self, id: &str) -> Result<SessionDetail, String> {
-        let cached = self.cached_session(id, false)?;
+    fn inspect_session(&self, agent: AgentKind, id: &str) -> Result<SessionDetail, String> {
+        let cached = self.cached_session(agent, id, false)?;
         let session = &cached.session;
         let growth = timeline(session);
         let peak_turn = session.peak_turn().map(|turn| turn.get());
@@ -235,8 +330,13 @@ impl AppState {
         })
     }
 
-    fn context(&self, id: &str, turn: Option<u32>) -> Result<ContextDetail, String> {
-        let cached = self.cached_session(id, false)?;
+    fn context(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        turn: Option<u32>,
+    ) -> Result<ContextDetail, String> {
+        let cached = self.cached_session(agent, id, false)?;
         let turn = match turn {
             Some(turn) => TurnNumber::new(turn).map_err(|error| error.to_string())?,
             None => self
@@ -286,8 +386,13 @@ impl AppState {
         })
     }
 
-    fn doctor(&self, id: &str, turn: Option<u32>) -> Result<DoctorReport, String> {
-        let cached = self.cached_session(id, true)?;
+    fn doctor(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        turn: Option<u32>,
+    ) -> Result<DoctorReport, String> {
+        let cached = self.cached_session(agent, id, true)?;
         let turn = match turn {
             Some(turn) => TurnNumber::new(turn).map_err(|error| error.to_string())?,
             None => self
@@ -387,19 +492,20 @@ impl AppState {
         })
     }
 
-    fn lifecycle(&self, id: &str, item: &str) -> Result<LifecycleReport, String> {
+    fn lifecycle(&self, agent: AgentKind, id: &str, item: &str) -> Result<LifecycleReport, String> {
         // The sweep walks every turn, so it too runs outside both locks; the
         // cache is only locked to read the handle and to publish the result.
         // The lookup is bound before the match: a guard in a match scrutinee
         // lives as long as the whole match, and re-locking inside an arm would
         // deadlock the command against itself.
-        let swept = self.lifecycles().get(id).map(Arc::clone);
+        let key = (agent, id.to_string());
+        let swept = self.lifecycles().get(&key);
         let sweep = match swept {
             Some(sweep) => sweep,
             None => {
-                let cached = self.cached_session(id, false)?;
+                let cached = self.cached_session(agent, id, false)?;
                 let sweep = Arc::new(self.app.sweep_lifecycles(&cached.session, cached.binding));
-                self.lifecycles().insert(id.to_string(), Arc::clone(&sweep));
+                self.lifecycles().insert(key, Arc::clone(&sweep));
                 sweep
             }
         };
@@ -705,68 +811,65 @@ pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
     state.startup()
 }
 
-#[tauri::command]
-pub fn list_sessions(
-    agent: Option<String>,
-    project: Option<String>,
-    limit: Option<usize>,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<SessionSummary>, String> {
-    state.list_sessions(agent, project, limit)
-}
-
 /// Search session metadata on the backend and return explicit paging facts.
-///
-/// Kept separate from `list_sessions` for IPC compatibility with already
-/// released clients that expect an array response.
 #[tauri::command]
 pub fn search_sessions(
     agent: Option<String>,
     query: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
+    refresh: Option<bool>,
     state: tauri::State<'_, AppState>,
 ) -> Result<SessionPage, String> {
-    state.search_sessions(agent, query, offset, limit)
+    state.search_sessions(agent, query, offset, limit, refresh)
 }
 
 #[tauri::command]
 pub fn inspect_session(
     id: String,
+    agent: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<SessionDetail, String> {
-    state.inspect_session(&id)
+    state.inspect_session(parse_agent(&agent)?, &id)
 }
 
 #[tauri::command]
 pub fn get_context(
     id: String,
+    agent: String,
     turn: Option<u32>,
     state: tauri::State<'_, AppState>,
 ) -> Result<ContextDetail, String> {
-    state.context(&id, turn)
+    state.context(parse_agent(&agent)?, &id, turn)
 }
 
 #[tauri::command]
 pub fn run_doctor(
     id: String,
+    agent: String,
     turn: Option<u32>,
     state: tauri::State<'_, AppState>,
 ) -> Result<DoctorReport, String> {
-    state.doctor(&id, turn)
+    state.doctor(parse_agent(&agent)?, &id, turn)
 }
 
 #[tauri::command]
 pub fn get_lifecycle(
     id: String,
+    agent: String,
     item: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LifecycleReport, String> {
-    state.lifecycle(&id, &item)
+    state.lifecycle(parse_agent(&agent)?, &id, &item)
 }
 
 fn format_source(source: &ContextSource) -> String {
     source.to_string()
+}
+
+fn parse_agent(agent: &str) -> Result<AgentKind, String> {
+    AgentKind::parse(agent)
+        .ok_or_else(|| format!("unknown agent '{agent}'; use claude-code or codex"))
 }
 
 fn session_matches_query(descriptor: &SessionDescriptor, query: Option<&str>) -> bool {
@@ -877,6 +980,13 @@ mod tests {
             .clone()
     }
 
+    fn all_sessions(state: &AppState) -> Vec<SessionSummary> {
+        state
+            .search_sessions(None, None, Some(0), Some(MAX_SESSION_PAGE_SIZE), None)
+            .expect("list committed synthetic fixtures")
+            .sessions
+    }
+
     /// Discovery-only catalog used to exercise paging without creating hundreds
     /// of on-disk JSONL files. The page endpoint must not parse a body merely
     /// to make an older session searchable.
@@ -918,6 +1028,78 @@ mod tests {
         }
     }
 
+    /// Wraps a real adapter but reports its first discovered session under a
+    /// fixed id, so two different agents can be made to genuinely collide on
+    /// the same id string for `resolve`.
+    struct CollidingIdAdapter {
+        inner: Box<dyn ct_domain::ports::AgentAdapter>,
+        id: ct_domain::SessionId,
+    }
+
+    impl ct_domain::ports::AgentAdapter for CollidingIdAdapter {
+        fn agent(&self) -> AgentKind {
+            self.inner.agent()
+        }
+
+        fn roots(&self) -> Vec<String> {
+            self.inner.roots()
+        }
+
+        fn discover(&self) -> ct_domain::ports::PortResult<Vec<SessionDescriptor>> {
+            Ok(self
+                .inner
+                .discover()?
+                .into_iter()
+                .take(1)
+                .map(|mut descriptor| {
+                    descriptor.id = self.id.clone();
+                    descriptor
+                })
+                .collect())
+        }
+
+        fn load(
+            &self,
+            descriptor: &SessionDescriptor,
+        ) -> ct_domain::ports::PortResult<ct_domain::AgentSession> {
+            self.inner.load(descriptor)
+        }
+
+        fn reconstruct(
+            &self,
+            session: &ct_domain::AgentSession,
+            turn: TurnNumber,
+            estimator: &dyn ct_domain::ports::TokenEstimator,
+        ) -> ct_domain::ports::PortResult<ct_domain::ports::ReconstructedContext> {
+            self.inner.reconstruct(session, turn, estimator)
+        }
+    }
+
+    /// Both fixture sessions reported under the same id, one per agent, with
+    /// the fixture homes kept alive for the caller to hold.
+    fn colliding_id_state() -> (AppState, FixtureHomes, String) {
+        let homes = FixtureHomes::new();
+        let id = ct_domain::SessionId::new("collision-id").unwrap();
+        let app = ContextTrace::new(vec![
+            AgentBinding::new(
+                Box::new(CollidingIdAdapter {
+                    inner: Box::new(ClaudeCodeAdapter::with_home(&homes.claude_home)),
+                    id: id.clone(),
+                }),
+                Box::new(HeuristicEstimator::for_code()),
+            ),
+            AgentBinding::new(
+                Box::new(CollidingIdAdapter {
+                    inner: Box::new(CodexAdapter::with_home(&homes.codex_home)),
+                    id: id.clone(),
+                }),
+                Box::new(HeuristicEstimator::for_code()),
+            ),
+        ]);
+        let state = AppState::from_parts(app, Vec::new());
+        (state, homes, id.to_string())
+    }
+
     fn catalog_descriptor(index: usize, project: &str) -> SessionDescriptor {
         SessionDescriptor {
             id: ct_domain::SessionId::new(format!("catalog-{index:04}")).unwrap(),
@@ -941,7 +1123,10 @@ mod tests {
     }
 
     fn assert_context_contract(state: &AppState, id: &str, agent: &str, model: &str) {
-        let detail = state.inspect_session(id).expect("inspect fixture session");
+        let kind = AgentKind::parse(agent).expect("valid agent label in test");
+        let detail = state
+            .inspect_session(kind, id)
+            .expect("inspect fixture session");
         assert_eq!(detail.session.agent, agent);
         assert_eq!(detail.model.as_deref(), Some(model));
         assert!(detail.turn_count > 0);
@@ -949,7 +1134,7 @@ mod tests {
         let peak_turn = detail.peak_turn.expect("fixture has prompt usage");
 
         let context = state
-            .context(id, None)
+            .context(kind, id, None)
             .expect("load context for the peak turn");
         assert_eq!(context.turn, peak_turn);
         assert_eq!(context.model.as_deref(), Some(model));
@@ -964,7 +1149,7 @@ mod tests {
         assert!(json.get("total_tokens").is_none());
 
         let doctor = state
-            .doctor(id, Some(peak_turn))
+            .doctor(kind, id, Some(peak_turn))
             .expect("run content diagnostics for the peak turn");
         assert_eq!(doctor.turn, peak_turn);
         assert!(doctor.scanned_records > 0);
@@ -975,7 +1160,7 @@ mod tests {
         assert!(json.get("secret_occurrences").is_none());
 
         let lifecycle = state
-            .lifecycle(id, &item_id)
+            .lifecycle(kind, id, &item_id)
             .expect("trace a listed context contributor");
         assert_eq!(lifecycle.id, item_id);
         assert!(lifecycle.turns_present > 0);
@@ -1012,9 +1197,7 @@ mod tests {
         assert_eq!(startup.roots.len(), 2);
         assert_eq!(startup.warnings, ["synthetic fixture runtime"]);
 
-        let sessions = state
-            .list_sessions(None, None, None)
-            .expect("list committed synthetic fixtures");
+        let sessions = all_sessions(&state);
         assert_eq!(sessions.len(), 2);
         let codex_id = session_id(&sessions, "codex");
         let claude_id = session_id(&sessions, "claude-code");
@@ -1038,7 +1221,7 @@ mod tests {
         let state = catalog_state(sessions);
 
         let first_page = state
-            .search_sessions(Some("codex".into()), None, Some(0), Some(500))
+            .search_sessions(Some("codex".into()), None, Some(0), Some(500), None)
             .expect("list the first page");
         assert_eq!(first_page.total, 501);
         assert_eq!(first_page.sessions.len(), 500);
@@ -1048,7 +1231,13 @@ mod tests {
         );
 
         let targeted = state
-            .search_sessions(None, Some("  TARGETED older  ".into()), Some(0), Some(50))
+            .search_sessions(
+                None,
+                Some("  TARGETED older  ".into()),
+                Some(0),
+                Some(50),
+                None,
+            )
             .expect("search the complete catalog before paging");
         assert_eq!(targeted.total, 1);
         assert_eq!(targeted.sessions.len(), 1);
@@ -1056,7 +1245,7 @@ mod tests {
         assert_eq!(targeted.sessions[0].id, "catalog-0500");
 
         let final_page = state
-            .search_sessions(None, None, Some(500), Some(50))
+            .search_sessions(None, None, Some(500), Some(50), None)
             .expect("page beyond the legacy 500-item cutoff");
         assert_eq!(final_page.total, 501);
         assert_eq!(final_page.offset, 500);
@@ -1071,32 +1260,144 @@ mod tests {
     }
 
     #[test]
-    fn list_refreshes_the_session_cache_before_a_follow_up_inspection() {
+    fn paging_through_results_does_not_evict_already_parsed_sessions() {
         let homes = FixtureHomes::new();
         let state = homes.state();
-        let sessions = state
-            .list_sessions(None, None, None)
-            .expect("list committed synthetic fixtures");
+        let sessions = all_sessions(&state);
         let codex_id = session_id(&sessions, "codex");
 
         state
-            .inspect_session(&codex_id)
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("first inspection populates the cache");
+        fs::remove_file(&homes.codex_session).expect("remove staged fixture after caching it");
+
+        // An ordinary page request (offset > 0, no explicit refresh) is what
+        // "Load more" sends. It must not throw away the parse above.
+        state
+            .search_sessions(None, None, Some(1), Some(1), None)
+            .expect("page through the catalog without asking for a refresh");
+        state
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("pagination does not evict a session already parsed");
+
+        // Nor does an ordinary offset-0 search issued without `refresh`, e.g.
+        // a query or filter change.
+        state
+            .search_sessions(None, Some("".into()), Some(0), Some(50), None)
+            .expect("search again without asking for a refresh");
+        state
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("an unrelated search does not evict a session already parsed");
+    }
+
+    #[test]
+    fn an_explicit_refresh_evicts_sessions_that_disappeared_from_disk() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let codex_id = session_id(&sessions, "codex");
+
+        state
+            .inspect_session(AgentKind::Codex, &codex_id)
             .expect("first inspection populates the cache");
         fs::remove_file(&homes.codex_session).expect("remove staged fixture after caching it");
         state
-            .inspect_session(&codex_id)
-            .expect("cached inspection does not reread a session until refresh");
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("cached inspection does not reread a session until an explicit refresh");
 
         let refreshed = state
-            .list_sessions(None, None, None)
-            .expect("refresh the session listing");
-        assert_eq!(refreshed.len(), 1);
-        assert_eq!(refreshed[0].agent, "claude-code");
-        let error = match state.inspect_session(&codex_id) {
+            .search_sessions(None, None, Some(0), None, Some(true))
+            .expect("an explicit refresh clears the cache and rescans the catalog");
+        assert_eq!(refreshed.sessions.len(), 1);
+        assert_eq!(refreshed.sessions[0].agent, "claude-code");
+        let error = match state.inspect_session(AgentKind::Codex, &codex_id) {
             Err(error) => error,
-            Ok(_) => panic!("refresh evicts sessions that have disappeared from disk"),
+            Ok(_) => panic!("a genuine refresh evicts sessions that have disappeared from disk"),
         };
         assert!(error.contains("no session matching"));
+    }
+
+    #[test]
+    fn session_cache_capacity_is_bounded_and_evicts_least_recently_used() {
+        let mut cache: BoundedCache<u32, u32> = BoundedCache::new(SESSION_CACHE_CAPACITY);
+        for key in 0..(SESSION_CACHE_CAPACITY as u32 + 3) {
+            cache.insert(key, key * 10);
+        }
+        assert_eq!(
+            cache.len(),
+            SESSION_CACHE_CAPACITY,
+            "the cache never grows past its capacity"
+        );
+        assert!(
+            cache.get(&0).is_none(),
+            "the oldest untouched entry was evicted first"
+        );
+        let newest = SESSION_CACHE_CAPACITY as u32 + 2;
+        assert_eq!(
+            cache.get(&newest),
+            Some(newest * 10),
+            "the most recently inserted entry survives"
+        );
+
+        // Touching an entry protects it from the next eviction.
+        let mut cache: BoundedCache<u32, u32> = BoundedCache::new(3);
+        cache.insert(1, 100);
+        cache.insert(2, 200);
+        cache.insert(3, 300);
+        assert_eq!(cache.get(&1), Some(100)); // touch 1, so 2 becomes least recently used
+        cache.insert(4, 400); // capacity exceeded: evicts 2, not the touched 1
+        assert!(cache.get(&2).is_none(), "the untouched entry was evicted");
+        assert_eq!(cache.get(&1), Some(100), "the touched entry survived");
+        assert_eq!(cache.get(&4), Some(400), "the newest entry survived");
+    }
+
+    #[test]
+    fn agent_and_id_together_identify_a_session_when_ids_collide_across_agents() {
+        let (state, _homes, id) = colliding_id_state();
+
+        let page = state
+            .search_sessions(None, None, Some(0), None, None)
+            .expect("list sessions across both agents");
+        assert_eq!(
+            page.sessions.len(),
+            2,
+            "both agents report a session under the same id"
+        );
+        assert!(page.sessions.iter().all(|session| session.id == id));
+        let agents: std::collections::BTreeSet<&str> = page
+            .sessions
+            .iter()
+            .map(|session| session.agent.as_str())
+            .collect();
+        assert_eq!(
+            agents.len(),
+            2,
+            "the collision is across two genuinely distinct agents"
+        );
+
+        // The bindings are registered Claude Code first, matching the real
+        // composition root (`ct_runtime::build`), so an id-only lookup would
+        // answer with this one whichever session was asked for.
+        let claude = state
+            .inspect_session(AgentKind::ClaudeCode, &id)
+            .expect("resolve the Claude Code side of the collision");
+        assert_eq!(claude.session.agent, "claude-code");
+
+        // The second session is the one the bug made unreachable. Scoping the
+        // lookup to its agent must open that session itself, not the first
+        // binding's session wearing a Codex label.
+        let codex = state
+            .inspect_session(AgentKind::Codex, &id)
+            .expect("the later binding's session is reachable when the agent scopes the lookup");
+        assert_eq!(codex.session.agent, "codex");
+
+        // Same id, two agents, two genuinely different sessions. The event
+        // counts come from the two distinct fixtures, so an answer that
+        // silently resolved to the wrong side would show up here.
+        assert_ne!(
+            claude.event_count, codex.event_count,
+            "each agent's own session was loaded, not the same one twice"
+        );
     }
 
     #[test]
@@ -1106,13 +1407,11 @@ mod tests {
         // the session list answers on another thread.
         let homes = FixtureHomes::new();
         let state = homes.state();
-        let sessions = state
-            .list_sessions(None, None, None)
-            .expect("list committed synthetic fixtures");
+        let sessions = all_sessions(&state);
         let codex_id = session_id(&sessions, "codex");
 
         let cached = state
-            .cached_session(&codex_id, true)
+            .cached_session(AgentKind::Codex, &codex_id, true)
             .expect("load the session for analysis");
         assert!(
             state.sessions.try_lock().is_ok(),
@@ -1135,9 +1434,7 @@ mod tests {
         // cache is unavailable" until the app was restarted.
         let homes = FixtureHomes::new();
         let state = homes.state();
-        let sessions = state
-            .list_sessions(None, None, None)
-            .expect("list committed synthetic fixtures");
+        let sessions = all_sessions(&state);
         let codex_id = session_id(&sessions, "codex");
 
         let previous = std::panic::take_hook();
@@ -1153,15 +1450,13 @@ mod tests {
             "the test must actually poison the lock it is about"
         );
 
-        let after = state
-            .list_sessions(None, None, None)
-            .expect("the session list still answers after a poisoning panic");
+        let after = all_sessions(&state);
         assert_eq!(after.len(), 2);
         state
-            .inspect_session(&codex_id)
+            .inspect_session(AgentKind::Codex, &codex_id)
             .expect("inspection still answers after a poisoning panic");
         state
-            .doctor(&codex_id, None)
+            .doctor(AgentKind::Codex, &codex_id, None)
             .expect("the doctor still answers after a poisoning panic");
     }
 
@@ -1170,23 +1465,25 @@ mod tests {
         let homes = FixtureHomes::new();
         let state = homes.state();
 
-        let error = match state.list_sessions(Some("cursor".to_string()), None, None) {
+        let error = match state.search_sessions(Some("cursor".to_string()), None, None, None, None)
+        {
             Err(error) => error,
             Ok(_) => panic!("unsupported agents are rejected before discovery"),
         };
         assert_eq!(error, "unknown agent 'cursor'; use claude-code or codex");
 
-        let error = match state.inspect_session("does-not-exist") {
+        let error = match state.inspect_session(AgentKind::Codex, "does-not-exist") {
             Err(error) => error,
             Ok(_) => panic!("missing sessions are reported to the desktop client"),
         };
         assert_eq!(error, "no session matching 'does-not-exist'");
 
         let sessions = state
-            .list_sessions(Some("codex".to_string()), None, None)
-            .expect("list Codex fixture");
+            .search_sessions(Some("codex".to_string()), None, None, None, None)
+            .expect("list Codex fixture")
+            .sessions;
         let codex_id = session_id(&sessions, "codex");
-        let error = match state.context(&codex_id, Some(999)) {
+        let error = match state.context(AgentKind::Codex, &codex_id, Some(999)) {
             Err(error) => error,
             Ok(_) => panic!("out-of-range turns are not silently substituted"),
         };

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Agent,
   ContextDetail,
   DoctorReport,
   LifecycleReport,
@@ -85,13 +86,6 @@ function asStartup(value: unknown): StartupSummary {
     throw malformed("startup");
   }
   return value as unknown as StartupSummary;
-}
-
-function asSessions(value: unknown): SessionSummary[] {
-  if (!Array.isArray(value) || !value.every(isSession)) {
-    throw malformed("session list");
-  }
-  return value;
 }
 
 function asSessionPage(value: unknown): SessionPage {
@@ -291,34 +285,20 @@ export function getStartup(): Promise<StartupSummary> {
   return invoke<unknown>("get_startup").then(asStartup);
 }
 
-export function listSessions(
-  agent?: string,
-  project?: string,
-): Promise<SessionSummary[]> {
-  if (!inTauri()) {
-    const needle = project?.toLocaleLowerCase();
-    return Promise.resolve(
-      demoSessions.filter(
-        (session) =>
-          (!agent || session.agent === agent) &&
-          (!needle ||
-            session.project?.toLocaleLowerCase().includes(needle) ||
-            session.id.includes(needle)),
-      ),
-    );
-  }
-  return invoke<unknown>("list_sessions", {
-    agent: agent || null,
-    project: project || null,
-    limit: 500,
-  }).then(asSessions);
-}
-
+/**
+ * Search session metadata on the backend and return explicit paging facts.
+ *
+ * `refresh` marks a genuine catalog refresh (the sidebar's refresh button):
+ * only that case asks the backend to treat its parsed-session cache as
+ * possibly stale. An ordinary query, filter, or "Load more" page must not
+ * set it — doing so would throw away parsing the user just waited for.
+ */
 export function searchSessions(
   agent?: string,
   query?: string,
   offset = 0,
   limit = 200,
+  refresh = false,
 ): Promise<SessionPage> {
   if (!inTauri()) {
     const needle = query?.trim().toLocaleLowerCase();
@@ -343,25 +323,31 @@ export function searchSessions(
     query: query?.trim() || null,
     offset,
     limit,
+    refresh,
   }).then(asSessionPage);
 }
 
-export function inspectSession(id: string): Promise<SessionDetail> {
+/**
+ * The same id string can legitimately appear under two different agents, so
+ * every per-session lookup below takes `agent` alongside `id` rather than
+ * trusting the id alone to identify a session.
+ */
+export function inspectSession(agent: Agent, id: string): Promise<SessionDetail> {
   if (!inTauri()) return Promise.resolve(demoDetail(id));
-  return invoke<unknown>("inspect_session", { id }).then(asDetail);
+  return invoke<unknown>("inspect_session", { id, agent }).then(asDetail);
 }
 
-export function getContext(id: string, turn?: number): Promise<ContextDetail> {
+export function getContext(agent: Agent, id: string, turn?: number): Promise<ContextDetail> {
   if (!inTauri()) return Promise.resolve(demoContext(turn));
-  return invoke<unknown>("get_context", { id, turn: turn ?? null }).then(asContext);
+  return invoke<unknown>("get_context", { id, agent, turn: turn ?? null }).then(asContext);
 }
 
-export function runDoctor(id: string, turn?: number): Promise<DoctorReport> {
+export function runDoctor(agent: Agent, id: string, turn?: number): Promise<DoctorReport> {
   if (!inTauri()) return Promise.resolve(demoDoctor(turn));
-  return invoke<unknown>("run_doctor", { id, turn: turn ?? null }).then(asDoctor);
+  return invoke<unknown>("run_doctor", { id, agent, turn: turn ?? null }).then(asDoctor);
 }
 
-export function getLifecycle(id: string, item: string): Promise<LifecycleReport> {
+export function getLifecycle(agent: Agent, id: string, item: string): Promise<LifecycleReport> {
   if (!inTauri()) return Promise.resolve(demoLifecycle(item));
-  return invoke<unknown>("get_lifecycle", { id, item }).then(asLifecycle);
+  return invoke<unknown>("get_lifecycle", { id, agent, item }).then(asLifecycle);
 }

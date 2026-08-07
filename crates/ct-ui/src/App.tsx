@@ -22,6 +22,16 @@ import type {
 
 type AgentFilter = "all" | Agent;
 
+/**
+ * A session's id alone is not unique across agents, so selection, the
+ * currently-loaded detail, and dedup all carry the agent alongside the id.
+ */
+type SessionKey = { agent: Agent; id: string };
+
+function sameSession(a: SessionKey | null, b: SessionKey | null): boolean {
+  return a != null && b != null && a.agent === b.agent && a.id === b.id;
+}
+
 function AgentMark({ agent }: { agent: Agent }) {
   const label = agent === "codex" ? "Codex" : "Claude Code";
   return (
@@ -726,9 +736,9 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionTotal, setSessionTotal] = useState(0);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SessionKey | null>(null);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
-  const [detailForId, setDetailForId] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<SessionKey | null>(null);
   const [context, setContext] = useState<ContextDetail | null>(null);
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
   const [query, setQuery] = useState("");
@@ -750,33 +760,42 @@ export default function App() {
   const lifecycleRequest = useRef(0);
   const catalogRequest = useRef(0);
 
-  const refreshSessions = useCallback(async () => {
-    const request = ++catalogRequest.current;
-    setLoadingSessions(true);
-    setLoadingMore(false);
-    setError(null);
-    try {
-      const page = await api.searchSessions(
-        agentFilter === "all" ? undefined : agentFilter,
-        debouncedQuery,
-        0,
-        200,
-      );
-      if (request !== catalogRequest.current) return;
-      setSessions(page.sessions);
-      setSessionTotal(page.total);
-      setHasMoreSessions(page.hasMore);
-      setSelectedId((current) =>
-        current && page.sessions.some((session) => session.id === current)
-          ? current
-          : page.sessions[0]?.id ?? null,
-      );
-    } catch (loadError) {
-      if (request === catalogRequest.current) setError(errorMessage(loadError));
-    } finally {
-      if (request === catalogRequest.current) setLoadingSessions(false);
-    }
-  }, [agentFilter, debouncedQuery]);
+  const refreshSessions = useCallback(
+    async (forceRefresh = false) => {
+      const request = ++catalogRequest.current;
+      setLoadingSessions(true);
+      setLoadingMore(false);
+      setError(null);
+      try {
+        const page = await api.searchSessions(
+          agentFilter === "all" ? undefined : agentFilter,
+          debouncedQuery,
+          0,
+          200,
+          forceRefresh,
+        );
+        if (request !== catalogRequest.current) return;
+        setSessions(page.sessions);
+        setSessionTotal(page.total);
+        setHasMoreSessions(page.hasMore);
+        setSelected((current) =>
+          current &&
+          page.sessions.some(
+            (session) => session.agent === current.agent && session.id === current.id,
+          )
+            ? current
+            : page.sessions[0]
+              ? { agent: page.sessions[0].agent, id: page.sessions[0].id }
+              : null,
+        );
+      } catch (loadError) {
+        if (request === catalogRequest.current) setError(errorMessage(loadError));
+      } finally {
+        if (request === catalogRequest.current) setLoadingSessions(false);
+      }
+    },
+    [agentFilter, debouncedQuery],
+  );
 
   const loadMoreSessions = useCallback(async () => {
     if (loadingMore || !hasMoreSessions) return;
@@ -789,6 +808,7 @@ export default function App() {
         debouncedQuery,
         sessions.length,
         200,
+        false,
       );
       if (request !== catalogRequest.current) return;
       setSessions((current) => {
@@ -829,13 +849,13 @@ export default function App() {
   }, [refreshSessions]);
 
   useEffect(() => {
-    if (!selectedId) {
+    if (!selected) {
       sessionRequest.current += 1;
       turnRequest.current += 1;
       doctorRequest.current += 1;
       lifecycleRequest.current += 1;
       setDetail(null);
-      setDetailForId(null);
+      setDetailFor(null);
       setContext(null);
       setDoctor(null);
       setLifecycle(null);
@@ -851,7 +871,7 @@ export default function App() {
     doctorRequest.current += 1;
     lifecycleRequest.current += 1;
     setDetail(null);
-    setDetailForId(null);
+    setDetailFor(null);
     setContext(null);
     setDoctor(null);
     setLifecycle(null);
@@ -861,11 +881,14 @@ export default function App() {
     setLoadingDoctor(false);
     setLoadingLifecycle(false);
     setError(null);
-    Promise.all([api.inspectSession(selectedId), api.getContext(selectedId)])
+    Promise.all([
+      api.inspectSession(selected.agent, selected.id),
+      api.getContext(selected.agent, selected.id),
+    ])
       .then(([nextDetail, nextContext]) => {
         if (request !== sessionRequest.current) return;
         setDetail(nextDetail);
-        setDetailForId(selectedId);
+        setDetailFor(selected);
         setContext(nextContext);
       })
       .catch((loadError) => {
@@ -874,15 +897,15 @@ export default function App() {
       .finally(() => {
         if (request === sessionRequest.current) setLoadingDetail(false);
       });
-  }, [selectedId]);
+  }, [selected]);
 
   const selectTurn = useCallback(
     async (turn: number) => {
-      if (!selectedId || turn === context?.turn) return;
+      if (!selected || turn === context?.turn) return;
       const request = ++turnRequest.current;
       doctorRequest.current += 1;
       lifecycleRequest.current += 1;
-      const session = selectedId;
+      const session = selected;
       setContext(null);
       setDoctor(null);
       setLifecycle(null);
@@ -892,35 +915,35 @@ export default function App() {
       setLoadingContext(true);
       setError(null);
       try {
-        const nextContext = await api.getContext(session, turn);
-        if (request === turnRequest.current && session === selectedId) {
+        const nextContext = await api.getContext(session.agent, session.id, turn);
+        if (request === turnRequest.current && sameSession(session, selected)) {
           setContext(nextContext);
         }
       } catch (loadError) {
-        if (request === turnRequest.current && session === selectedId) {
+        if (request === turnRequest.current && sameSession(session, selected)) {
           setError(errorMessage(loadError));
         }
       } finally {
-        if (request === turnRequest.current && session === selectedId) {
+        if (request === turnRequest.current && sameSession(session, selected)) {
           setLoadingContext(false);
         }
       }
     },
-    [context?.turn, selectedId],
+    [context?.turn, selected],
   );
 
   const runDoctor = useCallback(async () => {
-    if (!selectedId || !context) return;
+    if (!selected || !context) return;
     const request = ++doctorRequest.current;
-    const session = selectedId;
+    const session = selected;
     const turn = context.turn;
     setLoadingDoctor(true);
     setError(null);
     try {
-      const report = await api.runDoctor(session, turn);
+      const report = await api.runDoctor(session.agent, session.id, turn);
       if (
         request === doctorRequest.current &&
-        session === selectedId &&
+        sameSession(session, selected) &&
         turn === context.turn
       ) {
         setDoctor(report);
@@ -930,20 +953,20 @@ export default function App() {
     } finally {
       if (request === doctorRequest.current) setLoadingDoctor(false);
     }
-  }, [context, selectedId]);
+  }, [context, selected]);
 
   const inspectContributor = useCallback(
     async (item: string) => {
-      if (!selectedId) return;
+      if (!selected) return;
       const request = ++lifecycleRequest.current;
-      const session = selectedId;
+      const session = selected;
       setLifecycleItem(item);
       setLifecycle(null);
       setLoadingLifecycle(true);
       setError(null);
       try {
-        const report = await api.getLifecycle(session, item);
-        if (request === lifecycleRequest.current && session === selectedId) {
+        const report = await api.getLifecycle(session.agent, session.id, item);
+        if (request === lifecycleRequest.current && sameSession(session, selected)) {
           setLifecycle(report);
         }
       } catch (loadError) {
@@ -952,7 +975,7 @@ export default function App() {
         if (request === lifecycleRequest.current) setLoadingLifecycle(false);
       }
     },
-    [selectedId],
+    [selected],
   );
 
   const closeLifecycle = useCallback(() => {
@@ -962,7 +985,7 @@ export default function App() {
     setLoadingLifecycle(false);
   }, []);
 
-  const visibleDetail = detailForId === selectedId ? detail : null;
+  const visibleDetail = sameSession(detailFor, selected) ? detail : null;
 
   return (
     <div className="app-shell">
@@ -1008,7 +1031,7 @@ export default function App() {
           ))}
           <button
             className="refresh"
-            onClick={refreshSessions}
+            onClick={() => refreshSessions(true)}
             aria-label="Refresh sessions"
             disabled={loadingSessions}
           >
@@ -1034,8 +1057,8 @@ export default function App() {
                 <SessionListItem
                   key={`${session.agent}-${session.id}`}
                   session={session}
-                  selected={selectedId === session.id}
-                  onSelect={() => setSelectedId(session.id)}
+                  selected={selected?.agent === session.agent && selected?.id === session.id}
+                  onSelect={() => setSelected({ agent: session.agent, id: session.id })}
                 />
               ))}
               {hasMoreSessions && (
