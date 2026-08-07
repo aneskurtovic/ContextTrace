@@ -175,20 +175,32 @@ pub fn compactions(report: &[CompactionDiff], json: bool) {
                 let turn = turn.map(|t| format!(" turn {t}")).unwrap_or_default();
                 let dropped = items
                     .iter()
-                    .filter(|item| item.disposition == CompactionItemDisposition::Dropped)
+                    .filter(|item| {
+                        matches!(item.disposition, CompactionItemDisposition::Dropped { .. })
+                    })
                     .count();
                 println!(
                     "Compaction at line {}{turn}: {dropped} item(s) dropped [derived]",
                     source.line_no
                 );
                 println!(
-                    "  STATE      TYPE                      ROLE       JSON BYTES  TEXT TOKENS"
+                    "  STATE        POSITION                             TYPE                      ROLE       JSON BYTES  TEXT TOKENS"
                 );
                 for item in items {
-                    let state = match item.disposition {
-                        CompactionItemDisposition::Dropped => "dropped",
-                        CompactionItemDisposition::Preserved => "preserved",
-                        CompactionItemDisposition::AddedByReplacement => "replacement",
+                    let (state, position) = match item.disposition {
+                        CompactionItemDisposition::Dropped { history_index } => {
+                            ("dropped", format!("history #{history_index}"))
+                        }
+                        CompactionItemDisposition::Preserved {
+                            history_index,
+                            replacement_index,
+                        } => (
+                            "preserved",
+                            format!("history #{history_index} -> replacement #{replacement_index}"),
+                        ),
+                        CompactionItemDisposition::AddedByReplacement { replacement_index } => {
+                            ("replacement", format!("replacement #{replacement_index}"))
+                        }
                     };
                     let role = item
                         .role
@@ -200,8 +212,9 @@ pub fn compactions(report: &[CompactionDiff], json: bool) {
                         .map(|tokens| format!("{} [derived]", tokens.tokens()))
                         .unwrap_or_else(|| "opaque / structured".into());
                     println!(
-                        "  {}  {}  {}  {:>10}  {}",
+                        "  {}  {}  {}  {}  {:>10}  {}",
                         pad(state, 11),
+                        pad(&position, 35),
                         pad(&item.item_type, 24),
                         pad(&role, 9),
                         item.normalized_json_bytes,
@@ -209,6 +222,9 @@ pub fn compactions(report: &[CompactionDiff], json: bool) {
                     );
                 }
                 println!("  JSON bytes are normalized compact item bytes [derived]; text tokens are measured only for wholly textual items.");
+                println!(
+                    "  \"history #N\" indexes the pre-compaction history; \"replacement #N\" indexes replacement_history — the two lists are numbered separately."
+                );
             }
         }
     }

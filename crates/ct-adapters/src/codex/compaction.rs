@@ -154,34 +154,34 @@ fn compare(
     let mut claimed = vec![false; replacement.len()];
     let mut items = Vec::new();
 
-    for (ordinal, item) in before.iter().enumerate() {
+    for (history_index, item) in before.iter().enumerate() {
         let matched = replacement
             .iter()
             .enumerate()
             .find(|(index, value)| !claimed[*index] && *value == &item.value)
             .map(|(index, _)| index);
-        if let Some(index) = matched {
-            claimed[index] = true;
-        }
-        items.push(describe(
-            ordinal as u32,
-            &item.value,
-            if matched.is_some() {
-                CompactionItemDisposition::Preserved
-            } else {
-                CompactionItemDisposition::Dropped
+        let disposition = match matched {
+            Some(replacement_index) => {
+                claimed[replacement_index] = true;
+                CompactionItemDisposition::Preserved {
+                    history_index: history_index as u32,
+                    replacement_index: replacement_index as u32,
+                }
+            }
+            None => CompactionItemDisposition::Dropped {
+                history_index: history_index as u32,
             },
-            item.source,
-            estimator,
-        ));
+        };
+        items.push(describe(&item.value, disposition, item.source, estimator));
     }
 
-    for (ordinal, value) in replacement.iter().enumerate() {
-        if !claimed[ordinal] {
+    for (replacement_index, value) in replacement.iter().enumerate() {
+        if !claimed[replacement_index] {
             items.push(describe(
-                ordinal as u32,
                 value,
-                CompactionItemDisposition::AddedByReplacement,
+                CompactionItemDisposition::AddedByReplacement {
+                    replacement_index: replacement_index as u32,
+                },
                 replacement_source,
                 estimator,
             ));
@@ -191,7 +191,6 @@ fn compare(
 }
 
 fn describe(
-    ordinal: u32,
     value: &Value,
     disposition: CompactionItemDisposition,
     source: SourceRef,
@@ -210,7 +209,6 @@ fn describe(
         .map(|text| estimator.count_text(&text))
         .filter(TokenCount::is_trustworthy);
     CompactionDiffItem {
-        ordinal,
         item_type,
         role,
         disposition,
@@ -321,16 +319,73 @@ mod tests {
             panic!("expected diff")
         };
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].disposition, CompactionItemDisposition::Preserved);
+        assert_eq!(
+            items[0].disposition,
+            CompactionItemDisposition::Preserved {
+                history_index: 0,
+                replacement_index: 0,
+            }
+        );
         assert!(items[0].text_tokens.is_some());
-        assert_eq!(items[1].disposition, CompactionItemDisposition::Dropped);
+        assert_eq!(
+            items[1].disposition,
+            CompactionItemDisposition::Dropped { history_index: 1 }
+        );
         assert_eq!(items[1].item_type, "function_call_output");
         assert_eq!(
             items[2].disposition,
-            CompactionItemDisposition::AddedByReplacement
+            CompactionItemDisposition::AddedByReplacement {
+                replacement_index: 1,
+            }
         );
         assert_eq!(items[2].item_type, "compaction");
         assert!(items[2].text_tokens.is_none());
+    }
+
+    #[test]
+    fn a_preserved_item_records_where_it_moved_to_in_the_replacement_list() {
+        // The replacement lists the opaque compaction blob first, so the
+        // preserved message lands at a different index than it held in the
+        // pre-compaction history: this is the case a bare `ordinal` field
+        // could not represent.
+        let events = vec![
+            event(1, EventKind::Unrecognised, "response_item/message"),
+            event(
+                2,
+                EventKind::Compacted(CompactionFacts {
+                    replacement_recorded: true,
+                    ..Default::default()
+                }),
+                "compacted",
+            ),
+        ];
+        let lines = Lines(vec![
+            Ok(
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"keep"}]}}"#,
+            ),
+            Ok(
+                r#"{"type":"compacted","payload":{"replacement_history":[{"type":"compaction","encrypted_content":"opaque"},{"type":"message","role":"user","content":[{"type":"input_text","text":"keep"}]}]}}"#,
+            ),
+        ]);
+        let report = diff(&session(events), &lines, &estimator());
+        let CompactionDiff::Available { items, .. } = &report[0] else {
+            panic!("expected diff")
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0].disposition,
+            CompactionItemDisposition::Preserved {
+                history_index: 0,
+                replacement_index: 1,
+            }
+        );
+        assert_eq!(
+            items[1].disposition,
+            CompactionItemDisposition::AddedByReplacement {
+                replacement_index: 0,
+            }
+        );
+        assert_eq!(items[1].item_type, "compaction");
     }
 
     #[test]

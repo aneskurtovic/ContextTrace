@@ -50,8 +50,6 @@ pub enum CompactionDiffUnavailable {
 /// One item participating in the replacement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactionDiffItem {
-    /// Position in the list this item came from, starting at zero.
-    pub ordinal: u32,
     /// Codex Responses API item type, for example `message` or
     /// `function_call_output`.
     pub item_type: String,
@@ -71,13 +69,36 @@ pub struct CompactionDiffItem {
     pub provenance: Provenance,
 }
 
-/// How the item relates to the history immediately before the compaction.
+/// How the item relates to the history immediately before the compaction, and
+/// its position in whichever list(s) it appears in.
+///
+/// Two unrelated lists are in play — the pre-compaction history and the
+/// `replacement_history` array — and a bare `ordinal` field could not say
+/// which one a number indexed, nor record that a preserved item occupies a
+/// position in both. Naming the index on the variant that needs it makes
+/// that distinction part of the type rather than something a reader has to
+/// remember.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CompactionItemDisposition {
-    Dropped,
-    Preserved,
+    /// Present only in the pre-compaction history; absent from the
+    /// replacement.
+    Dropped {
+        /// Zero-based position in the pre-compaction history.
+        history_index: u32,
+    },
+    /// Present in both lists. Recording both positions lets a report say
+    /// where the item moved to, not just that it survived.
+    Preserved {
+        /// Zero-based position in the pre-compaction history.
+        history_index: u32,
+        /// Zero-based position in `replacement_history`.
+        replacement_index: u32,
+    },
     /// An entry introduced by `replacement_history`, such as Codex's opaque
     /// `compaction` blob. It has no identical predecessor to call preserved.
-    AddedByReplacement,
+    AddedByReplacement {
+        /// Zero-based position in `replacement_history`.
+        replacement_index: u32,
+    },
 }
