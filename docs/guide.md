@@ -167,16 +167,17 @@ turn ballooned" to the specific tool result responsible:
 ```
 $ ct largest 60c7495d --category tool-outputs --min-tokens 2000
 
-Largest context contributors at turn 59 (total 135,668 [observed])
+Largest context contributors at turn 80 (total 181,510 [observed])
 Filter     category=tool-outputs, min-tokens=2000
-           4 of 228 items, 27,462 of 135,668 tokens — 20.2% of this turn,
-           excluding the unattributed remainder
+           7 of 318 items, 36,691 of 181,510 tokens - 20.2% of this turn, excluding the unattributed remainder
 
-   14,805   10.9%  Tool outputs   Read C:\Users\anesk\source\repos\VoxMux\BACKLOG.md
-    7,822    5.8%  Tool outputs   Read C:\Users\anesk\source\repos\VoxMux\docs\HANDOFF.md
+   14,729    8.1%  Tool outputs            Read C:\Users\anesk\source\repos\VoxMux\BACKLOG.md
+                   claude:25  from tool: Read [estimated]
+    7,782    4.3%  Tool outputs            Read C:\Users\anesk\source\repos\VoxMux\docs\HANDOFF.md
+                   claude:51  from tool: Read [estimated]
     ...
-Shares are of the turn's full 135,668 tokens, so these rows deliberately do not
-add up to 100%. 4 of 228 items matched.
+Shares are of the turn's full 181,510 tokens, so these rows deliberately do not
+add up to 100%. 7 of 318 items matched.
 ```
 
 `--source` matches the origin and, optionally, what it names: `tool`,
@@ -243,9 +244,8 @@ Category  Tool outputs, from tool: Read
 
 Entered   turn 4
 Present   turns 4-210  (207 of 360 turns scanned)
-Size      8,996 tokens at turn 210 — 2.6% of that turn's 339,687 [estimated]
-Left      after turn 210 — the compaction at turn 211 removed it, reclaiming
-          326,941 tokens
+Size      8,996 tokens at turn 210 - 2.6% of that turn's 339,687 [estimated]
+Left      after turn 210 - the compaction at turn 211 removed it, reclaiming 326,941 tokens
 ```
 
 The item reference is an id (shown by `ct largest`) or any part of a label;

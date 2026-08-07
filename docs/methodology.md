@@ -96,16 +96,16 @@ The payoff is that "what the agent never wrote down" becomes a measurement. Most
 swept sessions now report a figure where previously none could:
 
 ```
-Context at turn 104 — 419,905 tokens  [observed]
+Context at turn 104 - 419,905 [observed]
 
-  Tool outputs             232,888  55.5%  [estimated]
-  File contents             77,734  18.5%  [estimated]
-  Reasoning                 26,399   6.3%  [estimated]
+  Tool outputs              265,391   63.2%  █████████████·······  [estimated]
+  Reasoning                  50,451   12.0%  ██··················  [estimated]
+  Tool calls                 49,431   11.8%  ██··················  [estimated]
   ...
 
-  Ratio      2.42 characters per token, measured from this session's own
-             usage across 118 turn pairs (spread 1.9x).
-  Unlogged   ~37,143 tokens the agent never wrote down — its system prompt
+  Ratio      2.39 characters per token, measured from this session's own
+             usage across 66 turn pairs (spread 2.0x).
+  Unlogged   ~37,143 tokens the agent never wrote down -- its system prompt
              and tool JSON schemas. Measured, not assumed.
 ```
 
