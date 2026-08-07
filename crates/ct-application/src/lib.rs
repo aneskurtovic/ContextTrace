@@ -1042,6 +1042,54 @@ mod tests {
         )])
     }
 
+    /// Two agents legitimately holding one id is the case the two lookups exist
+    /// to tell apart. Pinned as a test rather than left in a doc comment
+    /// because the unscoped path is the one every CLI command still takes: its
+    /// answer is a wiring order, not a disambiguation, and a later reader
+    /// should find that asserted rather than described.
+    #[test]
+    fn an_unscoped_resolve_answers_with_the_first_binding_and_a_scoped_one_does_not() {
+        let colliding = |agent| {
+            vec![(
+                descriptor("shared", agent, "p", 1),
+                Ok(swept_session("shared", agent, 1, Vec::new())),
+            )]
+        };
+        let app = ContextTrace::new(vec![
+            AgentBinding::new(
+                Box::new(FakeAdapter {
+                    agent: AgentKind::ClaudeCode,
+                    sessions: colliding(AgentKind::ClaudeCode),
+                }),
+                Box::new(CharProbe),
+            ),
+            AgentBinding::new(
+                Box::new(FakeAdapter {
+                    agent: AgentKind::Codex,
+                    sessions: colliding(AgentKind::Codex),
+                }),
+                Box::new(CharProbe),
+            ),
+        ]);
+
+        // Unchanged by the agent-scoped addition: with no agent to select by,
+        // the exact-match short circuit returns the first binding that holds
+        // the id, which is the behaviour every existing caller was built on.
+        let unscoped = app.resolve("shared").expect("an exact id still resolves");
+        assert_eq!(unscoped.descriptor.agent, AgentKind::ClaudeCode);
+        assert_eq!(unscoped.binding, 0);
+
+        // Scoping first is what reaches the later binding at all. Without it
+        // the Codex session is unreachable however it is asked for.
+        for (index, agent) in [(0, AgentKind::ClaudeCode), (1, AgentKind::Codex)] {
+            let scoped = app
+                .resolve_in_agent(agent, "shared")
+                .expect("each agent resolves its own session");
+            assert_eq!(scoped.descriptor.agent, agent);
+            assert_eq!(scoped.binding, index);
+        }
+    }
+
     #[test]
     fn drift_counts_sessions_not_just_events() {
         // The figure that separates a one-off from a shipped format change.

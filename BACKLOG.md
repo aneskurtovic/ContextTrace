@@ -89,6 +89,52 @@ a clean Windows host, downloaded-artifact/CLI checks and candidate soak remain.
 
 ## Todo
 
+### CT-069 · Codex subagent threads collapse onto their parent's id
+`status: todo` · `tier: A` · `size: M` · `source: CT-055`
+
+**Why:** the Codex adapter reports `session_meta.payload.session_id` as a
+session's identity. For an ordinary session that equals `payload.id` and
+nothing is wrong. For a subagent thread it does not: the child carries its own
+`payload.id` and inherits the *parent's* `session_id`, alongside
+`parent_thread_id` and `thread_source: "subagent"`. Every thread in a group
+therefore reports one id, and since `ContextTrace::resolve` returns the first
+exact match without checking for a second, `ct inspect <id>` answers with
+whichever file discovery reached first and the rest cannot be opened at all.
+
+Measured on the local corpus with a read-only sweep: **590 sessions hold 564
+distinct ids. 30 files collapse onto 4 ids — the worst group is 16 files — so
+26 sessions are unreachable by id today.** This is not the cross-agent
+collision CT-055 was filed about; it is a same-agent one, and
+`resolve_in_agent` does not help. It is the CT-039 shape again: an ambiguity
+resolved by iteration order and presented as an answer.
+
+`parent_thread_id` and `thread_source` are recorded by the harness and
+currently unread, so the thread structure is derivable rather than inferable —
+the same standing CT-027 had. Whether a subagent thread should be listed as a
+sibling session, nested under its parent, or excluded the way CT-015 excludes
+Claude Code sidechains is the design question, and it should be settled before
+the id is changed.
+**Done when:** every rollout file is reachable by an identifier that names it
+uniquely, a thread group's structure is stated rather than flattened, and the
+corpus sweep above reports no unreachable session.
+
+### CT-070 · Let the CLI name the agent when two sessions share an id
+`status: todo` · `tier: C` · `size: S` · `source: CT-055`
+
+**Why:** `ContextTrace::resolve` takes an id with no agent and its exact-match
+short circuit returns whichever binding was wired first. CT-055 gave the
+desktop `resolve_in_agent`, because a catalog row carries both halves of a
+session's identity; the CLI's arguments carry only the id. The behaviour is now
+asserted by test and stated in the doc comment rather than being accidental,
+which is the right interim position for something with no observed incidence:
+the same sweep that found CT-069 found **zero ids shared across two agents in
+590 local sessions**. Filed so the decision is written down rather than
+rediscovered, and ranked below CT-069, which is the same hazard with real
+incidence.
+**Done when:** either a cross-agent collision is refused by name with a way to
+disambiguate, or the decision to leave it is recorded against a fresh
+measurement.
+
 ### CT-026 · Cost projection
 `status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
 **Done when:** per-category cost is derived from a local pricing table, clearly
