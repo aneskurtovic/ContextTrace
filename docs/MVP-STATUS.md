@@ -38,7 +38,7 @@ certificate procurement is deferred until the production-release decision.
 | Build | `cargo build --workspace --release` passes on Rust 1.97.1, Windows/MSVC |
 | Binary smoke | `ct 0.1.0` starts and exposes all thirteen documented commands |
 | Desktop slice | Tauri v2 command bridge compiles; React type-check, 22 tests and production bundle pass; 5 Rust tests cover fixture-backed IPC, caching, errors, Context Doctor, lifecycle tracing and a 501-session search/page contract |
-| Desktop performance | Largest local Codex session: 1.43 s cold and 0.2 ms cached; two high-turn Claude sessions: 0.79–1.07 s cold and 0.4–0.5 ms cached |
+| Desktop performance | Largest local Codex session (94.6 MiB), on the content-analysis path the doctor view and `ct context` run: 1.26–1.28 s warm over three runs, 1.71 s on a single cold observation, 0.1 ms cached. Two high-turn Claude sessions, plain load: 0.79–1.07 s cold and 0.4–0.5 ms cached. Warm and cold are separate measurements and neither substitutes for the other |
 | Format-drift sweep | 816 sessions (717 Claude Code, 99 Codex), 148,970 events, every type recognised, 5.88 seconds |
 | Privacy architecture | No application upload/telemetry code; core-only Tauri capability and local-IPC CSP; read-only adapters |
 | Desktop acceptance | Real-corpus budgets, race handling, measurement-limit copy, keyboard semantics, loading/empty/error/malformed states and reduced motion pass; installed search and Codex/Claude filtering plus native 1024×680/1440×900 layouts pass against 816 sessions. Context Doctor's new responsive panel passes the same two viewport widths. |

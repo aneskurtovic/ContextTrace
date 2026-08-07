@@ -149,46 +149,20 @@ branch; showing them is nearly free and no other tool does it.
 ### CT-029 · `ct-index` SQLite cache
 `status: todo` · `tier: C` · `size: L` · `source: plan`
 **Why:** deliberately deferred until a command feels slow, so the access
-patterns are known before the cache is tuned. Desktop-path release benchmarks
-now complete the largest local cold load in 1.43 seconds and cached turn
-switches below 1 ms, so 0.1 has no evidence that a persistent index is needed.
+patterns are known before the cache is tuned. The figure this deferral rests on
+was re-measured under CT-057, because the old one timed a cheaper path than the
+one users wait on. On the largest local session (94.6 MiB, 88 turns) the
+content-analysis path — discovery through to the first rendered turn, the
+slowest route a user can reach — completes in **1.26–1.28 seconds** across three
+runs on an otherwise idle machine, with the file's bytes already in the OS page
+cache. A single genuinely cold observation, taken on a file this machine had not
+read that day and not repeatable without dropping the cache, was **1.71
+seconds**. Cached turn switches stay below 1 ms. Both figures sit inside the
+2-second budget CT-044 accepted, so 0.1 still has no evidence that a persistent
+index is needed — but the warm figure is the repeatable one and the cold figure
+is the one a first-run user meets, and neither is quotable as the other.
 **Done when:** derived metadata is cached, disposable and rebuildable, and no
 domain type depends on it.
-
-### CT-057 · Benchmark the path the desktop actually runs
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** `desktop_perf.rs` times `runtime.app.load(&id)`, but the doctor view
-and `ct context` both call `load_with_content_analysis`, which additionally
-SHA-256s and DEFLATEs every model-visible payload. CT-029 cites the resulting
-1.43-second cold load as the evidence that no persistent index is needed, so a
-deferral decision currently rests on a measurement of a cheaper path than the
-one users wait on.
-**Done when:** the example measures the content-analysis load as well, and
-CT-029's note quotes whichever figure corresponds to the slowest path a user
-can reach.
-
-### CT-058 · Let `ct context` skip content analysis
-`status: todo` · `tier: B` · `size: S` · `source: review`
-
-**Why:** `Command::Context` was switched to `load_with_content_analysis`
-unconditionally, so the most-used command in the CLI now hashes and compresses
-every payload in the session whether or not the duplicate and low-information
-sections find anything worth printing. There is no flag to decline it.
-**Done when:** the extra measurement is opt-in or demonstrably cheap enough not
-to be, with the cost recorded either way.
-
-### CT-059 · Say how much content the doctor could not measure
-`status: todo` · `tier: A` · `size: S` · `source: review`
-
-**Why:** `find_duplicate_content` and `find_low_entropy_content` both skip
-items whose `content_measurement` is `None`, and nothing downstream reports how
-many were skipped. The secret scan sets the right example — it carries
-`scanned_records` and `unreadable_records` — but "no duplicates found" from the
-same report may mean nothing was measurable. This project states its evidence
-limits everywhere else; here it states a clean bill of health instead.
-**Done when:** both detectors report the number of items they could not
-measure, and the CLI and desktop surfaces show it.
 
 ### CT-066 · Match compaction history without a quadratic scan
 `status: todo` · `tier: C` · `size: S` · `source: review`
@@ -201,8 +175,139 @@ is fine at today's sizes and will not stay fine; a fingerprint of the kind
 **Done when:** matching is linear in the size of the two histories, with the
 same dropped/preserved/added answers.
 
+### CT-071 · Two documented claims that cannot be re-captured
+`status: todo` · `tier: C` · `size: S` · `source: review`
+
+**Why:** CT-068 re-captured every terminal block that could be re-run, and found
+two that cannot. `docs/guide.md` says one item "reads as 12.3% of 73,138 there
+and 2.6% of 339,687 here"; the second half still reproduces, but the first no
+longer does — that session's peak turn has moved past the item's departure, so
+`ct largest` does not show it at all any more. Separately, the `web_search_call`
+fragment illustrating CT-037 has a column narrower than the binary's own padding,
+and names no session or turn, so there is nothing to re-run. Both are small, and
+both need an editorial choice — pick a new example, or drop the comparison —
+rather than a capture.
+**Done when:** each claim is either re-grounded in output that can be reproduced
+today, or removed.
+
+---
+
+## Done
+
+### CT-057 · Benchmark the path the desktop actually runs
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `desktop_perf.rs` times `runtime.app.load(&id)`, but the doctor view
+and `ct context` both call `load_with_content_analysis`, which additionally
+SHA-256s and DEFLATEs every model-visible payload. CT-029 cites the resulting
+1.43-second cold load as the evidence that no persistent index is needed, so a
+deferral decision currently rests on a measurement of a cheaper path than the
+one users wait on.
+**Done when:** the example measures the content-analysis load as well, and
+CT-029's note quotes whichever figure corresponds to the slowest path a user
+can reach.
+
+**Accepted on 2026-08-08.** The example now times
+`load_with_content_analysis` beside the plain `load`, and reports both rather
+than replacing one with the other — the comparison is the finding. The
+content-analysis load runs first, while the page cache is least warm, because it
+is the heavier path and the one a deferral decision rests on; the plain load runs
+second and is labelled `load_plain_warmcache_ms` so nobody reads a warm figure as
+a cold one. The old `cold_total` is gone: with two loads in the file it named a
+quantity that could no longer be attributed to either, and
+`content_analysis_path_total_ms` replaces it, stopping at the first rendered turn
+because switching turns afterwards is a separate user action.
+
+**The correction is larger than the label.** CT-029 cited 1.43 seconds as
+evidence against a persistent index; that number came from a total whose load leg
+was the *cheap* path. Re-measured, the slowest route a user can reach is
+1.26–1.28 seconds across three runs on an idle machine with the file already in
+the page cache, and 1.71 seconds on a single genuinely cold observation. Both sit
+inside the 2-second budget, so the deferral survives — but it now rests on the
+path being deferred. CT-029's note and `docs/MVP-STATUS.md` were rewritten to the
+new figures; CT-044's acceptance note keeps its original numbers, with a dated
+correction appended, because an acceptance record describes what was measured
+then and editing it would falsify the history it exists to hold.
+
+The example cannot force a disk-cold read, and now says so in place of implying
+otherwise. Specific timings were deliberately kept out of the module comment and
+put here instead: a figure in a comment is never re-measured, and this file's
+whole purpose is to be re-run. An intermediate reading of 2003 ms did not survive
+re-measurement — it was taken while three agents were compiling in the same tree,
+and every other leg of that run was inflated too.
+
+### CT-058 · Let `ct context` skip content analysis
+`status: done` · `tier: B` · `size: S` · `source: review`
+
+**Why:** `Command::Context` was switched to `load_with_content_analysis`
+unconditionally, so the most-used command in the CLI now hashes and compresses
+every payload in the session whether or not the duplicate and low-information
+sections find anything worth printing. There is no flag to decline it.
+**Done when:** the extra measurement is opt-in or demonstrably cheap enough not
+to be, with the cost recorded either way.
+
+**Accepted on 2026-08-08.** `ct context --no-content-analysis` skips the
+fingerprint and compression pass. The default is untouched, deliberately and not
+incidentally: another agent was re-capturing quoted `ct context` output from the
+real binary into `docs/methodology.md` at the same time, and inverting the
+default would have invalidated that capture with no file conflict to warn either
+side. An opt-out flag and an opt-in flag satisfy this entry equally; only one of
+them was safe to land this week.
+
+Declining the analysis does not quietly delete the sections it feeds. Both report
+every item as unmeasured, which is the same sentence CT-059 added for the partial
+case — so the flag makes the report cheaper without making it quieter, and the
+two features turned out to need each other.
+
+The measured saving was about 0.13 s of a 0.81 s run on an 11.7 MB session, and
+it grows with payload size. That figure is recorded here rather than in the
+`--help` text. The first draft put it in the help string and called that session
+"the largest local session", which it is not — the largest is 94.6 MB, as CT-057
+established the same afternoon. A number in a help string is never re-measured
+and cannot be corrected by re-running anything, so the help now describes what
+declining costs and leaves the arithmetic here.
+
+### CT-059 · Say how much content the doctor could not measure
+`status: done` · `tier: A` · `size: S` · `source: review`
+
+**Why:** `find_duplicate_content` and `find_low_entropy_content` both skip
+items whose `content_measurement` is `None`, and nothing downstream reports how
+many were skipped. The secret scan sets the right example — it carries
+`scanned_records` and `unreadable_records` — but "no duplicates found" from the
+same report may mean nothing was measurable. This project states its evidence
+limits everywhere else; here it states a clean bill of health instead.
+**Done when:** both detectors report the number of items they could not
+measure, and the CLI and desktop surfaces show it.
+
+**Accepted on 2026-08-08.** Both detectors' surfaces now carry the number of
+items they could not examine. `FilteredView::unmeasured_items` counts over the
+same matched set that `duplicate_content` and `low_entropy_content` rank, so the
+caveat always describes the answers printed beside it; a count taken over the
+whole snapshot would have been right only by coincidence and wrong the moment a
+filter was active. It reaches the terminal, `--json` through `CompositionReport`,
+the desktop's `DoctorReport`, and the doctor panel.
+
+**`--json` was the surface that mattered most and was nearly missed.** The first
+implementation added a free function and called it from the two terminal
+renderers, leaving `composition_report` — the thing `--json` serialises — without
+it. The terminal even tells users "all groups are in `--json`", so the
+machine-readable output would have been the one place a consumer could read an
+empty duplicate list as exhaustive with nothing to contradict it. That is the
+argument for hanging the count off the view rather than off a helper each caller
+must remember: the forgotten caller is not hypothetical, it happened here.
+
+The count says how much the detectors could not look at, not how much they
+missed — the second question has no honest answer without the measurement that
+is absent. Zero prints nothing in the terminal, because a caveat about nothing is
+noise, but the structured surfaces always carry the field, since a consumer
+cannot tell a zero from a field that was never wired. On a real 419,905-token
+turn the answer is 84 items. The frontend test suite gained a case that feeds the
+demo payload through the production validator: every other test stubs the Tauri
+bridge and therefore only ever exercised the IPC branch, so demo data drifting
+from the contract was invisible to all of them.
+
 ### CT-068 · Re-capture five stale terminal blocks in the extracted docs
-`status: todo` · `tier: B` · `size: S` · `source: review`
+`status: done` · `tier: B` · `size: S` · `source: review`
 
 **Why:** the README-front-door extraction carried five quoted terminal blocks
 into `docs/methodology.md` (lines 99 and 108) and `docs/guide.md` (lines 163,
@@ -218,9 +323,30 @@ deliberate re-capture from the real binary.
 **Done when:** all five blocks are re-captured from the binary's actual output
 rather than hand-edited, and match character-for-character.
 
----
+**Accepted on 2026-08-08.** All five defect sites across three blocks were
+re-captured from a release binary rather than hand-corrected, and each was
+verified line-by-line against a fresh capture afterwards.
 
-## Done
+**The verification caught the fix reintroducing the defect it was fixing.** Two
+category rows had been nudged one space right, so the three surviving rows looked
+right-aligned among themselves after the elision — but the binary aligns that
+column across all ten rows, including the seven the block abridges away. It reads
+as a rounding of the truth toward tidiness, which is the exact move this entry
+exists to forbid, and it is invisible to every gate the project runs. The
+verification is a script that requires every non-elided line of a documented
+block to appear byte-identically in a fresh capture, and it is what turned an
+assertion into a check.
+
+Figures moved where the corpus moved, and each was confirmed rather than assumed:
+the fitted ratio fell from 2.42 to 2.39 as the session's usable turn-pairs
+shrank, while the observed total and residual stayed pinned; `ct largest` with no
+`--turn` now answers about turn 80 rather than 59, because the session grew. The
+`ct doctor --dir` block four lines away was deliberately left alone — it is
+labelled as a record of a past state, and re-capturing it would have destroyed
+the evidence its own sentence depends on.
+
+Two further defects were found and are filed as CT-071 rather than fixed here,
+because neither can be re-captured and both need an editorial decision.
 
 ### CT-051 · Widen the credential vocabulary the scanner claims to know
 `status: done` · `tier: B` · `size: S` · `source: review`
@@ -695,6 +821,11 @@ list-to-inspect-to-context IPC contract for both agents, cache refresh and
 failure cases. Release benchmarks on the largest local Codex session (94.6 MiB)
 and two high-turn Claude sessions put cold discovery-to-snapshot at 0.79–1.43
 seconds and cached turn switching below 1 ms, inside the 2-second/50-ms budgets.
+*(CT-057, 2026-08-08: that 0.79–1.43 s range was measured through the plain
+load, not the content-analysis load the doctor view and `ct context` actually
+run. Re-measured on the same largest session, the slowest reachable path is
+1.26–1.28 s warm and 1.71 s on a single cold observation. The budget verdict
+above is unchanged — the path it was checked against was not the slowest one.)*
 Seventeen frontend tests cover loading, empty, error and malformed IPC states,
 keyboard-operable chart points, focus visibility, live regions, reduced motion
 and out-of-order requests. Installed acceptance then exercised search and both
