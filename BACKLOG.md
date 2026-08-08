@@ -114,6 +114,22 @@ the same standing CT-027 had. Whether a subagent thread should be listed as a
 sibling session, nested under its parent, or excluded the way CT-015 excludes
 Claude Code sidechains is the design question, and it should be settled before
 the id is changed.
+
+**Design settled on 2026-08-08: a subagent thread is a sibling session, marked.**
+Identity becomes `payload.id`; every rollout file is listable and openable, and a
+thread carries a visible marker naming its parent, so the group's structure is
+stated rather than flattened or hidden. A nested or tree presentation is CT-028's
+question, not this one's.
+
+A header-only sweep of the local corpus made the choice cheaper than this entry
+assumed. **`payload.id` is already unique across all 99 rollout files**, so
+identity needs no synthesis — the fix is to report the field that already
+identifies a file. **Every one of the 26 subagent threads names a parent that is
+itself present, and no group is nested**: all 26 point directly at their group's
+root, so there is no recursive structure to model. Group sizes are 2, 4, 8 and
+16. Exclusion was rejected because it would drop 26 of 99 local Codex files, and
+"cannot be opened" is the defect this entry exists to fix.
+
 **Done when:** every rollout file is reachable by an identifier that names it
 uniquely, a thread group's structure is stated rather than flattened, and the
 corpus sweep above reports no unreachable session.
@@ -164,8 +180,13 @@ is the one a first-run user meets, and neither is quotable as the other.
 **Done when:** derived metadata is cached, disposable and rebuildable, and no
 domain type depends on it.
 
+
+---
+
+## Done
+
 ### CT-066 · Match compaction history without a quadratic scan
-`status: todo` · `tier: C` · `size: S` · `source: review`
+`status: done` · `tier: C` · `size: S` · `source: review`
 
 **Why:** `compare` walks the replacement array once per pre-compaction item,
 comparing whole `serde_json::Value` trees for equality, so cost grows with the
@@ -175,8 +196,42 @@ is fine at today's sizes and will not stay fine; a fingerprint of the kind
 **Done when:** matching is linear in the size of the two histories, with the
 same dropped/preserved/added answers.
 
+**Accepted on 2026-08-08.** `compare` fingerprints each replacement item once
+into a `HashMap<ContentFingerprint, VecDeque<u32>>`, then walks the
+pre-compaction history once, matching by a pop from the front of a bucket. Work
+is linear in the two histories instead of their product. On synthetic 5,000 x
+5,000 histories the old scan took 4.52 s and the new one 0.41 s; at the sizes
+this repository actually sees — a fixture compaction holds four items and two —
+the difference is invisible, which is why this was filed tier C and why the entry
+said it "is fine at today's sizes and will not stay fine".
+
+**The reuse this entry assumed would work does not.** `fingerprint::value` looked
+like the obvious tool and is the wrong one twice over, both found by checking
+rather than assuming. Object equality on `serde_json::Value` is
+order-independent, because `preserve_order` is on workspace-wide and `IndexMap`
+compares pairs rather than positions — while `fingerprint::value` hashes raw
+parse order, making it *stricter* than the equality it would have replaced, so a
+key reordering would have silently turned a preserved item into a dropped one
+plus an added one. And it special-cases a bare `Value::String` to hash its text
+rather than its quoted form, so `Value::String("null")` and `Value::Null` — not
+equal under `Value::eq` — fingerprint identically. That is a real collision. The
+matcher therefore canonicalises object keys itself and always serialises through
+`to_string`, reusing `fingerprint::text` for the hash but not the wrong equality.
+`fingerprint.rs` was left untouched: its semantics are right for the
+near-duplicate detection it exists for.
+
+Duplicates were the part worth testing rather than reasoning about. The old scan
+paired the Nth copy of a value on the left with the Nth unclaimed copy on the
+right, in ascending index order; a plain `HashMap<_, usize>` would have collapsed
+that into "first wins, the rest drop". The queue reproduces it, and the test that
+pins it was written first, run against the *old* implementation to confirm it
+described the existing behaviour, and only then run against the new one — a test
+written after the rewrite would have described the rewrite. One gap is documented
+rather than defended against: `-0.0` and `0.0` are equal under `Value::eq` and
+serialise differently, which valid Codex API JSON has no reason to produce.
+
 ### CT-071 · Two documented claims that cannot be re-captured
-`status: todo` · `tier: C` · `size: S` · `source: review`
+`status: done` · `tier: C` · `size: S` · `source: review`
 
 **Why:** CT-068 re-captured every terminal block that could be re-run, and found
 two that cannot. `docs/guide.md` says one item "reads as 12.3% of 73,138 there
@@ -190,9 +245,26 @@ rather than a capture.
 **Done when:** each claim is either re-grounded in output that can be reproduced
 today, or removed.
 
----
+**Accepted on 2026-08-08.** Both claims are re-grounded in commands that can be
+re-run, and neither needed the editorial retreat this entry allowed for.
 
-## Done
+The "12.3% of 73,138" comparison was recoverable once the reason it broke was
+read properly: the item had not moved, the session's *peak* had, drifting past
+the item's departure so that `ct largest` with no `--turn` no longer showed it.
+Pinning turn 4 — the item's own entry turn, named by the trace block directly
+above — reproduces both original figures exactly, and the prose now names the two
+turns instead of relying on a default that has stopped meaning what it said.
+
+The `web_search_call` fragment turned out to be reproducible too. A search of the
+local corpus found the same item id and label the fragment already named, so only
+its numbers and column width had been fabricated around a real row. It is now a
+full captured block in the same filtered form the guide uses elsewhere, which
+means it is verifiable where before it was unverifiable by construction — the
+stronger outcome of the two this entry offered.
+
+All five documented blocks across both files are now checked line-by-line against
+fresh captures, and the check is part of how a doc change is accepted rather than
+something remembered.
 
 ### CT-057 · Benchmark the path the desktop actually runs
 `status: done` · `tier: A` · `size: S` · `source: review`

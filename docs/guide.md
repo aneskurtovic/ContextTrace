@@ -137,8 +137,19 @@ list that names tool targets already ranks `url` above `query`, so both shapes
 named themselves with no new per-tool knowledge:
 
 ```
-   100    0.2%  Tool calls   web_search site:help.instagram.…conds Instagram best practices
-                codex:70  from tool: web_search [estimated]
+$ ct largest 019f4181 --turn 11 --source tool:web_search
+
+Largest context contributors at turn 11 (total 134,802 [observed])
+Filter     source=tool:web_search
+           32 of 115 items, 1,882 of 134,802 tokens - 1.4% of this turn, excluding the unattributed remainder
+
+      113    0.1%  Tool calls              web_search site:help.instagram.…conds Instagram best practices
+                   codex:70  from tool: web_search [estimated]
+      109    0.1%  Tool calls              web_search Instagram ranking si…er reach Mosseri 2026 official
+                   codex:61  from tool: web_search [estimated]
+      ...
+Shares are of the turn's full 134,802 tokens, so these rows deliberately do not
+add up to 100%. 32 of 115 items matched.
 ```
 
 **`journal.jsonl` was being discovered as a session** (CT-038) — workflow
@@ -267,11 +278,12 @@ Four things this view refuses to say:
   Counting that as absence would make every long-lived item appear to flicker.
 - **The size is one measurement, not a series.** An item's text does not change
   while it sits in context; only the calibration scale moves, so a per-turn size
-  column would show movement the item does not have. It is measured at the last
-  turn holding the item, while `ct largest` defaults to the session's *peak*
-  turn — so the same item reads as 12.3% of 73,138 there and 2.6% of 339,687
-  here. Same token count, different denominator, and each line names the turn it
-  used.
+  column would show movement the item does not have. `ct trace` measures it once,
+  at the last turn holding the item; `ct largest` measures the same item against
+  whichever turn's total is asked for, and that denominator moves independently
+  of the item's own size — so the same item reads as 12.3% of 73,138 at turn 4
+  and 2.6% of 339,687 at turn 210 above, its last turn in context. Same token
+  count, different denominator, and each line names the turn it used.
 
 For Codex the fold only clears at a compaction, so a departure without one is a
 defect in ContextTrace rather than a fact about the session — and the view says
