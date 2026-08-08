@@ -670,9 +670,6 @@ pub struct StartupSummary {
     warnings: Vec<String>,
 }
 
-/// A session's place in its thread group, for the desktop's session list.
-///
-/// Mirrors [`ThreadRole`] rather than flattening it into two nullable fields:
 /// Mirrors [`Comparability`], which decides whether the token deltas beside it
 /// may be read as findings at all.
 ///
