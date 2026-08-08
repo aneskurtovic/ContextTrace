@@ -75,6 +75,72 @@ comes out negative and the fit is refused — `docs/methodology.md` says so and
 says the cause is not established. The panel must render that refusal as the
 answer, not fall back to a plausible-looking curve.
 
+### CT-073 · Let an agent read the context it just lost
+`status: next` · `tier: A` · `size: L` · `source: product decision`
+
+**Why:** compaction does not delete anything — `replacement_history` and every
+pre-compaction event stay in the append-only log, which is the only reason the
+autopsy in CT-047 can exist. What compaction destroys is the *agent's* access.
+So the record survives and only the user can read it, while the one party who
+needs it cannot. Exposing ContextTrace read-only over MCP closes that: after an
+eviction the agent asks what it had at turn N, or for one item back, and
+compaction stops being lossy in the way that matters.
+
+**This is CT-033 without the reason CT-033 was dropped.** That entry died
+because replaying to a model needed an HTTP client, and the absence of any
+network-capable crate is the structural form of "nothing leaves this machine".
+MCP speaks stdio to a process the user already launched, so the feature arrives
+and the property survives intact. That distinction is the whole basis for
+reopening it and should be checked before any transport work begins.
+
+**Done when:** an MCP server exposes the existing read-only queries; every
+figure crosses the boundary carrying its confidence; a refusal crosses as a
+refusal rather than as an empty result; and no new network-capable crate enters
+the dependency graph.
+
+**The risk that must be designed for, not discovered.** These tools hand session
+content back to a model. `ct secrets` exists because credentials land in these
+logs, so a naive `recover this item` is a mechanism for feeding a leaked key
+straight back into a context window — and, through the agent, potentially into a
+tool call that transmits it. Recovery must run the existing redaction path by
+default, and the decision to return raw content must be explicit and recorded.
+An MCP surface that laundered `[REDACTED:github-token]` back into a live
+credential would be strictly worse than the compaction it exists to undo.
+
+### CT-074 · Archive sessions so they outlive the logs
+`status: next` · `tier: B` · `size: L` · `source: product decision`
+
+**Why:** the one thing genuinely at risk is not compaction but deletion. A log
+that is rotated, pruned by the harness, or lost with a wiped `~/.codex` takes
+its evidence with it, and no amount of reconstruction recovers a file that is
+gone. A local archive is the only way a session outlives its log.
+
+**Done when:** ingestion is opt-in and explicit, appends from the logs without
+writing to them, records per record where it came from, and can be rebuilt for
+any session whose log still exists. A session present in both must read
+identically from either.
+
+**Three constraints that are the design, not caveats on it.**
+
+*The archive must not become the source of truth.* Where a log is present it
+stays authoritative and the archive is a cache; only where the log is gone does
+the archive answer, and it must say so, because a stale or partial copy that
+silently substitutes for evidence is this project's central failure mode wearing
+a database schema.
+
+*It concentrates secrets by construction.* Credentials demonstrably reach these
+logs — the CI fixture carries five and a single real scan found six occurrences.
+Scattered JSONL under two home directories is an awkward target; one file
+holding every prompt, tool output and credential you have ever produced is not.
+Ingestion must run the secret scan and must default to storing redacted, with
+raw retention an explicit, recorded choice rather than the path of least
+resistance.
+
+*It narrows a claim the README makes.* "Never writes to them" survives — the
+logs are still untouched — but "ContextTrace keeps no copy of your content" does
+not, and that sentence has to change in the same commit that makes it false
+rather than in a later one. Nothing leaves the machine either way.
+
 ### CT-043 · Ship an installable 0.1.0
 `status: next` · `tier: A` · `size: L` · `source: MVP review`
 
