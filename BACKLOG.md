@@ -118,6 +118,41 @@ installer and companion CLI.
 Certificate provisioning is deferred until the production-release decision;
 a clean Windows host, downloaded-artifact/CLI checks and candidate soak remain.
 
+**2026-08-08 — install/removal review, prompted by CT-074.** Reviewing the
+install and removal path against the new archive found a release blocker and
+fixed it. `ct archive` defaulted to `%LOCALAPPDATA%\ContextTracerchive`, which
+is *inside* the desktop app's install directory: Tauri's NSIS bundler installs
+per-user to `%LOCALAPPDATA%\<productName>`. It survived removal only by
+accident — the generated uninstaller ends in `RMDir "$INSTDIR"`, which spares a
+non-empty directory — so a template this project does not control was one
+`RMDir /r` away from making "uninstall the app" delete the only surviving copies
+of sessions whose logs were already gone. The default is now
+`%LOCALAPPDATA%\ContextTrace-archive`, a sibling that no uninstaller owns, and a
+test pins the two names against nesting so a tidier-looking default cannot
+reintroduce it.
+
+The consequence is documented rather than left to be discovered: removal leaves
+archived sessions behind, that directory holds session content including
+credentials if anything was archived with `--raw`, and deleting it is the user's
+call. README and MVP-STATUS say so, and the `ct roots` block was re-captured from
+a real run rather than hand-edited.
+
+**Verified on this machine, from the committed workflow and a release build:**
+MIT `LICENSE` present and copied into the CLI archive; the release job refuses a
+tag that disagrees with `tauri.conf.json` and refuses mixed workspace versions
+before building anything; assets are the per-user installer, the CLI zip and a
+SHA-256 manifest over both; the release is created as a draft; signing is gated
+behind complete configuration; `ct --version` reports `ct 0.1.0` and the binary
+exposes fourteen commands.
+
+**Still requires a human at a machine this session did not have.** A clean
+Windows host that has never had ContextTrace installed; install, upgrade and
+uninstall exercised from *downloaded* assets rather than locally staged ones,
+with hashes compared against `SHA256SUMS.txt` first; a candidate soak; and the
+signing certificate, which is a purchasing decision rather than a task. None of
+these can be honestly closed from here, and the item stays `next` because of
+them — not because anything above is outstanding.
+
 ---
 
 ## Todo

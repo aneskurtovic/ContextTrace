@@ -128,6 +128,15 @@ version; ContextTrace does not own or modify the Codex/Claude session
 directories it reads. The CLI ZIP is portable: extract it and run
 `.\ct.exe --help`.
 
+**Uninstalling does not remove archived sessions.** `ct archive` writes to
+`%LOCALAPPDATA%\ContextTrace-archive`, deliberately a sibling of the app's
+install directory rather than a folder inside it: for sessions whose logs are
+already gone, those copies are the only remaining evidence, and an uninstaller
+must not be able to take them with it. The consequence is that they outlive the
+app, so delete that directory yourself if you want them gone — and note it holds
+session content, including credentials if anything was archived with `--raw`.
+Nothing else survives removal.
+
 Until a release candidate has a verified Windows signature, expect
 SmartScreen to warn about the unsigned installer. See
 [MVP status](docs/MVP-STATUS.md) for the current evidence ceiling and
@@ -153,7 +162,7 @@ Nothing is written to them.
 
 It writes to one directory, and only when you run `ct archive`:
 
-  C:\Users\anesk\AppData\Local\ContextTrace\archive
+  C:\Users\anesk\AppData\Local\ContextTrace-archive
 
 Nothing leaves this machine either way.
 

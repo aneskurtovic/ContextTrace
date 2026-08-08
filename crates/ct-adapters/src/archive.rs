@@ -87,17 +87,38 @@ impl Default for FileArchiveStore {
     }
 }
 
-/// `%LOCALAPPDATA%\ContextTrace\archive` on Windows, `$XDG_DATA_HOME` or
+/// Directory created under `%LOCALAPPDATA%` for archived sessions.
+///
+/// A *sibling* of the desktop app's install directory, never a child of it.
+/// See [`default_root`].
+const WINDOWS_ARCHIVE_DIR: &str = "ContextTrace-archive";
+
+/// `%LOCALAPPDATA%\ContextTrace-archive` on Windows, `$XDG_DATA_HOME` or
 /// `~/.local/share` elsewhere. Checked in this order without `cfg(windows)`
 /// gating, matching [`crate::home_dir`]'s style: `LOCALAPPDATA` is simply
 /// unset on platforms where it does not apply, so the fallbacks are reached
 /// there without needing a compile-time split.
+///
+/// # Why not `%LOCALAPPDATA%\ContextTrace\archive`
+///
+/// Because that is the desktop app's **install directory**. Tauri's NSIS
+/// bundler installs per-user to `%LOCALAPPDATA%\<productName>`, so an archive
+/// nested there would be user data living inside a program directory an
+/// uninstaller owns.
+///
+/// It happens to survive today: the generated uninstaller ends with
+/// `RMDir "$INSTDIR"`, which removes the directory only when it is empty, so an
+/// archive subdirectory silently blocks it. That is a detail of a template this
+/// project does not control, one `RMDir /r` away from uninstalling the app
+/// deleting the only remaining copies of sessions whose logs are already gone --
+/// the exact loss this whole feature exists to prevent, caused by a routine
+/// dependency bump. A sibling directory cannot be reached by that mistake.
 fn default_root() -> PathBuf {
     if let Some(dir) = std::env::var_os("CONTEXTTRACE_ARCHIVE") {
         return PathBuf::from(dir);
     }
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local).join("ContextTrace").join("archive");
+        return PathBuf::from(local).join(WINDOWS_ARCHIVE_DIR);
     }
     if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
         return PathBuf::from(xdg).join("contexttrace").join("archive");
@@ -764,5 +785,27 @@ mod tests {
         assert!(entry.differs_from_source());
 
         let _ = fs::remove_dir_all(&scratch);
+    }
+
+    /// The archive must never default to living inside the desktop app's
+    /// install directory.
+    ///
+    /// Tauri installs per-user to `%LOCALAPPDATA%\<productName>`, so that
+    /// directory belongs to an uninstaller. The generated uninstaller currently
+    /// ends in `RMDir "$INSTDIR"`, which spares a non-empty directory -- but
+    /// that is a detail of a template this project does not control, and one
+    /// `RMDir /r` away from an uninstall deleting the only surviving copies of
+    /// sessions whose logs are already gone. Pinned so a tidier-looking default
+    /// cannot reintroduce the nesting quietly.
+    #[test]
+    fn the_archive_directory_never_nests_inside_the_desktop_install_directory() {
+        // Tauri's `productName`, which is the install directory's name.
+        const DESKTOP_INSTALL_DIR: &str = "ContextTrace";
+
+        assert_ne!(WINDOWS_ARCHIVE_DIR, DESKTOP_INSTALL_DIR);
+        assert!(
+            !Path::new(WINDOWS_ARCHIVE_DIR).starts_with(DESKTOP_INSTALL_DIR),
+            "{WINDOWS_ARCHIVE_DIR} must not sit under {DESKTOP_INSTALL_DIR}"
+        );
     }
 }
