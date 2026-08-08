@@ -328,3 +328,88 @@ export type CompactionDiff =
       reason: CompactionDiffUnavailableReason;
     }
   | { status: "unsupported"; detail: string };
+
+/**
+ * One turn's account of its own prompt, mirroring
+ * `ct_application::ResidualPoint`.
+ *
+ * `unlogged` is `null` where the reconstructed content already exceeds the
+ * prompt the agent reported for that turn, and that has to stay distinguishable
+ * from zero. A zero would assert a complete inventory of the context — the one
+ * claim this measurement exists to avoid making — so a renderer must draw a gap
+ * there, never a point on the axis.
+ */
+export interface ResidualPoint {
+  turn: number;
+  /** The agent's own figure for this turn. Observed. */
+  promptTokens: number;
+  /** What the reconstructed content accounts for, at the fitted ratio. */
+  accounted: number;
+  unlogged: number | null;
+  items: number;
+}
+
+/**
+ * A change in the unlogged remainder large enough, and sustained enough, to
+ * mean the harness altered the prompt's hidden part. Mirrors
+ * `ct_application::ResidualStep`.
+ */
+export interface ResidualStep {
+  turn: number;
+  from: number;
+  to: number;
+  /** Signed: a rise means the prompt gained content the log does not record. */
+  growth: number;
+  /**
+   * A compaction close enough to this step to account for it. Decided on the
+   * backend against the session's own compaction events, not re-derived here:
+   * a step the log already explains must not also be narrated as an unrecorded
+   * harness change, which would invent a second cause for one event.
+   */
+  nearCompaction: boolean;
+}
+
+/**
+ * What one session can say about the context its agent never wrote down.
+ *
+ * Four cases rather than a fitted report with nullable figures, because three
+ * of them are refusals with different causes and a caller must not be able to
+ * paper over them. `agentNotFitted` says the measurement does not apply to this
+ * agent at all; `insufficientGrowth` says this session never grew enough to
+ * measure a ratio from; `overCounted` says a ratio was fitted but every turn's
+ * reconstruction exceeded its own prompt, so no remainder can be read out of
+ * the subtraction.
+ *
+ * That last one is the case this shape exists for. A session that over-counts
+ * still yields a ratio, so a `fitted`-shaped report with an all-`null` series
+ * would render a confident header — a measured characters-per-token figure —
+ * above an empty chart. Splitting it out makes the refusal the answer instead
+ * of an absence the reader has to notice. A session where only *some* turns
+ * over-count stays `fitted` and states how many, which is a measurement rather
+ * than a gap.
+ */
+export type ResidualReport =
+  | {
+      kind: "fitted";
+      charsPerToken: number;
+      /** Consecutive-turn pairs the ratio was taken from: the sample size. */
+      pairsUsed: number;
+      /** Spread of those per-pair ratios as p75/p25. Near 1.0 means the session
+       *  tokenizes consistently; a large value means these figures deserve
+       *  less weight. */
+      dispersion: number;
+      /** The session's typical hidden constant. `null` when it came out
+       *  negative, which is reported rather than clamped to zero. */
+      unloggedOverhead: number | null;
+      turnsMeasured: number;
+      overCountedTurns: number;
+      /** The smallest sustained change reported as a step. */
+      stepThreshold: number;
+      promptConfidence: Confidence;
+      remainderConfidence: Confidence;
+      points: ResidualPoint[];
+      steps: ResidualStep[];
+    }
+  | { kind: "overCounted"; charsPerToken: number; pairsUsed: number; dispersion: number; turnsMeasured: number }
+  | { kind: "agentNotFitted"; agent: Agent }
+  | { kind: "insufficientGrowth"; turnsWithUsage: number };

@@ -9,6 +9,9 @@ import type {
   ContextDetail,
   DoctorReport,
   LifecycleReport,
+  ResidualPoint,
+  ResidualReport,
+  ResidualStep,
   SessionDetail,
   SessionPage,
   SessionSummary,
@@ -24,6 +27,7 @@ import {
   demoDetail,
   demoDoctor,
   demoLifecycle,
+  demoResidual,
   demoSessions,
   demoStartup,
   demoTurnDiff,
@@ -553,4 +557,87 @@ export function getTurnDiff(
 ): Promise<TurnDiff> {
   if (!inTauri()) return Promise.resolve(demoTurnDiff(leftTurn, rightTurn));
   return invoke<unknown>("get_turn_diff", { id, agent, leftTurn, rightTurn }).then(asTurnDiff);
+}
+
+function isResidualPoint(value: unknown): value is ResidualPoint {
+  return (
+    isRecord(value) &&
+    typeof value.turn === "number" &&
+    typeof value.promptTokens === "number" &&
+    typeof value.accounted === "number" &&
+    // `null` is a real, load-bearing value here: this turn's reconstruction
+    // exceeded its own prompt. Coercing it would manufacture a zero remainder.
+    isNumberOrNull(value.unlogged) &&
+    typeof value.items === "number"
+  );
+}
+
+function isResidualStep(value: unknown): value is ResidualStep {
+  return (
+    isRecord(value) &&
+    typeof value.turn === "number" &&
+    typeof value.from === "number" &&
+    typeof value.to === "number" &&
+    typeof value.growth === "number" &&
+    typeof value.nearCompaction === "boolean"
+  );
+}
+
+/**
+ * Each arm checks only the fields that arm carries, so a refusal cannot arrive
+ * wearing a fitted report's shape. In particular `overCounted` has no `points`
+ * and no ratio confidence: accepting a payload that carried them would let the
+ * panel fall back to charting a series the backend declined to stand behind.
+ */
+function asResidual(value: unknown): ResidualReport {
+  if (isRecord(value)) {
+    if (value.kind === "fitted") {
+      if (
+        typeof value.charsPerToken === "number" &&
+        typeof value.pairsUsed === "number" &&
+        typeof value.dispersion === "number" &&
+        isNumberOrNull(value.unloggedOverhead) &&
+        typeof value.turnsMeasured === "number" &&
+        typeof value.overCountedTurns === "number" &&
+        typeof value.stepThreshold === "number" &&
+        confidenceLevels.has(value.promptConfidence as string) &&
+        confidenceLevels.has(value.remainderConfidence as string) &&
+        Array.isArray(value.points) &&
+        value.points.every(isResidualPoint) &&
+        Array.isArray(value.steps) &&
+        value.steps.every(isResidualStep)
+      ) {
+        return value as unknown as ResidualReport;
+      }
+    }
+    if (value.kind === "overCounted") {
+      if (
+        typeof value.charsPerToken === "number" &&
+        typeof value.pairsUsed === "number" &&
+        typeof value.dispersion === "number" &&
+        typeof value.turnsMeasured === "number"
+      ) {
+        return value as unknown as ResidualReport;
+      }
+    }
+    if (value.kind === "agentNotFitted" && agents.has(value.agent as string)) {
+      return value as unknown as ResidualReport;
+    }
+    if (value.kind === "insufficientGrowth" && typeof value.turnsWithUsage === "number") {
+      return value as unknown as ResidualReport;
+    }
+  }
+  throw malformed("the unlogged-context measurement");
+}
+
+/**
+ * Measure the context this session's agent never wrote down.
+ *
+ * Separate from `inspectSession` because it is not free: the backend
+ * reconstructs every turn to produce the series. The panel asks for it when the
+ * user does, the way the doctor scan does, rather than on every session click.
+ */
+export function getResidual(agent: Agent, id: string): Promise<ResidualReport> {
+  if (!inTauri()) return Promise.resolve(demoResidual(agent, id));
+  return invoke<unknown>("get_residual", { id, agent }).then(asResidual);
 }

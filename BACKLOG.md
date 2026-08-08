@@ -37,34 +37,6 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-072 · Show the context the agent never logged, and when the harness changed
-`status: next` · `tier: A` · `size: M` · `source: desktop product strategy`
-
-**Why:** the unlogged remainder is this project's signature measurement — the
-system prompt and tool schemas the agent never wrote down, recovered by fitting
-each session's own characters-per-token ratio — and it is reachable only from
-the CLI. The desktop reports a residual figure inside a single turn's
-composition and stops there, so the one view that makes the measurement legible
-is the one the app does not have.
-
-The chart is the smaller half. `residual_steps` already detects *step changes*
-in that remainder, and a step means something the agent did not log has changed
-size: a tool was registered, an MCP server connected, a skill loaded. That is an
-inference about the harness drawn from arithmetic on the transcript, and nothing
-else in either agent's own tooling surfaces it.
-
-**Done when:** a session shows its unlogged remainder across turns with the
-fitted ratio and its spread stated beside it; step changes are marked and
-readable as harness events rather than as noise; every figure carries its
-confidence, and a session whose ratio cannot be fitted says so instead of
-drawing a line through nothing.
-
-**Not fabricating the fit is the whole risk.** Roughly one Claude Code session
-in seven reconstructs to more content than the prompt held, so the constant
-comes out negative and the fit is refused — `docs/methodology.md` says so and
-says the cause is not established. The panel must render that refusal as the
-answer, not fall back to a plausible-looking curve.
-
 ### CT-073 · Let an agent read the context it just lost
 `status: next` · `tier: A` · `size: L` · `source: product decision`
 
@@ -195,6 +167,72 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-072 · Show the context the agent never logged, and when the harness changed
+`status: done` · `tier: A` · `size: M` · `source: desktop product strategy`
+
+**Why:** the unlogged remainder is this project's signature measurement — the
+system prompt and tool schemas the agent never wrote down, recovered by fitting
+each session's own characters-per-token ratio — and it is reachable only from
+the CLI. The desktop reports a residual figure inside a single turn's
+composition and stops there, so the one view that makes the measurement legible
+is the one the app does not have.
+
+The chart is the smaller half. `residual_steps` already detects *step changes*
+in that remainder, and a step means something the agent did not log has changed
+size: a tool was registered, an MCP server connected, a skill loaded. That is an
+inference about the harness drawn from arithmetic on the transcript, and nothing
+else in either agent's own tooling surfaces it.
+
+**Done when:** a session shows its unlogged remainder across turns with the
+fitted ratio and its spread stated beside it; step changes are marked and
+readable as harness events rather than as noise; every figure carries its
+confidence, and a session whose ratio cannot be fitted says so instead of
+drawing a line through nothing.
+
+**Not fabricating the fit is the whole risk.** Roughly one Claude Code session
+in seven reconstructs to more content than the prompt held, so the constant
+comes out negative and the fit is refused — `docs/methodology.md` says so and
+says the cause is not established. The panel must render that refusal as the
+answer, not fall back to a plausible-looking curve.
+
+**Accepted.** `get_residual` returns a four-case sum type — `fitted`,
+`overCounted`, `agentNotFitted`, `insufficientGrowth` — and the panel renders
+each on its own terms. The discrimination that took the most care is the one the
+warning above names: `derive_ratio` returns `Some` for a session that
+over-counts, with a negative constant reported as unknown, and every per-turn
+remainder in that session's series comes back unknown for the same reason.
+Routing it into `fitted` would have put a measured characters-per-token figure
+above an empty chart — the refusal rendered as an absence rather than as the
+answer. So a series is `fitted` only when at least one turn has a readable
+remainder; a session where none does is `overCounted` whether or not a ratio was
+fitted. That test is a pure function over the series, checked once and tested
+without needing a session that reaches the state.
+
+The ratio never appears without the spread and sample size that qualify it, and
+a turn whose remainder is unknown breaks the line rather than dropping to the
+axis — a zero there would assert the complete inventory this measurement exists
+to avoid claiming, so the count of such turns is stated instead. Steps carry
+`nearCompaction`, decided on the backend against the session's own compaction
+events, and the rise/fall explanation is withheld when every step already has a
+cause in the log, mirroring the terminal view: a step a compaction explains must
+not also be narrated as an unrecorded harness change.
+
+The measurement is over the whole session, so the panel is user-triggered like
+the doctor scan rather than run on every session click — producing the series
+reconstructs every turn. The session cache now holds the whole derived ratio
+rather than its chars-per-token field alone, so one sweep per session load serves
+every view instead of one sweep per view.
+
+**What the browser caught that the tests could not.** The first demo series held
+each level perfectly flat between steps, while the panel's own caption says one
+fitted ratio cannot describe a session that starts as prose and ends dominated by
+tool output. Every test passed against a shape no real session produces, and a
+step detector whose whole job is surviving drift was being demonstrated against a
+line with none. The demo now drifts and wobbles, and each step's levels are
+recovered from the series by the same median rule the backend uses rather than
+typed in beside it — a marker claiming a level the line never reaches is the same
+defect as fabricating the fit, one layer down.
 
 ### CT-048 · Compare two turns in the desktop app
 `status: done` · `tier: A` · `size: M` · `source: desktop product strategy`

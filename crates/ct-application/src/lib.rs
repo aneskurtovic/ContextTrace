@@ -642,6 +642,21 @@ pub const RESIDUAL_STEP_THRESHOLD: i64 = 5_000;
 /// Turns either side of a candidate step used to establish its levels.
 const STEP_WINDOW: usize = 5;
 
+/// Turns either side of a step within which a compaction already explains it.
+///
+/// Deliberately a distinct constant from [`STEP_WINDOW`] even though both
+/// happen to be `5` today. `STEP_WINDOW` is a *detection* window: how many
+/// turns of history on each side of a candidate step feed the median that
+/// decides whether the remainder actually moved. This is an *attribution*
+/// window, applied afterwards: once a step is already found, how close a
+/// recorded compaction has to sit to count as the reason for it. One measures
+/// a series against itself; the other measures a series against a separate
+/// list of events. Sharing a value is coincidence, not a shared purpose --
+/// tuning how a step is detected is not a reason to move how a step is
+/// explained, and conflating the two constants would silently couple
+/// decisions that have nothing to do with each other.
+pub const STEP_ATTRIBUTION_WINDOW: u32 = 5;
+
 /// Find *sustained* changes in the unlogged remainder.
 ///
 /// # Why comparing consecutive turns does not work

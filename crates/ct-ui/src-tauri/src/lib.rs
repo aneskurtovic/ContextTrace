@@ -12,7 +12,8 @@ pub fn run() {
             commands::run_doctor,
             commands::get_lifecycle,
             commands::get_compaction_diff,
-            commands::get_turn_diff
+            commands::get_turn_diff,
+            commands::get_residual
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ContextTrace desktop");

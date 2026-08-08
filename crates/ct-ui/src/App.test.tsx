@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import * as api from "./api";
-import { demoContext, demoDetail, demoDoctor, demoLifecycle, demoSessions } from "./demo";
+import {
+  demoContext,
+  demoDetail,
+  demoDoctor,
+  demoLifecycle,
+  demoResidual,
+  demoSessions,
+} from "./demo";
 import type {
   ContextDetail,
   SessionDetail,
@@ -19,6 +26,7 @@ vi.mock("./api", () => ({
   getContext: vi.fn(),
   runDoctor: vi.fn(),
   getLifecycle: vi.fn(),
+  getResidual: vi.fn(),
 }));
 
 const startup: StartupSummary = {
@@ -59,6 +67,7 @@ beforeEach(() => {
   mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
   mockedApi.runDoctor.mockImplementation(async (_agent, _id, turn) => demoDoctor(turn));
   mockedApi.getLifecycle.mockImplementation(async (_agent, _id, item) => demoLifecycle(item));
+  mockedApi.getResidual.mockImplementation(async (agent, id) => demoResidual(agent, id));
 });
 
 afterEach(() => {
@@ -428,5 +437,73 @@ describe("desktop accessibility and state handling", () => {
     );
     expect(claudeRow.getAttribute("aria-current")).toBe("true");
     expect(codexRow.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("measures unlogged context only when asked, and states the spread beside the ratio", async () => {
+    const claudeSession = demoSessions.find((session) => session.agent === "claude-code")!;
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([claudeSession]));
+
+    render(<App />);
+
+    const run = await screen.findByRole("button", { name: "Measure this session" });
+    // Selecting a session must not pay for a full-session reconstruction.
+    expect(mockedApi.getResidual).not.toHaveBeenCalled();
+
+    fireEvent.click(run);
+
+    await waitFor(() =>
+      expect(mockedApi.getResidual).toHaveBeenCalledWith(claudeSession.agent, claudeSession.id),
+    );
+    expect(await screen.findByText("3.42")).not.toBeNull();
+    // The ratio never appears without the sample size and spread that qualify it.
+    expect(screen.getByText("24 turn pairs · spread 1.19×")).not.toBeNull();
+    expect(screen.getByRole("img", { name: "Unlogged context per turn" })).not.toBeNull();
+    // An over-counted turn is stated as a count, not left as a silent gap.
+    expect(screen.getByText("1 of 32")).not.toBeNull();
+  });
+
+  it("renders a refused fit as the answer instead of charting a fabricated line", async () => {
+    const claudeSession = demoSessions.find((session) => session.agent === "claude-code")!;
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([claudeSession]));
+    mockedApi.getResidual.mockResolvedValue({
+      kind: "overCounted",
+      charsPerToken: 2.84,
+      pairsUsed: 19,
+      dispersion: 1.62,
+      turnsMeasured: 41,
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
+
+    expect(
+      await screen.findByText(/all 41 turns reconstruct to more content than their prompts held/),
+    ).not.toBeNull();
+    // No chart, and above all no zeroed remainder standing in for one.
+    expect(screen.queryByRole("img", { name: "Unlogged context per turn" })).toBeNull();
+    expect(screen.queryByText("Typical hidden constant")).toBeNull();
+  });
+
+  it("says a step a compaction explains is explained, and narrates only the rest", async () => {
+    const claudeSession = demoSessions.find((session) => session.agent === "claude-code")!;
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([claudeSession]));
+    const fitted = demoResidual("claude-code", claudeSession.id);
+    if (fitted.kind !== "fitted") throw new Error("expected the fitted demo session");
+    mockedApi.getResidual.mockResolvedValue({
+      ...fitted,
+      steps: fitted.steps.filter((step) => step.nearCompaction),
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
+
+    expect(
+      await screen.findByText("A compaction occurred here, which explains it."),
+    ).not.toBeNull();
+    // With every step already accounted for by the log, attributing one to an
+    // unrecorded harness change would invent a second cause for one event.
+    expect(screen.queryByText(/a tool registered, an MCP server connected/)).toBeNull();
   });
 });

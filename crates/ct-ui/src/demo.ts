@@ -5,6 +5,9 @@ import type {
   DoctorReport,
   GrowthPoint,
   LifecycleReport,
+  ResidualPoint,
+  ResidualReport,
+  ResidualStep,
   SessionDetail,
   SessionSummary,
   StartupSummary,
@@ -88,7 +91,27 @@ export const demoSessions: SessionSummary[] = [
     lastActivity: ago(4.6),
     threadRole: { kind: "subagent", parent: "0198fce2e48a7b12" },
   },
+  {
+    // Deliberately short. A session this brief never grows enough for a
+    // characters-per-token ratio to be measured from it, which is the ordinary
+    // reason the unlogged-context view declines — and a demo that only ever
+    // showed the successful fit would hide the state most sessions are in.
+    id: "b71d4c08-2e55-41aa",
+    agent: "claude-code",
+    path: "C:\\Users\\demo\\.claude\\projects\\atlas\\quick-question.jsonl",
+    sizeBytes: 48_216,
+    project: "C:\\work\\atlas-dashboard",
+    startedAt: ago(2),
+    lastActivity: ago(1.9),
+    threadRole: root,
+  },
 ];
+
+/** The demo sessions each residual state is attached to, so all four are
+ *  reachable in the browser without a local corpus. */
+const RESIDUAL_FITTED_SESSION = "a30cb9e1-f9f4-4a37";
+const RESIDUAL_OVER_COUNTED_SESSION = "f485150f-0982-4876";
+const RESIDUAL_SHORT_SESSION = "b71d4c08-2e55-41aa";
 
 export const demoStartup: StartupSummary = {
   roots: [
@@ -409,5 +432,147 @@ export function demoTurnDiff(leftTurn: number, rightTurn: number): TurnDiff {
         meaningful: r.tokens !== l.tokens,
       };
     }),
+  };
+}
+
+/**
+ * The hidden constant this demo session is pretending to carry, turn by turn.
+ *
+ * Flat, then two sustained rises: the first at the compaction, where a rewritten
+ * prompt plausibly changes what reconstruction can see, and the second with no
+ * event in the log beside it — the shape that means a tool registered or an MCP
+ * server connected. Both clear the 5,000-token step threshold, so the panel's
+ * step markers are produced by the series rather than asserted alongside it.
+ */
+function demoOverheadAt(turn: number): number {
+  const level = turn < 18 ? 9_400 : turn < 24 ? 15_200 : 22_700;
+  // Plus drift and wobble, because a perfectly flat remainder is not a shape a
+  // real session produces — and the panel's own caption says so. One fitted
+  // ratio cannot describe a session that starts as prose and ends dominated by
+  // tool output, so the remainder creeps upward and jitters, and the step
+  // detector's whole job is to survive that. A flat demo line would show a
+  // detector with nothing to survive.
+  const drift = turn * 55;
+  const wobble = (((turn * 37) % 11) - 5) * 90;
+  return level + drift + wobble;
+}
+
+/** Median of the values, for recovering a step's levels from the series. */
+function medianOf(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+/**
+ * Recover each demo step's levels from the demo series, by the rule the backend
+ * uses: the median of the five measured turns either side.
+ *
+ * Typing the levels in by hand would let the markers claim a move the line does
+ * not make — which is the same defect as fabricating the fit, one layer down.
+ * Turns whose remainder is unknown are excluded from the windows here too,
+ * because they are excluded there.
+ */
+function demoStepAt(points: ResidualPoint[], turn: number, nearCompaction: boolean): ResidualStep {
+  const known = points.filter(
+    (point): point is ResidualPoint & { unlogged: number } => point.unlogged != null,
+  );
+  const index = known.findIndex((point) => point.turn === turn);
+  const from = medianOf(known.slice(index - 5, index).map((point) => point.unlogged));
+  const to = medianOf(known.slice(index, index + 5).map((point) => point.unlogged));
+  return { turn, from, to, growth: to - from, nearCompaction };
+}
+
+/** The one demo turn whose reconstruction exceeds its own prompt. Placed
+ *  straight after the compaction, where a rebuilt ancestor chain is the
+ *  documented cause of over-counting. */
+const DEMO_OVER_COUNTED_TURN = 17;
+
+/**
+ * A fabricated unlogged-context measurement.
+ *
+ * Every point is built as `accounted = promptTokens - unlogged`, so the two
+ * columns and the prompt agree by construction rather than by three lists
+ * happening to have been typed consistently. The over-counted turn is the
+ * exception and is the only one: its accounted figure exceeds the prompt, which
+ * is exactly why its remainder is `null` and not a number.
+ */
+function demoResidualSeries(): ResidualPoint[] {
+  return growth.flatMap<ResidualPoint>((point) => {
+    if (point.promptTokens == null) return [];
+    const items = Math.max(4, Math.round((point.promptTokens / 121_760) * 84));
+    if (point.turn === DEMO_OVER_COUNTED_TURN) {
+      return [
+        {
+          turn: point.turn,
+          promptTokens: point.promptTokens,
+          accounted: point.promptTokens + 1_500,
+          unlogged: null,
+          items,
+        },
+      ];
+    }
+    const unlogged = demoOverheadAt(point.turn);
+    return [
+      {
+        turn: point.turn,
+        promptTokens: point.promptTokens,
+        accounted: point.promptTokens - unlogged,
+        unlogged,
+        items,
+      },
+    ];
+  });
+}
+
+/**
+ * Which residual state a demo session is in, keyed by identity.
+ *
+ * All four are reachable: Codex sessions refuse because no ratio is fitted for
+ * that agent at all, the short session refuses for want of growth, one Claude
+ * Code session over-counts throughout, and one carries the full series. A demo
+ * that only rendered the successful case would show the panel's easy state and
+ * hide the three it exists to get right.
+ */
+export function demoResidual(agent: Agent, id: string): ResidualReport {
+  if (agent === "codex") return { kind: "agentNotFitted", agent };
+  if (id === RESIDUAL_SHORT_SESSION) return { kind: "insufficientGrowth", turnsWithUsage: 3 };
+  if (id === RESIDUAL_OVER_COUNTED_SESSION) {
+    return {
+      kind: "overCounted",
+      charsPerToken: 2.84,
+      pairsUsed: 19,
+      dispersion: 1.62,
+      turnsMeasured: 41,
+    };
+  }
+
+  const points = demoResidualSeries();
+  const measured = points
+    .map((point) => point.unlogged)
+    .filter((unlogged): unlogged is number => unlogged != null);
+
+  return {
+    kind: "fitted",
+    charsPerToken: 3.42,
+    pairsUsed: 24,
+    dispersion: 1.19,
+    // Read off the series rather than typed in beside it, so the session's
+    // stated constant is the one its own turns carry.
+    unloggedOverhead: medianOf(measured),
+    turnsMeasured: points.length,
+    overCountedTurns: points.filter((point) => point.unlogged == null).length,
+    stepThreshold: 5_000,
+    promptConfidence: "observed",
+    remainderConfidence: "derived",
+    points,
+    steps: [
+      // Turn 18 sits one turn after the demo compaction, so the panel has to
+      // decline to narrate it; turn 24 has nothing beside it in the log.
+      demoStepAt(points, 18, true),
+      demoStepAt(points, 24, false),
+    ],
   };
 }

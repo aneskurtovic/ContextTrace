@@ -1,6 +1,6 @@
 use ct_application::{
-    timeline, AppError, Comparability, ContextTrace, Departure, LifecycleSweep, SessionDiff,
-    SessionFilter,
+    residual_steps, timeline, AppError, Comparability, ContextTrace, Departure, LifecycleSweep,
+    ResidualPoint, SessionDiff, SessionFilter, RESIDUAL_STEP_THRESHOLD, STEP_ATTRIBUTION_WINDOW,
 };
 use ct_domain::model::context::unmeasured_content_items;
 use ct_domain::ports::{PortError, TokenEstimator};
@@ -118,8 +118,25 @@ struct CachedSession {
     session: ct_domain::AgentSession,
     descriptor: SessionDescriptor,
     binding: usize,
-    chars_per_token: Option<f32>,
+    /// The full derived ratio, not just its chars-per-token figure.
+    ///
+    /// `derive_ratio` reconstructs every turn of the session through a
+    /// character probe, so it is one sweep no matter how much of the result a
+    /// caller ends up using. Caching only `chars_per_token` was fine while
+    /// every view needed just that field, but the residual report also needs
+    /// `pairs_used`, `dispersion` and `unlogged_overhead` -- and re-deriving
+    /// those on demand would mean a second full sweep per view rather than
+    /// per session load. Keeping the whole ratio here means every current and
+    /// future caller reads one sweep's answer instead of paying for their own.
+    ratio: Option<ct_application::SessionRatio>,
     content_analyzed: bool,
+}
+
+impl CachedSession {
+    /// The figure most callers actually want, out of the cached ratio.
+    fn chars_per_token(&self) -> Option<f32> {
+        self.ratio.map(|ratio| ratio.chars_per_token)
+    }
 }
 
 impl AppState {
@@ -193,7 +210,7 @@ impl AppState {
             session,
             descriptor: resolved.descriptor,
             binding: resolved.binding,
-            chars_per_token: ratio.map(|ratio| ratio.chars_per_token),
+            ratio,
             content_analyzed: analyzed,
         });
 
@@ -351,7 +368,9 @@ impl AppState {
                 .peak_turn(&cached.session)
                 .ok_or_else(|| "this session has no turn with prompt usage".to_string())?,
         };
-        let estimator = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
+        let estimator = cached
+            .chars_per_token()
+            .map(ct_runtime::heuristic_estimator);
         let snapshot = match estimator.as_ref() {
             Some(estimator) => {
                 self.app
@@ -407,7 +426,9 @@ impl AppState {
                 .peak_turn(&cached.session)
                 .ok_or_else(|| "this session has no turn with prompt usage".to_string())?,
         };
-        let estimator = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
+        let estimator = cached
+            .chars_per_token()
+            .map(ct_runtime::heuristic_estimator);
         let snapshot = match estimator.as_ref() {
             Some(estimator) => {
                 self.app
@@ -627,7 +648,9 @@ impl AppState {
         let left = TurnNumber::new(left_turn).map_err(|error| error.to_string())?;
         let right = TurnNumber::new(right_turn).map_err(|error| error.to_string())?;
 
-        let fitted = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
+        let fitted = cached
+            .chars_per_token()
+            .map(ct_runtime::heuristic_estimator);
         let estimator: &dyn TokenEstimator = match fitted.as_ref() {
             Some(estimator) => estimator,
             None => self.app.binding_estimator(cached.binding),
@@ -654,6 +677,125 @@ impl AppState {
         );
         Ok(TurnDiffSummary::from(diff))
     }
+
+    /// The unlogged remainder across a session's turns: CT-072's signature
+    /// measurement, previously reachable only from `ct residual`.
+    ///
+    /// A sum type, not a `DerivedRatio` with nullable fields, because there
+    /// are four genuinely different situations here and a nullable field
+    /// cannot say which one a caller has without re-deriving it. The agent
+    /// refusal (`agentNotFitted`) and the growth refusal (`insufficientGrowth`)
+    /// are both cases where no ratio exists to draw from at all. The harder
+    /// one is `overCounted`: `derive_ratio` can return `Some` for a session
+    /// whose reconstruction over-counts, with `unlogged_overhead: None` --
+    /// and every per-turn remainder in its series is `None` too, because
+    /// [`ResidualPoint::unlogged`] and
+    /// [`ct_application::SessionRatio::unlogged_overhead`] share the same
+    /// "reconstructed more than the prompt held" refusal.
+    /// Routing that session into `fitted` would render a confident header
+    /// (a chars-per-token figure, a dispersion, a step threshold) above a
+    /// chart with nothing plottable on it -- CT-072's "drawing a line through
+    /// nothing" made literal. So a series is only ever reported as `fitted`
+    /// when at least one turn has a known remainder; otherwise, fitted or
+    /// not, it is `overCounted`. That discrimination is
+    /// [`series_has_a_measurable_remainder`], kept as a pure function over
+    /// `&[ResidualPoint]` so it is checked once and tested without needing a
+    /// session or a ratio derivation to exercise it.
+    ///
+    /// Order of checks matters. Codex is refused before `derive_ratio` is
+    /// even consulted -- the refusal is about the agent never being fitted at
+    /// all, not about this particular session's growth, and asking the
+    /// question in the other order would describe a structural refusal as if
+    /// it were a data problem.
+    fn residual(&self, agent: AgentKind, id: &str) -> Result<ResidualReport, String> {
+        if agent == AgentKind::Codex {
+            return Ok(ResidualReport::AgentNotFitted {
+                agent: agent.to_string(),
+            });
+        }
+
+        let cached = self.cached_session(agent, id, false)?;
+
+        let Some(ratio) = cached.ratio else {
+            let turns_with_usage = cached
+                .session
+                .turns()
+                .iter()
+                .filter(|turn| turn.prompt_tokens().is_some())
+                .count();
+            return Ok(ResidualReport::InsufficientGrowth { turns_with_usage });
+        };
+
+        let series = self
+            .app
+            .residual_series(&cached.session, cached.binding, ratio);
+
+        if !series_has_a_measurable_remainder(&series) {
+            return Ok(ResidualReport::OverCounted {
+                chars_per_token: ratio.chars_per_token,
+                pairs_used: ratio.pairs_used,
+                dispersion: ratio.dispersion,
+                turns_measured: series.len(),
+            });
+        }
+
+        let compaction_turns: Vec<u32> = cached
+            .session
+            .compactions()
+            .iter()
+            .filter_map(|(_, event)| event.turn.map(|turn| turn.get()))
+            .collect();
+
+        let over_counted_turns = series
+            .iter()
+            .filter(|point| point.unlogged.is_none())
+            .count();
+        let steps = residual_steps(&series)
+            .into_iter()
+            .map(|step| {
+                // Mirrors `ct residual`'s own rule (`ct-cli/src/render.rs`): a
+                // compaction rewrites the whole prompt, so a step next to one
+                // already has a cause on record. Attributing it to an
+                // unrecorded harness change too would invent a second
+                // explanation for something the session already accounts for.
+                let near_compaction = compaction_turns
+                    .iter()
+                    .any(|turn| turn.abs_diff(step.turn) <= STEP_ATTRIBUTION_WINDOW);
+                ResidualStepSummary {
+                    turn: step.turn,
+                    from: step.from,
+                    to: step.to,
+                    growth: step.growth(),
+                    near_compaction,
+                }
+            })
+            .collect();
+
+        Ok(ResidualReport::Fitted {
+            chars_per_token: ratio.chars_per_token,
+            pairs_used: ratio.pairs_used,
+            dispersion: ratio.dispersion,
+            unlogged_overhead: ratio.unlogged_overhead,
+            turns_measured: series.len(),
+            over_counted_turns,
+            step_threshold: RESIDUAL_STEP_THRESHOLD,
+            prompt_confidence: Confidence::Observed,
+            remainder_confidence: Confidence::Derived,
+            points: series.iter().map(ResidualPointSummary::from).collect(),
+            steps,
+        })
+    }
+}
+
+/// Whether at least one turn in a residual series has a known remainder.
+///
+/// The one judgement call CT-072 forbids getting wrong: a session can fit a
+/// ratio and still have nothing plottable, when reconstruction over-counts on
+/// every turn that was measured. An empty series answers `false` here too --
+/// nothing can be drawn from zero points either -- so the caller does not
+/// need a separate emptiness check before asking this one.
+fn series_has_a_measurable_remainder(series: &[ResidualPoint]) -> bool {
+    series.iter().any(|point| point.unlogged.is_some())
 }
 
 #[derive(Serialize)]
@@ -833,6 +975,111 @@ impl From<SessionDiff> for TurnDiffSummary {
             comparability: ComparabilitySummary::from(diff.comparability),
         }
     }
+}
+
+/// One turn's account of its own prompt, as the desktop reads it.
+///
+/// Mirrors [`ResidualPoint`]. `unlogged` stays `null` rather than `0` when
+/// reconstruction over-counted the turn -- see [`ResidualReport`] for why a
+/// session that never leaves this `null` cannot be reported as `fitted` at
+/// all, and why a turn that does is still shown here rather than dropped.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResidualPointSummary {
+    turn: u32,
+    prompt_tokens: u32,
+    accounted: u32,
+    unlogged: Option<u32>,
+    items: usize,
+}
+
+impl From<&ResidualPoint> for ResidualPointSummary {
+    fn from(value: &ResidualPoint) -> Self {
+        Self {
+            turn: value.turn,
+            prompt_tokens: value.prompt_tokens,
+            accounted: value.accounted,
+            unlogged: value.unlogged,
+            items: value.items,
+        }
+    }
+}
+
+/// One sustained change in the unlogged remainder, as the desktop reads it.
+///
+/// `near_compaction` is computed here rather than left for the frontend to
+/// infer, for the same reason `ct residual` computes it in Rust rather than
+/// printing raw compaction turns beside the step list: "close enough to a
+/// compaction to already be explained" is a judgement this backend already
+/// makes once, on the CLI path, and a second implementation in TypeScript
+/// would be a second place for that threshold to drift from
+/// [`STEP_ATTRIBUTION_WINDOW`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResidualStepSummary {
+    turn: u32,
+    from: u32,
+    to: u32,
+    growth: i64,
+    near_compaction: bool,
+}
+
+/// A session's unlogged remainder, across its turns.
+///
+/// A sum type rather than a `DerivedRatio` DTO with nullable fields --
+/// [`AppState::residual`] documents why in full, but the shape of the
+/// argument is that this crosses the exact boundary CT-072 is about:
+/// "the panel must render \[a refused fit\] as the answer, not fall back to a
+/// plausible-looking curve." A nullable `unloggedOverhead` on a single struct
+/// would let a caller build that plausible-looking curve out of `points` even
+/// when the fit backing it does not exist; a caller matching on `kind` cannot,
+/// because `points` only exists on the `fitted` variant.
+///
+/// `rename_all` is repeated on every variant deliberately: on an enum it
+/// renames only the `kind` tag, never a struct variant's own fields -- see
+/// `ComparabilitySummary` above, which this file has been bitten by before.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ResidualReport {
+    #[serde(rename_all = "camelCase")]
+    Fitted {
+        chars_per_token: f32,
+        pairs_used: u32,
+        dispersion: f32,
+        /// The session's typical unlogged constant. `null` when the fit's
+        /// overhead came out negative -- some turns are still plottable
+        /// (`points` is never empty here), but the session-wide figure this
+        /// view would otherwise headline is itself a refusal.
+        unlogged_overhead: Option<u32>,
+        turns_measured: usize,
+        /// Points in `points` whose own remainder is unknown -- a stated
+        /// figure, not a silently shorter chart.
+        over_counted_turns: usize,
+        step_threshold: i64,
+        prompt_confidence: Confidence,
+        remainder_confidence: Confidence,
+        points: Vec<ResidualPointSummary>,
+        steps: Vec<ResidualStepSummary>,
+    },
+    /// A ratio fitted, but no turn in the series yields a positive remainder.
+    /// See [`AppState::residual`] for why this is not folded into `fitted`
+    /// with an empty `points`.
+    #[serde(rename_all = "camelCase")]
+    OverCounted {
+        chars_per_token: f32,
+        pairs_used: u32,
+        dispersion: f32,
+        turns_measured: usize,
+    },
+    /// This view is built on a fitted ratio, and this agent is never fitted
+    /// one at all -- see `ct_runtime::calibrate_session`, which only ever
+    /// attempts a fit for Claude Code.
+    #[serde(rename_all = "camelCase")]
+    AgentNotFitted { agent: String },
+    /// Claude Code, but the session lacks enough turn-to-turn growth for
+    /// `derive_ratio` to fit anything.
+    #[serde(rename_all = "camelCase")]
+    InsufficientGrowth { turns_with_usage: usize },
 }
 
 /// `kind` is `"subagent"` if and only if `parent` is present, because the
@@ -1353,6 +1600,15 @@ pub fn get_turn_diff(
     state: tauri::State<'_, AppState>,
 ) -> Result<TurnDiffSummary, String> {
     state.turn_diff(parse_agent(&agent)?, &id, left_turn, right_turn)
+}
+
+#[tauri::command]
+pub fn get_residual(
+    id: String,
+    agent: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ResidualReport, String> {
+    state.residual(parse_agent(&agent)?, &id)
 }
 
 fn format_source(source: &ContextSource) -> String {
@@ -2223,5 +2479,135 @@ mod tests {
             Ok(_) => panic!("line 999999 names no compaction in the fixture"),
         };
         assert!(error.contains("no compaction recorded"));
+    }
+
+    /// This view is built on a fitted ratio, and Codex is never fitted one --
+    /// the refusal fires before `cached_session` is even consulted, so it
+    /// must hold for every Codex session, not just ones short on growth.
+    #[test]
+    fn a_codex_sessions_residual_report_is_agent_not_fitted() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let codex_id = session_id(&sessions, "codex");
+
+        let report = state
+            .residual(AgentKind::Codex, &codex_id)
+            .expect("the agent refusal is a typed success, not an IPC error");
+        let json = serde_json::to_value(&report).expect("serializes for IPC");
+        assert_eq!(json["kind"], "agentNotFitted");
+        assert_eq!(json["agent"], "codex");
+    }
+
+    /// The fixtures are too short to fit a ratio (`derive_ratio` wants five
+    /// growing turn pairs; the committed fixtures hold two turns), so the
+    /// `fitted` shape is exercised directly rather than through a session
+    /// that cannot reach it. What this pins is the JSON contract: every field
+    /// camelCased, including inside `points` and `steps`, and no snake_case
+    /// sibling left over from the enum-level `rename_all` not reaching a
+    /// struct variant's own fields -- the mistake this file documents having
+    /// made once already on `ComparabilitySummary`.
+    #[test]
+    fn a_fitted_residual_report_camelcases_every_field_including_nested_ones() {
+        let report = ResidualReport::Fitted {
+            chars_per_token: 3.5,
+            pairs_used: 12,
+            dispersion: 1.1,
+            unlogged_overhead: Some(42_000),
+            turns_measured: 20,
+            over_counted_turns: 2,
+            step_threshold: RESIDUAL_STEP_THRESHOLD,
+            prompt_confidence: Confidence::Observed,
+            remainder_confidence: Confidence::Derived,
+            points: vec![
+                ResidualPointSummary::from(&ResidualPoint {
+                    turn: 5,
+                    prompt_tokens: 100_000,
+                    accounted: 60_000,
+                    unlogged: Some(40_000),
+                    items: 12,
+                }),
+                ResidualPointSummary::from(&ResidualPoint {
+                    turn: 6,
+                    prompt_tokens: 30_000,
+                    accounted: 45_000,
+                    unlogged: None,
+                    items: 14,
+                }),
+            ],
+            steps: vec![ResidualStepSummary {
+                turn: 21,
+                from: 30_000,
+                to: 42_000,
+                growth: 12_000,
+                near_compaction: true,
+            }],
+        };
+
+        let json = serde_json::to_value(&report).expect("serializes for IPC");
+        assert_eq!(json["kind"], "fitted");
+
+        assert!(json["charsPerToken"].is_number());
+        assert!(json["pairsUsed"].is_number());
+        assert!(json["unloggedOverhead"].is_number());
+        assert!(json["turnsMeasured"].is_number());
+        assert!(json["overCountedTurns"].is_number());
+        assert!(json["stepThreshold"].is_number());
+        assert_eq!(json["promptConfidence"], "observed");
+        assert_eq!(json["remainderConfidence"], "derived");
+        assert!(json.get("chars_per_token").is_none());
+        assert!(json.get("pairs_used").is_none());
+        assert!(json.get("unlogged_overhead").is_none());
+        assert!(json.get("turns_measured").is_none());
+        assert!(json.get("over_counted_turns").is_none());
+        assert!(json.get("step_threshold").is_none());
+        assert!(json.get("prompt_confidence").is_none());
+        assert!(json.get("remainder_confidence").is_none());
+
+        let point = &json["points"][0];
+        assert!(point["promptTokens"].is_number());
+        assert!(point["unlogged"].is_number());
+        assert!(point.get("prompt_tokens").is_none());
+        let over_counted_point = &json["points"][1];
+        assert_eq!(over_counted_point["unlogged"], serde_json::Value::Null);
+
+        let step = &json["steps"][0];
+        assert!(step["nearCompaction"].is_boolean());
+        assert!(step["growth"].is_i64());
+        assert!(step.get("near_compaction").is_none());
+    }
+
+    /// The discrimination CT-072 calls out as the whole risk: a session can
+    /// fit a ratio and still have nothing plottable, when reconstruction
+    /// over-counts on every turn. Pinned as a pure-function test rather than
+    /// through `AppState::residual`, because the committed fixtures are too
+    /// short to fit a ratio at all, let alone an over-counting one -- and a
+    /// pure classifier over `&[ResidualPoint]` is testable without either.
+    #[test]
+    fn a_series_with_no_known_remainder_is_not_reported_as_fitted() {
+        let point = |turn: u32, unlogged: Option<u32>| ResidualPoint {
+            turn,
+            prompt_tokens: 100_000,
+            accounted: 100_000,
+            unlogged,
+            items: 5,
+        };
+
+        let all_over_counted = vec![point(1, None), point(2, None), point(3, None)];
+        assert!(
+            !series_has_a_measurable_remainder(&all_over_counted),
+            "every turn over-counted must not read as fitted"
+        );
+
+        let mixed = vec![point(1, None), point(2, Some(40_000)), point(3, None)];
+        assert!(
+            series_has_a_measurable_remainder(&mixed),
+            "one known remainder is enough to fit, with the rest counted as over_counted_turns"
+        );
+
+        assert!(
+            !series_has_a_measurable_remainder(&[]),
+            "nothing can be drawn from zero points either"
+        );
     }
 }

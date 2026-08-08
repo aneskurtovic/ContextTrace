@@ -1671,3 +1671,70 @@ h2 {
   color: var(--muted);
   opacity: .65;
 }
+
+/* --- Unlogged context (CT-072) ------------------------------------------ */
+
+.residual-legend {
+  margin-top: 14px;
+}
+
+.legend-residual {
+  height: 2px;
+  background: var(--cyan);
+}
+
+.legend-step {
+  height: 10px;
+  border-left: 2px solid var(--pink);
+}
+
+.legend-step-explained {
+  border-left-style: dashed;
+  border-left-color: var(--orange);
+}
+
+.legend-gap {
+  height: 10px;
+  border-left: 2px dotted var(--dim);
+}
+
+.residual-line {
+  fill: none;
+  stroke: var(--cyan);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.residual-step {
+  stroke: var(--pink);
+  stroke-width: 2;
+  opacity: .75;
+}
+
+/* A step a compaction already explains is drawn like the compaction markers on
+   the timeline above rather than like an unexplained one, so the two kinds are
+   not read as the same finding at a glance. */
+.residual-step.explained {
+  stroke: var(--orange);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+/* An over-counted turn: no remainder could be read, so the line breaks and this
+   marks where. Deliberately not a point on the axis -- zero would claim a
+   complete inventory of the context, which is the one thing this measurement
+   cannot assert. */
+.residual-gap {
+  stroke: var(--dim);
+  stroke-width: 2;
+  stroke-dasharray: 1 5;
+  opacity: .8;
+}
+
+.residual-rise {
+  color: var(--pink);
+}
+
+.residual-fall {
+  color: var(--cyan);
+}

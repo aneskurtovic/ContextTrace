@@ -20,6 +20,9 @@ import type {
   DoctorReport,
   GrowthPoint,
   LifecycleReport,
+  ResidualPoint,
+  ResidualReport,
+  ResidualStep,
   SessionDetail,
   SessionSummary,
   StartupSummary,
@@ -408,6 +411,304 @@ function GrowthChart({
         <span>Turn {maxTurn}</span>
       </div>
     </div>
+  );
+}
+
+/**
+ * The unlogged remainder across a session's turns.
+ *
+ * Turns whose remainder is unknown break the line rather than dropping to the
+ * axis. A zero there would read as "nothing hidden at this turn", which is the
+ * opposite of what an over-count means, so the gap is drawn as a gap and
+ * marked.
+ */
+function ResidualChart({
+  points,
+  steps,
+}: {
+  points: ResidualPoint[];
+  steps: ResidualStep[];
+}) {
+  const known = points.filter(
+    (point): point is ResidualPoint & { unlogged: number } => point.unlogged != null,
+  );
+  if (known.length < 2 || points.length < 2) {
+    return (
+      <p className="chart-empty">
+        Fewer than two turns have a readable remainder — too few to chart.
+      </p>
+    );
+  }
+
+  const width = 900;
+  const height = 180;
+  const padX = 8;
+  const padY = 14;
+  const max = Math.max(...known.map((point) => point.unlogged));
+  const minTurn = points[0].turn;
+  const maxTurn = points[points.length - 1].turn;
+  const x = (turn: number) =>
+    padX + ((turn - minTurn) / Math.max(1, maxTurn - minTurn)) * (width - padX * 2);
+  const y = (tokens: number) =>
+    height - padY - (tokens / Math.max(1, max)) * (height - padY * 2);
+
+  // One path per unbroken run of measured turns. Joining across a gap would
+  // draw a line through a turn that reported no remainder at all.
+  const segments: string[] = [];
+  let run: string[] = [];
+  for (const point of points) {
+    if (point.unlogged == null) {
+      if (run.length > 1) segments.push(run.join(" "));
+      run = [];
+      continue;
+    }
+    run.push(`${run.length ? "L" : "M"} ${x(point.turn)} ${y(point.unlogged)}`);
+  }
+  if (run.length > 1) segments.push(run.join(" "));
+
+  return (
+    <div className="chart-wrap">
+      <svg
+        className="growth-chart"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Unlogged context per turn"
+      >
+        <line className="grid-line" x1="0" y1={height * 0.33} x2={width} y2={height * 0.33} />
+        <line className="grid-line" x1="0" y1={height * 0.66} x2={width} y2={height * 0.66} />
+        {steps.map((step) => (
+          <line
+            key={`step-${step.turn}`}
+            className={step.nearCompaction ? "residual-step explained" : "residual-step"}
+            x1={x(step.turn)}
+            x2={x(step.turn)}
+            y1={10}
+            y2={height - 10}
+          />
+        ))}
+        {points
+          .filter((point) => point.unlogged == null)
+          .map((point) => (
+            <line
+              key={`gap-${point.turn}`}
+              className="residual-gap"
+              x1={x(point.turn)}
+              x2={x(point.turn)}
+              y1={10}
+              y2={height - 10}
+            />
+          ))}
+        {segments.map((segment) => (
+          <path key={segment.slice(0, 24)} d={segment} className="residual-line" />
+        ))}
+        {known.map((point) => (
+          <circle
+            key={point.turn}
+            className="chart-point"
+            cx={x(point.turn)}
+            cy={y(point.unlogged)}
+            r={2.5}
+          >
+            <title>
+              {`Turn ${point.turn}: ${point.unlogged.toLocaleString()} unlogged of ${point.promptTokens.toLocaleString()} prompt tokens`}
+            </title>
+          </circle>
+        ))}
+      </svg>
+      <div className="chart-axis">
+        <span>Turn {minTurn}</span>
+        <span>{formatTokens(max)} peak remainder</span>
+        <span>Turn {maxTurn}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What a step means, said only where the log does not already say it.
+ *
+ * A compaction rewrites the whole prompt, so a step beside one has a cause
+ * already recorded. Narrating it as an unrecorded harness change would invent a
+ * second explanation for an event the session accounts for — which is why this
+ * mirrors the terminal view's gating rather than captioning every step.
+ */
+function ResidualSteps({ steps }: { steps: ResidualStep[] }) {
+  if (steps.length === 0) {
+    return (
+      <p className="doctor-clean-state">
+        No sustained change in the unlogged remainder. Nothing suggests the harness altered
+        this session's hidden context while it ran.
+      </p>
+    );
+  }
+  const anyUnexplained = steps.some((step) => !step.nearCompaction);
+
+  return (
+    <div className="doctor-section">
+      <div className="doctor-section-title">
+        <strong>Sustained changes</strong>
+        <span>Median of the five turns either side, so drift does not qualify</span>
+      </div>
+      {steps.map((step) => (
+        <div className="doctor-row" key={`step-row-${step.turn}`}>
+          <div className="doctor-row-copy">
+            <strong>Turn {step.turn}</strong>
+            <span>
+              {formatTokens(step.from)} → {formatTokens(step.to)}
+            </span>
+            <small>
+              {step.nearCompaction
+                ? "A compaction occurred here, which explains it."
+                : "Nothing in the log records a change here."}
+            </small>
+          </div>
+          <div className="doctor-row-number">
+            <strong className={step.growth > 0 ? "residual-rise" : "residual-fall"}>
+              {signed(step.growth)}
+            </strong>
+            <span>tokens</span>
+          </div>
+        </div>
+      ))}
+      {anyUnexplained && (
+        <p className="doctor-more">
+          A rise means the prompt gained content the log does not record — a tool registered, an
+          MCP server connected, a skill loaded. A fall means reconstruction began accounting for
+          more of the prompt than before, which is either hidden content going away or
+          over-counting. This view cannot tell those two apart. Read a step as evidence that
+          something changed, not as its size.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The context an agent never wrote down, across a whole session.
+ *
+ * User-triggered like the doctor scan, and for the same reason: producing the
+ * series reconstructs every turn, which is not a cost to pay on every click
+ * through the session list.
+ */
+function UnloggedContext({
+  report,
+  loading,
+  onRun,
+}: {
+  report: ResidualReport | null;
+  loading: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <section className="panel doctor-panel" aria-labelledby="residual-heading" aria-busy={loading}>
+      <div className="panel-heading doctor-heading">
+        <div>
+          <span className="eyebrow">Unlogged context</span>
+          <h2 id="residual-heading">What the agent never wrote down</h2>
+        </div>
+        <button className="doctor-run" onClick={onRun} disabled={loading}>
+          {loading ? "Measuring locally…" : report ? "Measure again" : "Measure this session"}
+        </button>
+      </div>
+
+      {!report && !loading && (
+        <p className="doctor-intro">
+          A prompt is larger than everything the log records. The difference is the system
+          prompt and tool schemas the agent never wrote down, recovered by fitting this
+          session's own characters-per-token ratio to its usage figures. Reconstructing every
+          turn takes a moment, so it runs when you ask.
+        </p>
+      )}
+      {loading && <Spinner label="Reconstructing every turn to fit this session's ratio…" />}
+
+      {report?.kind === "agentNotFitted" && !loading && (
+        <p className="doctor-warning">
+          No ratio is fitted for {agentLabel(report.agent)}, and this measurement is built on
+          one. {agentLabel(report.agent)} records its own system prompt and has a public
+          tokenizer, so its remaining gap is not a ratio to fit — there is no remainder here to
+          recover, rather than one that could not be read.
+        </p>
+      )}
+
+      {report?.kind === "insufficientGrowth" && !loading && (
+        <p className="doctor-warning">
+          The ratio is measured from turn-to-turn growth, and this session did not grow enough
+          to measure one — {report.turnsWithUsage} turn(s) reported prompt usage. Nothing is
+          estimated in its place, because a guessed ratio would return noise rather than a
+          remainder.
+        </p>
+      )}
+
+      {report?.kind === "overCounted" && !loading && (
+        <>
+          <p className="doctor-warning">
+            A ratio fitted at {report.charsPerToken.toFixed(2)} characters per token across{" "}
+            {report.pairsUsed} turn pairs, but all {report.turnsMeasured} turns reconstruct to
+            more content than their prompts held. Every remainder comes out negative, so no
+            chart is drawn.
+          </p>
+          <p className="doctor-more">
+            This happens on roughly one Claude Code session in seven and its cause is not
+            established. The measurement is refused rather than clamped to zero, which would
+            claim a complete inventory of the context.
+          </p>
+        </>
+      )}
+
+      {report?.kind === "fitted" && !loading && (
+        <>
+          <div className="doctor-summary" aria-live="polite">
+            <div>
+              <span>Characters per token</span>
+              <strong>{report.charsPerToken.toFixed(2)}</strong>
+              <small>
+                {report.pairsUsed} turn pairs · spread {report.dispersion.toFixed(2)}×
+              </small>
+            </div>
+            <div>
+              <span>Typical hidden constant</span>
+              <strong>
+                {report.unloggedOverhead == null
+                  ? "not measurable"
+                  : formatTokens(report.unloggedOverhead)}
+              </strong>
+              <small>{report.remainderConfidence} · prompts {report.promptConfidence}</small>
+            </div>
+            <div className={report.overCountedTurns ? "doctor-alert" : "doctor-clean"}>
+              <span>Turns over-counted</span>
+              <strong>
+                {report.overCountedTurns} of {report.turnsMeasured}
+              </strong>
+              <small>
+                {report.overCountedTurns
+                  ? "remainder unknown, drawn as a gap"
+                  : "every turn had a readable remainder"}
+              </small>
+            </div>
+          </div>
+
+          <div className="legend residual-legend">
+            <span><i className="legend-residual" /> unlogged remainder</span>
+            <span><i className="legend-step" /> sustained change</span>
+            <span><i className="legend-step legend-step-explained" /> explained by a compaction</span>
+            {report.overCountedTurns > 0 && (
+              <span><i className="legend-gap" /> over-counted turn</span>
+            )}
+          </div>
+
+          <ResidualChart points={report.points} steps={report.steps} />
+
+          <p className="doctor-more">
+            This line drifts: one fitted ratio cannot describe a session that starts as prose
+            and ends dominated by tool output, and whatever the ratio gets wrong lands here.
+            Read the trend, not the turn-to-turn wiggle — only changes of at least{" "}
+            {formatTokens(report.stepThreshold)} tokens that hold are marked.
+          </p>
+
+          <ResidualSteps steps={report.steps} />
+        </>
+      )}
+    </section>
   );
 }
 
@@ -971,6 +1272,9 @@ function SessionWorkspace({
   turnDiffLoading,
   pinnedTurn,
   onTogglePin,
+  residual,
+  residualLoading,
+  onRunResidual,
   demoData,
   onContributor,
   onCloseLifecycle,
@@ -994,6 +1298,9 @@ function SessionWorkspace({
   turnDiffLoading: boolean;
   pinnedTurn: number | null;
   onTogglePin: () => void;
+  residual: ResidualReport | null;
+  residualLoading: boolean;
+  onRunResidual: () => void;
   demoData: boolean;
   onContributor: (item: string) => void;
   onCloseLifecycle: () => void;
@@ -1144,6 +1451,8 @@ function SessionWorkspace({
         onClose={onCloseCompaction}
       />
 
+      <UnloggedContext report={residual} loading={residualLoading} onRun={onRunResidual} />
+
       {contextLoading && !context ? (
         <Spinner label="Reconstructing context…" />
       ) : context ? (
@@ -1207,6 +1516,10 @@ export default function App() {
   const [pinnedTurn, setPinnedTurn] = useState<number | null>(null);
   const [turnDiff, setTurnDiff] = useState<TurnDiff | null>(null);
   const [loadingTurnDiff, setLoadingTurnDiff] = useState(false);
+  // Measured over the whole session, so unlike the doctor report this survives
+  // moving the selected turn and is cleared only when the session changes.
+  const [residual, setResidual] = useState<ResidualReport | null>(null);
+  const [loadingResidual, setLoadingResidual] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
   const sessionRequest = useRef(0);
@@ -1215,6 +1528,7 @@ export default function App() {
   const lifecycleRequest = useRef(0);
   const compactionRequest = useRef(0);
   const turnDiffRequest = useRef(0);
+  const residualRequest = useRef(0);
   const catalogRequest = useRef(0);
 
   const refreshSessions = useCallback(
@@ -1312,6 +1626,7 @@ export default function App() {
       doctorRequest.current += 1;
       lifecycleRequest.current += 1;
       compactionRequest.current += 1;
+      residualRequest.current += 1;
       setDetail(null);
       setDetailFor(null);
       setContext(null);
@@ -1320,11 +1635,13 @@ export default function App() {
       setLifecycleItem(null);
       setCompactionDiff(null);
       setCompactionLineNo(null);
+      setResidual(null);
       setLoadingDetail(false);
       setLoadingContext(false);
       setLoadingDoctor(false);
       setLoadingLifecycle(false);
       setLoadingCompaction(false);
+      setLoadingResidual(false);
       return;
     }
     const request = ++sessionRequest.current;
@@ -1332,6 +1649,7 @@ export default function App() {
     doctorRequest.current += 1;
     lifecycleRequest.current += 1;
     compactionRequest.current += 1;
+    residualRequest.current += 1;
     setDetail(null);
     setDetailFor(null);
     setContext(null);
@@ -1340,11 +1658,13 @@ export default function App() {
     setLifecycleItem(null);
     setCompactionDiff(null);
     setCompactionLineNo(null);
+    setResidual(null);
     setLoadingDetail(true);
     setLoadingContext(false);
     setLoadingDoctor(false);
     setLoadingLifecycle(false);
     setLoadingCompaction(false);
+    setLoadingResidual(false);
     setError(null);
     Promise.all([
       api.inspectSession(selected.agent, selected.id),
@@ -1419,6 +1739,31 @@ export default function App() {
       if (request === doctorRequest.current) setLoadingDoctor(false);
     }
   }, [context, selected]);
+
+  /**
+   * Measure the whole session's unlogged remainder.
+   *
+   * Depends on `selected` alone, not on the selected turn: the measurement is a
+   * property of the session, and re-running it every time the turn slider moves
+   * would pay for a full-session reconstruction to produce the same answer.
+   */
+  const runResidual = useCallback(async () => {
+    if (!selected) return;
+    const request = ++residualRequest.current;
+    const session = selected;
+    setLoadingResidual(true);
+    setError(null);
+    try {
+      const report = await api.getResidual(session.agent, session.id);
+      if (request === residualRequest.current && sameSession(session, selected)) {
+        setResidual(report);
+      }
+    } catch (loadError) {
+      if (request === residualRequest.current) setError(errorMessage(loadError));
+    } finally {
+      if (request === residualRequest.current) setLoadingResidual(false);
+    }
+  }, [selected]);
 
   const inspectContributor = useCallback(
     async (item: string) => {
@@ -1691,6 +2036,9 @@ export default function App() {
             compactionLineNo={compactionLineNo}
             turnDiff={turnDiff}
             turnDiffLoading={loadingTurnDiff}
+            residual={residual}
+            residualLoading={loadingResidual}
+            onRunResidual={runResidual}
             pinnedTurn={pinnedTurn}
             onTogglePin={togglePin}
             demoData={demoData}

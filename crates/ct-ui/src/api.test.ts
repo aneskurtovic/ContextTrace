@@ -8,6 +8,7 @@ import {
   getCompactionDiff,
   getContext,
   getLifecycle,
+  getResidual,
   inspectSession,
   getTurnDiff,
   runDoctor,
@@ -17,6 +18,7 @@ import {
   demoCompactionDiff,
   demoDetail,
   demoDoctor,
+  demoResidual,
   demoSessions,
   demoTurnDiff,
 } from "./demo";
@@ -203,6 +205,132 @@ describe("desktop IPC response validation", () => {
     // Sorted by magnitude, like the engine sorts them.
     const magnitudes = diff.categories.map((row) => Math.abs(row.delta));
     expect([...magnitudes].sort((a, b) => b - a)).toEqual(magnitudes);
+  });
+
+  it("validates a fitted unlogged-context report and keeps an unknown remainder null", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      kind: "fitted",
+      charsPerToken: 3.42,
+      pairsUsed: 24,
+      dispersion: 1.19,
+      unloggedOverhead: 9_400,
+      turnsMeasured: 2,
+      overCountedTurns: 1,
+      stepThreshold: 5_000,
+      promptConfidence: "observed",
+      remainderConfidence: "derived",
+      points: [
+        { turn: 1, promptTokens: 12_840, accounted: 3_440, unlogged: 9_400, items: 9 },
+        { turn: 2, promptTokens: 15_320, accounted: 16_820, unlogged: null, items: 11 },
+      ],
+      steps: [{ turn: 18, from: 9_400, to: 15_200, growth: 5_800, nearCompaction: true }],
+    });
+
+    const report = await getResidual("claude-code", "s");
+    expect(report.kind).toBe("fitted");
+    if (report.kind !== "fitted") throw new Error("expected a fitted report");
+    // The whole point of the null: an over-counted turn must not arrive as a
+    // zero remainder, which would assert a complete inventory of the context.
+    expect(report.points[1].unlogged).toBeNull();
+    expect(report.steps[0].nearCompaction).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("get_residual", { id: "s", agent: "claude-code" });
+  });
+
+  it("validates each refusal on its own terms rather than as an empty report", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+
+    invoke.mockResolvedValue({ kind: "agentNotFitted", agent: "codex" });
+    await expect(getResidual("codex", "s")).resolves.toEqual({
+      kind: "agentNotFitted",
+      agent: "codex",
+    });
+
+    invoke.mockResolvedValue({ kind: "insufficientGrowth", turnsWithUsage: 3 });
+    await expect(getResidual("claude-code", "s")).resolves.toEqual({
+      kind: "insufficientGrowth",
+      turnsWithUsage: 3,
+    });
+
+    invoke.mockResolvedValue({
+      kind: "overCounted",
+      charsPerToken: 2.84,
+      pairsUsed: 19,
+      dispersion: 1.62,
+      turnsMeasured: 41,
+    });
+    const overCounted = await getResidual("claude-code", "s");
+    expect(overCounted.kind).toBe("overCounted");
+  });
+
+  it("rejects a fitted report that omits the spread qualifying its ratio", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      kind: "fitted",
+      charsPerToken: 3.42,
+      pairsUsed: 24,
+      unloggedOverhead: 9_400,
+      turnsMeasured: 1,
+      overCountedTurns: 0,
+      stepThreshold: 5_000,
+      promptConfidence: "observed",
+      remainderConfidence: "derived",
+      points: [{ turn: 1, promptTokens: 12_840, accounted: 3_440, unlogged: 9_400, items: 9 }],
+      steps: [],
+    });
+
+    await expect(getResidual("claude-code", "s")).rejects.toThrow(
+      "invalid response from the unlogged-context measurement",
+    );
+  });
+
+  it("rejects an unknown residual outcome rather than treating it as no remainder", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({ kind: "notMeasured", points: [] });
+
+    await expect(getResidual("claude-code", "s")).rejects.toThrow(
+      "invalid response from the unlogged-context measurement",
+    );
+  });
+
+  it("holds every demo residual state to the same contract as the real backend", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+
+    for (const session of demoSessions) {
+      invoke.mockResolvedValue(demoResidual(session.agent, session.id));
+      await expect(getResidual(session.agent, session.id)).resolves.toBeTruthy();
+    }
+
+    // The fabricated series has to be arithmetic a reader could check: on every
+    // measured turn the two columns must add back up to the prompt the demo
+    // claims. Three independently typed lists would not.
+    const fitted = demoResidual("claude-code", "a30cb9e1-f9f4-4a37");
+    expect(fitted.kind).toBe("fitted");
+    if (fitted.kind !== "fitted") throw new Error("expected the fitted demo session");
+    for (const point of fitted.points) {
+      if (point.unlogged == null) {
+        expect(point.accounted).toBeGreaterThan(point.promptTokens);
+      } else {
+        expect(point.accounted + point.unlogged).toBe(point.promptTokens);
+      }
+    }
+    // And each claimed step must be a move the series actually makes, big
+    // enough to be worth marking. A marker asserting a level the line never
+    // reaches is the same defect as fabricating the fit, one layer down.
+    for (const step of fitted.steps) {
+      expect(step.to - step.from).toBe(step.growth);
+      expect(Math.abs(step.growth)).toBeGreaterThanOrEqual(fitted.stepThreshold);
+      const at = fitted.points.find((point) => point.turn === step.turn)?.unlogged;
+      expect(at).not.toBeNull();
+      expect(Math.abs((at ?? 0) - step.to)).toBeLessThan(0.1 * step.to);
+    }
+    // The series must drift rather than sit flat between steps — the panel's
+    // own caption says one fitted ratio cannot hold a session steady, and a
+    // demo that contradicted it would be showing a detector nothing tests.
+    const firstLevel = fitted.points
+      .filter((point) => point.turn < 18 && point.unlogged != null)
+      .map((point) => point.unlogged as number);
+    expect(new Set(firstLevel).size).toBeGreaterThan(1);
   });
 
   it("rejects malformed paged session responses", async () => {
