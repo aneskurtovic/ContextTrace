@@ -135,8 +135,9 @@ SmartScreen to warn about the unsigned installer. See
 
 ## Quickstart
 
-Real output from this machine on 2026-08-01. Your own `sessions`/`context`
-output will show your own local sessions instead.
+Real output from this machine: `ct roots` re-captured on 2026-08-08, when it
+gained the archive directory, and the rest on 2026-08-01. Your own
+`sessions`/`context` output will show your own local sessions instead.
 
 ```
 > ct roots
@@ -146,8 +147,15 @@ ContextTrace reads these local directories (read-only):
     C:\Users\anesk\.claude\projects
   codex
     C:\Users\anesk\.codex\sessions
+    C:\Users\anesk\.codex\archived_sessions
 
-Nothing is written to them, and nothing leaves this machine.
+Nothing is written to them.
+
+It writes to one directory, and only when you run `ct archive`:
+
+  C:\Users\anesk\AppData\Local\ContextTrace\archive
+
+Nothing leaves this machine either way.
 
 > ct sessions --limit 10
 ID          AGENT         LAST ACTIVITY            SIZE  PROJECT
@@ -203,7 +211,8 @@ filters: --source <kind[:text]>  --category <name>
 
 | Command | What it answers |
 |---|---|
-| `ct roots` | Which local directories are read |
+| `ct roots` | Which local directories are read, and the one that is written |
+| `ct archive <id>` | Keep a copy of a session so it outlives its log |
 | `ct sessions` | Which sessions exist, filtered by agent, project, date or count |
 | `ct inspect <id>` | The raw session structure and events, for debugging |
 | `ct compactions <id>` | [What a Codex compaction dropped, kept or replaced](docs/guide.md#exact-codex-compaction-diffs-without-printing-prompt-content) |
@@ -272,6 +281,20 @@ content-security policy permits only local Tauri IPC; session data stays on
 the machine.
 
 **Read-only.** Agent directories are inputs. ContextTrace never writes to them.
+
+**One directory it does write.** `ct archive <id>` keeps a copy of a session so
+it outlives its log — a log that is rotated, pruned, or lost with a wiped home
+directory takes its evidence with it, and nothing can reconstruct a file that is
+gone. Copies go to a ContextTrace-owned directory, never back to an agent's, and
+`ct roots` prints its exact path whether or not anything has been archived yet.
+Nothing is copied until you run that command.
+
+An archive concentrates by construction what was previously scattered: one place
+holding every prompt, tool output and credential a machine has produced is a
+materially better target than the logs it came from. So credential-shaped values
+are replaced on the way in by default, `--raw` is the explicit opt-out, and which
+of the two was used is recorded against each session. Most sessions contain no
+credentials at all, and for those the copy is byte-identical to the log.
 
 ## Documentation
 

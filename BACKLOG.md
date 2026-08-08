@@ -69,39 +69,27 @@ default, and the decision to return raw content must be explicit and recorded.
 An MCP surface that laundered `[REDACTED:github-token]` back into a live
 credential would be strictly worse than the compaction it exists to undo.
 
-### CT-074 · Archive sessions so they outlive the logs
-`status: next` · `tier: B` · `size: L` · `source: product decision`
+### CT-075 · Answer from the archive only where the log is gone
 
-**Why:** the one thing genuinely at risk is not compaction but deletion. A log
-that is rotated, pruned by the harness, or lost with a wiped `~/.codex` takes
-its evidence with it, and no amount of reconstruction recovers a file that is
-gone. A local archive is the only way a session outlives its log.
+`status: next` · `tier: B` · `size: M` · `source: CT-074`
 
-**Done when:** ingestion is opt-in and explicit, appends from the logs without
-writing to them, records per record where it came from, and can be rebuilt for
-any session whose log still exists. A session present in both must read
-identically from either.
+**Why:** CT-074 built the write path. Nothing reads from an archive yet, so a
+copy taken today survives its log but cannot be opened after the log is deleted
+— which is the only situation the archive exists for. This closes that.
 
-**Three constraints that are the design, not caveats on it.**
+**Done when:** a session whose log is gone can be inspected through every
+existing read command; where a log is present it stays authoritative and the
+archive is never consulted; and every view that answered from a copy says so,
+naming when it was taken and whether anything was replaced on the way in.
 
-*The archive must not become the source of truth.* Where a log is present it
-stays authoritative and the archive is a cache; only where the log is gone does
-the archive answer, and it must say so, because a stale or partial copy that
-silently substitutes for evidence is this project's central failure mode wearing
-a database schema.
-
-*It concentrates secrets by construction.* Credentials demonstrably reach these
-logs — the CI fixture carries five and a single real scan found six occurrences.
-Scattered JSONL under two home directories is an awkward target; one file
-holding every prompt, tool output and credential you have ever produced is not.
-Ingestion must run the secret scan and must default to storing redacted, with
-raw retention an explicit, recorded choice rather than the path of least
-resistance.
-
-*It narrows a claim the README makes.* "Never writes to them" survives — the
-logs are still untouched — but "ContextTrace keeps no copy of your content" does
-not, and that sentence has to change in the same commit that makes it false
-rather than in a later one. Nothing leaves the machine either way.
+**The risk is the whole item.** "A stale or partial copy that silently
+substitutes for evidence is this project's central failure mode wearing a
+database schema" — CT-074's own words. The failure is not an archive that cannot
+answer; it is one that answers and does not say it was the one answering. A
+redacted copy in particular will not reproduce a token count taken from the log,
+so a view that presented one as the other would be laundering a transformation
+this project exists to make visible. `ArchiveEntry::differs_from_source` already
+carries the flag that keeps that stated rather than discovered.
 
 ### CT-043 · Ship an installable 0.1.0
 `status: next` · `tier: A` · `size: L` · `source: MVP review`
@@ -167,6 +155,102 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-074 · Archive sessions so they outlive the logs
+`status: done` · `tier: B` · `size: L` · `source: product decision`
+
+**Why:** the one thing genuinely at risk is not compaction but deletion. A log
+that is rotated, pruned by the harness, or lost with a wiped `~/.codex` takes
+its evidence with it, and no amount of reconstruction recovers a file that is
+gone. A local archive is the only way a session outlives its log.
+
+**Done when:** ingestion is opt-in and explicit, appends from the logs without
+writing to them, records per record where it came from, and can be rebuilt for
+any session whose log still exists. A session present in both must read
+identically from either.
+
+**Three constraints that are the design, not caveats on it.**
+
+*The archive must not become the source of truth.* Where a log is present it
+stays authoritative and the archive is a cache; only where the log is gone does
+the archive answer, and it must say so, because a stale or partial copy that
+silently substitutes for evidence is this project's central failure mode wearing
+a database schema.
+
+*It concentrates secrets by construction.* Credentials demonstrably reach these
+logs — the CI fixture carries five and a single real scan found six occurrences.
+Scattered JSONL under two home directories is an awkward target; one file
+holding every prompt, tool output and credential you have ever produced is not.
+Ingestion must run the secret scan and must default to storing redacted, with
+raw retention an explicit, recorded choice rather than the path of least
+resistance.
+
+*It changes what the README's Privacy section has to say.* **Correction to this
+entry as filed:** the README carries no sentence reading "ContextTrace keeps no
+copy of your content". Its two live claims are "**Read-only.** Agent directories
+are inputs. ContextTrace never writes to them" and "session data stays on the
+machine", and an archive falsifies **neither** — it writes to a ContextTrace-owned
+directory, not an agent directory, and nothing leaves the machine either way.
+
+So the required change is an *addition*, not an edit: the section must say that
+ContextTrace now writes a copy somewhere, name where, and say what is done to
+credentials on the way in. It still has to land in the same commit that makes a
+copy exist. And because `AgentAdapter::roots` exists precisely so the tool can
+state every local path it touches, the archive root belongs wherever roots are
+already surfaced — this is the first path ContextTrace *writes*, which makes
+naming it more important than naming the ones it reads.
+
+**Accepted.** `ct archive <id>` copies a session's records into a
+ContextTrace-owned directory; bare `ct archive` lists what is held and
+`--verify` re-digests a copy against its source. Ingestion is explicit, streams
+rather than loading a session into memory, and replaces any existing copy, which
+is what makes an archive rebuildable while its log survives.
+
+**The clause that shaped the whole design is "reads identically from either".**
+Both adapters are path-driven: `discover` yields a descriptor carrying a path and
+`load` parses that path. So the archive stores the agent's *records* rather than
+this tool's conclusions, and an archived session is parsed back by the same
+adapter through the same parser. That makes identical reading a structural
+property — the same bytes through the same code — instead of a claim two code
+paths would have to be kept agreeing on. It also means a later build with better
+reconstruction gets better answers out of copies taken today.
+
+**Redaction is a no-op on a session holding no credentials**, which is most of
+them, so the tension between "store redacted by default" and "reads identically"
+is narrower than it looks: a clean session's copy is byte-identical to its log,
+verified on both agents' fixtures by comparing bytes rather than parsed output. A
+session where the scanner fires diverges, and the entry then states how many
+records and values were replaced rather than softening it into a mode label.
+`ArchiveIntegrity` is four cases because they call for different actions: intact,
+a changed source (re-ingest), a damaged copy (the previous answer cannot be
+trusted), and a vanished source — the case the feature exists for, and the one
+where reporting a bare "verified" would be worst.
+
+**A corrupting redaction was found and fixed before this shipped.** `redact_text`
+was written for `ct export --redact-secrets`, which hands it one already-parsed
+field; `find_private_keys` claiming everything to the end of its input when a PEM
+block never closes is right for that caller (CT-049). Handed a whole JSONL line
+it claimed the record's own closing quote and brace, so a truncated key block
+produced an archived record that no parser could read — worse than no archive at
+all. The archive now redacts inside each JSON string separately, which puts the
+same rule at the right boundary and leaves everything outside a string untouched,
+preserving the byte-identity above. A subagent found this, refused to work around
+it, and left a failing reproduction rather than a passing test; that test now
+passes.
+
+**The measurement is only as good as where it is stated.** `ct roots` now names
+the archive directory as a write location, listed whether or not anything has
+been archived, because `AgentAdapter::roots` exists so this tool can state every
+local path it touches and this is the first one it writes. The README's Privacy
+section says the same, in the commit that made a copy exist. CI archives the
+credential fixture and greps the bytes on disk — manifest included — for all five
+known fake secrets, and asserts every archived record still parses as JSON.
+
+**Not in this wave, deliberately:** nothing *reads* from the archive yet. The
+resolution policy — log wins, the archive answers only where the log is gone, and
+says so — is where "a stale copy silently substituting for evidence" lives, and
+it touches every surface. Filed as CT-075 so this wave could land without the
+source-of-truth risk being possible at all.
 
 ### CT-072 · Show the context the agent never logged, and when the harness changed
 `status: done` · `tier: A` · `size: M` · `source: desktop product strategy`

@@ -13,11 +13,19 @@ use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
-    AgentKind, AgentSession, CompactionDiff, CompactionItemDisposition, ContextSnapshot,
-    Contributor, FilteredView, SessionDescriptor, ThreadRole, TokenCount,
+    AgentKind, AgentSession, ArchiveEntry, ArchiveIntegrity, CompactionDiff,
+    CompactionItemDisposition, ContextSnapshot, Contributor, FilteredView, RedactionMode,
+    SessionDescriptor, ThreadRole, TokenCount,
 };
 
-pub fn roots(app: &ContextTrace) {
+/// Every local path this build touches, split by whether it is read or written.
+///
+/// The archive root is listed even when it does not exist yet. A tool whose
+/// privacy claim rests on being auditable owes the user the directory it *would*
+/// write to, not only the ones it already has -- and this is the one path
+/// ContextTrace writes, which makes naming it more important than naming the
+/// ones it only reads.
+pub fn roots(app: &ContextTrace, archive_root: &str) {
     println!("ContextTrace reads these local directories (read-only):\n");
     for (agent, paths) in app.roots() {
         println!("  {agent}");
@@ -28,7 +36,10 @@ pub fn roots(app: &ContextTrace) {
             println!("    {path}");
         }
     }
-    println!("\nNothing is written to them, and nothing leaves this machine.");
+    println!("\nNothing is written to them.\n");
+    println!("It writes to one directory, and only when you run `ct archive`:\n");
+    println!("  {archive_root}\n");
+    println!("Nothing leaves this machine either way.");
 }
 
 pub fn sessions(list: &[SessionDescriptor], json: bool) {
@@ -1921,6 +1932,167 @@ fn print_json<T: serde::Serialize + ?Sized>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(text) => println!("{text}"),
         Err(e) => eprintln!("error: could not serialise output: {e}"),
+    }
+}
+
+/// One line per archived session.
+///
+/// Leads with how faithful each copy is rather than where it sits on disk. The
+/// question a reader of this list actually has is which of their sessions they
+/// still hold, and how much that copy can be trusted to say.
+pub fn archive_entries(entries: &[ArchiveEntry], root: &str, json: bool) {
+    if json {
+        print_json(entries);
+        return;
+    }
+
+    if entries.is_empty() {
+        println!("No sessions archived yet. This directory is empty:\n");
+        println!("  {root}\n");
+        println!("Copy one with: ct archive <id>");
+        return;
+    }
+
+    println!("{} session(s) archived in:\n  {root}\n", entries.len());
+    // Text columns left-aligned, the size column right-aligned, matching every
+    // other table this CLI prints.
+    println!(
+        "{}  {}  {}  {}  COPY",
+        pad("ID", 38),
+        pad("AGENT", 12),
+        pad("ARCHIVED", 16),
+        rpad("SIZE", 9),
+    );
+
+    for entry in entries {
+        println!(
+            "{}  {}  {}  {}  {}",
+            pad(&ellipsize(&entry.descriptor.id.to_string(), 38), 38),
+            pad(entry.agent().label(), 12),
+            pad(&entry.archived_at.format("%Y-%m-%d %H:%M").to_string(), 16),
+            rpad(&bytes(entry.archived_bytes), 9),
+            copy_description(entry),
+        );
+    }
+
+    println!(
+        "\n  A copy answers only once its log is gone. While the log is present it is\n  \
+         the log that answers, and this is a cache."
+    );
+}
+
+/// How faithful one stored copy is to the log it came from.
+///
+/// "exact copy" is said only where nothing was replaced -- which is the ordinary
+/// case, because most sessions carry no credentials at all. Where something was,
+/// the count is stated rather than softened into a mode label: a reader deciding
+/// whether to trust a byte-level comparison needs to know that six records
+/// differ, not merely that redaction was switched on.
+fn copy_description(entry: &ArchiveEntry) -> String {
+    match (entry.redaction, entry.redacted_values) {
+        (RedactionMode::Raw, _) => "raw - credentials kept".to_string(),
+        (RedactionMode::Redacted, 0) => "exact copy".to_string(),
+        (RedactionMode::Redacted, values) => format!(
+            "{} value(s) redacted in {} record(s)",
+            thousands(values),
+            thousands(entry.redacted_records)
+        ),
+    }
+}
+
+/// What one ingest did.
+pub fn archived(entry: &ArchiveEntry, root: &str, json: bool) {
+    if json {
+        print_json(entry);
+        return;
+    }
+
+    println!(
+        "Archived {} record(s) of {} session {}\n",
+        thousands(entry.records),
+        entry.agent().label(),
+        entry.descriptor.id
+    );
+    println!("  from    {}", entry.descriptor.path);
+    println!("  into    {root}");
+    println!("  size    {}", bytes(entry.archived_bytes));
+    println!("  sha256  {}", entry.archived_digest);
+
+    match (entry.redaction, entry.redacted_values) {
+        (RedactionMode::Raw, _) => println!(
+            "\n  Credentials were kept. This copy holds every secret the log held, in one\n  \
+             place rather than scattered across a home directory. That was an explicit\n  \
+             request, and it is recorded in the manifest."
+        ),
+        (RedactionMode::Redacted, 0) => println!(
+            "\n  No credential shapes were found, so nothing was replaced and this copy is\n  \
+             byte-identical to the log."
+        ),
+        (RedactionMode::Redacted, values) => println!(
+            "\n  {} credential-shaped value(s) in {} record(s) were replaced on the way in.\n  \
+             This copy is therefore not byte-identical to the log, and anything measured\n  \
+             from those records will differ from the same measurement over the log. No\n  \
+             value was printed here or written to the manifest.",
+            thousands(values),
+            thousands(entry.redacted_records)
+        ),
+    }
+}
+
+/// What checking a stored copy against the world found.
+///
+/// Each outcome names what to do about it, because they call for different
+/// things: a changed source is routine, a damaged copy means the previous answer
+/// cannot be trusted, and a vanished source means this copy is now the only
+/// evidence there is.
+pub fn archive_integrity(id: &str, integrity: &ArchiveIntegrity) {
+    match integrity {
+        ArchiveIntegrity::Intact => {
+            println!("{id}: intact.\n");
+            println!(
+                "  The log is unchanged since it was copied, and the copy still matches the\n  \
+                 digest recorded for it."
+            );
+        }
+        ArchiveIntegrity::SourceChanged {
+            recorded_bytes,
+            current_bytes,
+            ..
+        } => {
+            println!("{id}: the log has changed since it was copied.\n");
+            println!(
+                "  Recorded {}, now {}. Almost always because the session continued. The\n  \
+                 copy is a sound record of an earlier state; re-run `ct archive <id>` to\n  \
+                 bring it current.",
+                bytes(*recorded_bytes),
+                bytes(*current_bytes)
+            );
+        }
+        ArchiveIntegrity::SourceGone {
+            archive_matches_digest,
+        } => {
+            println!("{id}: the log is gone.\n");
+            if *archive_matches_digest {
+                println!(
+                    "  This copy is now the only remaining evidence for this session, and it\n  \
+                     still matches the digest recorded for it. Nothing can rebuild it,\n  \
+                     because there is nothing left to read."
+                );
+            } else {
+                println!(
+                    "  This copy no longer matches its recorded digest, and the log it came\n  \
+                     from no longer exists. Nothing can rebuild it. Whatever this file now\n  \
+                     holds, it is not what was archived."
+                );
+            }
+        }
+        ArchiveIntegrity::ArchiveDamaged { .. } => {
+            println!("{id}: the stored copy is damaged.\n");
+            println!(
+                "  It no longer matches the digest recorded for it, so it is not what was\n  \
+                 archived. Re-run `ct archive <id>` while the log is still present."
+            );
+        }
     }
 }
 

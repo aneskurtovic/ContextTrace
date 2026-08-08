@@ -28,6 +28,7 @@ pub mod ports;
 pub mod services;
 
 pub use model::analysis::ContentMeasurement;
+pub use model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 pub use model::compaction_diff::{
     CompactionDiff, CompactionDiffItem, CompactionDiffUnavailable, CompactionItemDisposition,
 };

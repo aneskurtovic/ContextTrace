@@ -7,6 +7,7 @@
 //! aggregate that the whole product exists to produce.
 
 pub mod analysis;
+pub mod archive;
 pub mod compaction_diff;
 pub mod context;
 pub mod event;

@@ -29,6 +29,7 @@
 //! and register it in the composition root. No domain, application or UI change
 //! is required -- that is the property the hexagon buys.
 
+pub mod archive;
 pub mod claude_code;
 pub mod codex;
 mod fingerprint;
@@ -38,6 +39,7 @@ pub mod tokenizers;
 pub mod tool_target;
 pub mod walk;
 
+pub use archive::FileArchiveStore;
 pub use claude_code::ClaudeCodeAdapter;
 pub use codex::CodexAdapter;
 pub use raw_source::FileRawEventSource;

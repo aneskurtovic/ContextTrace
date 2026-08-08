@@ -7,6 +7,7 @@
 //! The consequence worth stating: everything here works unchanged for an agent
 //! that does not exist yet.
 
+pub mod archive;
 pub mod diagnostics;
 pub mod diff;
 pub mod export;
@@ -24,6 +25,7 @@ use ct_domain::{
 use std::collections::BTreeMap;
 use std::fmt;
 
+pub use archive::{default_transform, RedactingTransform, VerbatimTransform};
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
 pub use diff::{

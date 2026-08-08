@@ -11,6 +11,7 @@
 //! out of adapter hands so a future agent integration cannot accidentally
 //! publish numbers that do not add up.
 
+use crate::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use crate::model::compaction_diff::CompactionDiff;
 use crate::model::context::{CompactionEvent, ContextItem};
 use crate::model::identity::TurnNumber;
@@ -246,6 +247,78 @@ pub trait RawEventSource: Send + Sync {
         let full = self.fetch(source)?;
         Ok(truncate_chars(&full, max_chars))
     }
+}
+
+/// A driven port: keeping copies of sessions that outlive their logs.
+///
+/// Deliberately record-level rather than analysis-level. The store copies the
+/// lines an agent wrote and never learns what they mean, so an archived session
+/// is parsed back by the same [`AgentAdapter`] that parses a live one. That is
+/// what makes a session read identically from either place -- it is the same
+/// bytes through the same parser, not two code paths kept in agreement.
+///
+/// The store never *chooses* what to do with a record. It streams, applies the
+/// [`RecordTransform`] it is handed, and reports what happened. Deciding that
+/// credentials are replaced by default is a policy, and policy lives in the
+/// application layer where it can be stated, tested and overridden explicitly.
+pub trait ArchiveStore: Send + Sync {
+    /// The directory this store writes to.
+    ///
+    /// Mirrors [`AgentAdapter::roots`] and exists for the same reason: a tool
+    /// whose privacy claim rests on being auditable has to name every local
+    /// path it touches. This one is the first path ContextTrace *writes*, which
+    /// makes stating it more important, not less.
+    fn root(&self) -> String;
+
+    /// Copy one session's records in, transforming each on the way.
+    ///
+    /// Streams. A session can reach tens of megabytes, and an ingest that read
+    /// one into memory to copy it would be the one operation in this tool that
+    /// does what the rest of it is careful never to do.
+    ///
+    /// Replaces any existing copy of the same session, which is what makes an
+    /// archive rebuildable: re-ingesting a session whose log is still present
+    /// is always allowed and always produces the current state.
+    fn ingest(
+        &self,
+        descriptor: &SessionDescriptor,
+        transform: &dyn RecordTransform,
+    ) -> PortResult<ArchiveEntry>;
+
+    /// Every session held, in no guaranteed order.
+    fn entries(&self) -> PortResult<Vec<ArchiveEntry>>;
+
+    /// One session's entry, or `None` if this archive does not hold it.
+    fn entry(&self, agent: AgentKind, id: &str) -> PortResult<Option<ArchiveEntry>>;
+
+    /// Re-digest a stored copy and its source, and report what that found.
+    ///
+    /// Returns [`PortError::NotFound`] only when the archive does not hold the
+    /// session at all. A missing *source* is not an error -- it is
+    /// [`ArchiveIntegrity::SourceGone`], the outcome this whole feature exists
+    /// to serve, and reporting it as a failure would make the success case look
+    /// like one.
+    fn verify(&self, agent: AgentKind, id: &str) -> PortResult<ArchiveIntegrity>;
+}
+
+/// What ingestion does to each record on its way into an archive.
+///
+/// A port rather than a closure so the decision has a name, a mode it declares,
+/// and somewhere for its reasoning to live. The identity transform is a legal
+/// implementation and is what `raw` retention uses.
+pub trait RecordTransform: Send + Sync {
+    /// Transform one record. Returns the text to store and how many values were
+    /// replaced in it.
+    ///
+    /// Borrowing on the unchanged path is not an optimisation detail: it is how
+    /// the store can tell that nothing was replaced, and therefore that the copy
+    /// it is writing is byte-identical to the log. Most sessions contain no
+    /// credentials, so most archives are exact copies, and that is a property
+    /// worth being able to observe rather than assume.
+    fn apply<'a>(&self, record: &'a str) -> (std::borrow::Cow<'a, str>, u32);
+
+    /// What this transform does to the archive it feeds, for the manifest.
+    fn mode(&self) -> RedactionMode;
 }
 
 /// Truncate on a character boundary, appending an ellipsis when shortened.

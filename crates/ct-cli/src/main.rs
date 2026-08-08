@@ -9,12 +9,13 @@ mod format;
 mod render;
 
 use clap::{Parser, Subcommand};
-use ct_adapters::{FileRawEventSource, HeuristicEstimator};
+use ct_adapters::{FileArchiveStore, FileRawEventSource, HeuristicEstimator};
 use ct_application::{ContextTrace, ExportRedaction, ResolveError, ResolvedSession, SessionFilter};
-use ct_domain::ports::{ExactRecount, TokenEstimator};
+use ct_domain::ports::{ArchiveStore, ExactRecount, TokenEstimator};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
-    AgentKind, Confidence, ContextCategory, FilterParseError, ItemFilter, SourcePattern, TurnNumber,
+    AgentKind, Confidence, ContextCategory, FilterParseError, ItemFilter, RedactionMode,
+    SourcePattern, TurnNumber,
 };
 
 #[derive(Parser)]
@@ -255,7 +256,38 @@ enum Command {
         json: bool,
     },
 
-    /// Show which local directories ContextTrace reads
+    /// Keep a local copy of a session so it outlives its log
+    ///
+    /// Compaction never deletes anything: every pre-compaction record stays in
+    /// the append-only log, which is why a compaction can be inspected at all.
+    /// What nothing survives is the log itself being rotated, pruned, or lost
+    /// with a wiped home directory. This copies a session's records into a
+    /// ContextTrace-owned directory so the evidence outlives the file.
+    ///
+    /// Records are copied, not conclusions, so an archived session is read back
+    /// through the same parser a live one is -- and credential-shaped values are
+    /// replaced on the way in unless you ask otherwise. Run `ct roots` to see
+    /// where copies are written.
+    Archive {
+        /// Session id, or an unambiguous prefix. Omit to list what is held.
+        id: Option<String>,
+        /// Check a stored copy against its source instead of copying again
+        #[arg(long)]
+        verify: bool,
+        /// Keep credentials in the copy instead of replacing them
+        ///
+        /// An archive concentrates by construction what was scattered across a
+        /// home directory: one place holding every prompt, tool output and
+        /// credential a machine has produced. Redaction is therefore the
+        /// default, this is the explicit opt-out, and the choice is recorded
+        /// against the session so a later reader knows what the copy holds.
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show which local directories ContextTrace reads, and the one it writes
     Roots,
 }
 
@@ -428,7 +460,43 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let app = build();
 
     match cli.command {
-        Command::Roots => render::roots(&app),
+        Command::Roots => render::roots(&app, &FileArchiveStore::new().root()),
+
+        Command::Archive {
+            id,
+            verify,
+            raw,
+            json,
+        } => {
+            let store = FileArchiveStore::new();
+            match (id, verify) {
+                (None, _) => {
+                    if raw {
+                        return Err("--raw applies to archiving one session, not to listing"
+                            .to_string()
+                            .into());
+                    }
+                    render::archive_entries(&app.archived_sessions(&store)?, &store.root(), json);
+                }
+                (Some(id), true) => {
+                    if raw {
+                        return Err("--raw applies to archiving a session, not to verifying one"
+                            .to_string()
+                            .into());
+                    }
+                    render::archive_integrity(&id, &app.verify_archived(&id, &store)?);
+                }
+                (Some(id), false) => {
+                    let mode = if raw {
+                        RedactionMode::Raw
+                    } else {
+                        RedactionMode::Redacted
+                    };
+                    let entry = app.archive_session(&id, &store, mode)?;
+                    render::archived(&entry, &store.root(), json);
+                }
+            }
+        }
 
         Command::Sessions {
             agent,
