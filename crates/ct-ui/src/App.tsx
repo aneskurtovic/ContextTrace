@@ -79,18 +79,26 @@ function SessionListItem({
   selected: boolean;
   onSelect: () => void;
 }) {
+  // Narrowed through the value itself rather than a boolean alias, so the
+  // union tells the compiler `parent` is a string in this branch.
+  const role = session.threadRole;
   return (
     <button
       className={`session-row ${selected ? "selected" : ""}`}
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
-      aria-label={`${agentLabel(session.agent)} session: ${projectName(session.project)}, ${shortId(session.id)}`}
+      aria-label={`${agentLabel(session.agent)} session: ${projectName(session.project)}, ${shortId(session.id)}${
+        role.kind === "subagent" ? `, subagent of ${shortId(role.parent)}` : ""
+      }`}
     >
       <AgentMark agent={session.agent} />
       <span className="session-copy">
         <span className="session-title">{projectName(session.project)}</span>
         <span className="session-meta">
           {shortId(session.id)} · {formatBytes(session.sizeBytes)}
+          {role.kind === "subagent" && (
+            <span className="thread-marker"> · subagent of {shortId(role.parent)}</span>
+          )}
         </span>
       </span>
       <span className="session-activity">{formatActivity(session.lastActivity)}</span>
@@ -616,6 +624,9 @@ function SessionWorkspace({
             <span>{detail.model ?? "Model not recorded"}</span>
             {detail.gitBranch && <span>branch: {detail.gitBranch}</span>}
             <span>{shortId(detail.session.id)}</span>
+            {detail.session.threadRole.kind === "subagent" && (
+              <span>subagent of {shortId(detail.session.threadRole.parent)}</span>
+            )}
           </div>
         </div>
         {demoData ? (

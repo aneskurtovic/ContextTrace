@@ -60,7 +60,7 @@ mod reconstruct;
 use crate::home_dir;
 use crate::walk::{find_files, has_extension};
 use ct_domain::ports::{AgentAdapter, PortError, PortResult, ReconstructedContext, TokenEstimator};
-use ct_domain::{AgentKind, AgentSession, SessionDescriptor, SessionId, TurnNumber};
+use ct_domain::{AgentKind, AgentSession, SessionDescriptor, SessionId, ThreadRole, TurnNumber};
 use std::path::{Path, PathBuf};
 
 /// Reads Claude Code sessions.
@@ -200,6 +200,12 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
             .modified()
             .ok()
             .map(chrono::DateTime::<chrono::Utc>::from),
+        // Claude Code's subagent activity (CT-015's sidechains) is per-event
+        // within one file, not a relationship between separate session
+        // files -- there is no Claude Code equivalent of Codex's
+        // `parent_thread_id`/`thread_source` to read here, so every
+        // discovered Claude Code session is reported as a root.
+        thread_role: ThreadRole::Root,
     })
 }
 

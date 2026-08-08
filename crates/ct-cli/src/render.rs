@@ -14,7 +14,7 @@ use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{
     AgentKind, AgentSession, CompactionDiff, CompactionItemDisposition, ContextSnapshot,
-    Contributor, FilteredView, SessionDescriptor, TokenCount,
+    Contributor, FilteredView, SessionDescriptor, ThreadRole, TokenCount,
 };
 
 pub fn roots(app: &ContextTrace) {
@@ -56,13 +56,26 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
             .last_activity
             .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "-".into());
+        // Appended after the last column rather than given one of its own:
+        // a marker on 26 of 99 rows must not shift every column for the
+        // other 73. Naming the parent, not just flagging the row, is the
+        // point -- CT-069 settled on "sibling session, marked" precisely so
+        // the group's structure is stated rather than merely hidden.
+        let marker = match &d.thread_role {
+            ThreadRole::Root => String::new(),
+            ThreadRole::Subagent { parent } => {
+                let parent_short: String = parent.as_str().chars().take(8).collect();
+                format!("  [subagent of {parent_short}]")
+            }
+        };
         println!(
-            "{}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}{}",
             pad(&short_id, 10),
             pad(d.agent.label(), 12),
             pad(&when, 18),
             rpad(&bytes(d.size_bytes), 9),
-            ellipsize(d.project.as_deref().unwrap_or("-"), 60)
+            ellipsize(d.project.as_deref().unwrap_or("-"), 60),
+            marker
         );
     }
 

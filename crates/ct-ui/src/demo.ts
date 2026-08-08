@@ -6,10 +6,13 @@ import type {
   SessionDetail,
   SessionSummary,
   StartupSummary,
+  ThreadRole,
 } from "./types";
 
 const now = Date.now();
 const ago = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
+
+const root: ThreadRole = { kind: "root", parent: null };
 
 export const demoSessions: SessionSummary[] = [
   {
@@ -20,6 +23,7 @@ export const demoSessions: SessionSummary[] = [
     project: "C:\\work\\ContextTrace",
     startedAt: ago(5),
     lastActivity: ago(0.4),
+    threadRole: root,
   },
   {
     id: "a30cb9e1-f9f4-4a37",
@@ -29,6 +33,7 @@ export const demoSessions: SessionSummary[] = [
     project: "C:\\work\\atlas-dashboard",
     startedAt: ago(30),
     lastActivity: ago(23),
+    threadRole: root,
   },
   {
     id: "0198fb914e330a81",
@@ -38,6 +43,7 @@ export const demoSessions: SessionSummary[] = [
     project: "C:\\work\\semantic-search",
     startedAt: ago(51),
     lastActivity: ago(47),
+    threadRole: root,
   },
   {
     id: "f485150f-0982-4876",
@@ -47,6 +53,7 @@ export const demoSessions: SessionSummary[] = [
     project: "C:\\work\\payment-service",
     startedAt: ago(76),
     lastActivity: ago(70),
+    threadRole: root,
   },
   {
     id: "0198f420c9740dac",
@@ -56,6 +63,22 @@ export const demoSessions: SessionSummary[] = [
     project: "C:\\work\\compiler-lab",
     startedAt: ago(110),
     lastActivity: ago(99),
+    threadRole: root,
+  },
+  {
+    // A demo subagent thread, so the marker this feature adds has something
+    // to render without needing a real corpus to show it. Named after the
+    // Codex session above rather than a new parent, matching CT-069's
+    // measured shape: every local group's children point at their group's
+    // root directly.
+    id: "0198fce2-a9c1-4f30",
+    agent: "codex",
+    path: "C:\\Users\\demo\\.codex\\sessions\\contexttrace-subagent.jsonl",
+    sizeBytes: 214_030,
+    project: "C:\\work\\ContextTrace",
+    startedAt: ago(5),
+    lastActivity: ago(4.6),
+    threadRole: { kind: "subagent", parent: "0198fce2e48a7b12" },
   },
 ];
 

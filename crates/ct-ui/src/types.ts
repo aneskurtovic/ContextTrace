@@ -10,6 +10,21 @@ export interface StartupSummary {
   warnings: string[];
 }
 
+/**
+ * Where a session sits in its thread group.
+ *
+ * A discriminated union rather than `{ kind, parent: string | null }`, so the
+ * pairing the backend guarantees is the pairing the compiler enforces: a
+ * `"root"` with a parent attached, or a `"subagent"` without one, cannot be
+ * written here at all. The looser shape typechecks every call site through a
+ * `parent ?? ""` fallback that can never fire — a branch no test can reach and
+ * no reader can justify. This mirrors the Rust `ThreadRole`, where
+ * `Subagent { parent }` carries its parent in the variant for the same reason.
+ */
+export type ThreadRole =
+  | { kind: "root"; parent: null }
+  | { kind: "subagent"; parent: string };
+
 export interface SessionSummary {
   id: string;
   agent: Agent;
@@ -18,6 +33,7 @@ export interface SessionSummary {
   project: string | null;
   startedAt: string | null;
   lastActivity: string | null;
+  threadRole: ThreadRole;
 }
 
 export interface SessionPage {

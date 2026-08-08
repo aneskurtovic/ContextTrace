@@ -44,5 +44,7 @@ pub use model::identity::{
     ContentFingerprint, ContextItemId, EventId, FileId, SessionId, TurnNumber,
 };
 pub use model::provenance::{Confidence, Provenance, SourceRef};
-pub use model::session::{AgentKind, AgentSession, SessionDescriptor, SessionMetadata, Turn};
+pub use model::session::{
+    AgentKind, AgentSession, SessionDescriptor, SessionMetadata, ThreadRole, Turn,
+};
 pub use model::tokens::{TokenCount, TokenUsage};

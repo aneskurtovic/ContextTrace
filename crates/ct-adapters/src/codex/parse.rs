@@ -7,7 +7,7 @@ use ct_domain::model::event::{CompactionFacts, EventLinks};
 use ct_domain::ports::{PortError, PortResult};
 use ct_domain::{
     AgentKind, AgentSession, Event, EventId, EventKind, FileId, MessageRole, SessionId,
-    SessionMetadata, SourceRef, TokenUsage, Turn, TurnNumber,
+    SessionMetadata, SourceRef, ThreadRole, TokenUsage, Turn, TurnNumber,
 };
 use serde_json::Value;
 use std::borrow::Cow;
@@ -19,7 +19,18 @@ use std::path::Path;
 /// The handful of fields worth reading from a session's first line.
 #[derive(Default)]
 pub struct Header {
+    /// `payload.id`. Unique across every rollout file, including a subagent
+    /// thread's -- see CT-069. This is the field a descriptor's identity is
+    /// built from.
+    pub id: Option<String>,
+    /// `payload.session_id`. Equal to `id` for an ordinary session; on a
+    /// subagent thread the harness instead writes the *parent's* id here.
+    /// No longer used as identity, but kept: it is the fallback source for
+    /// [`ThreadRole::Subagent`]'s parent when `parent_thread_id` itself is
+    /// absent.
     pub session_id: Option<String>,
+    pub parent_thread_id: Option<String>,
+    pub thread_source: Option<String>,
     pub cwd: Option<String>,
     pub timestamp: Option<DateTime<Utc>>,
 }
@@ -42,10 +53,44 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
     let payload = value.get("payload").unwrap_or(&Value::Null);
 
     Ok(Header {
-        session_id: str_field(payload, "session_id").or_else(|| str_field(payload, "id")),
+        id: str_field(payload, "id"),
+        session_id: str_field(payload, "session_id"),
+        parent_thread_id: str_field(payload, "parent_thread_id"),
+        thread_source: str_field(payload, "thread_source"),
         cwd: str_field(payload, "cwd"),
         timestamp: parse_time(value.get("timestamp")),
     })
+}
+
+/// Derive a session's place in its thread group from the fields Codex's
+/// harness already records.
+///
+/// `thread_source` decides the shape outright: anything other than the exact
+/// string `"subagent"` -- including its absence, which is every rollout file
+/// written before the harness recorded this at all -- is a root. Only inside
+/// that branch does a parent get looked for, so a stray `parent_thread_id` on
+/// an ordinary session (never observed locally, but the field is free-form)
+/// cannot make this a subagent thread by itself.
+///
+/// `parent_thread_id` is the primary source once `thread_source` says
+/// `"subagent"`. `session_id` is the fallback: on a subagent thread it holds
+/// the parent's id even when `parent_thread_id` is missing, which is the same
+/// fact CT-069 was filed about, read the other way round. Every subagent
+/// thread in the local corpus carries `parent_thread_id`, so the fallback is
+/// a safety net rather than the normal path. If neither field yields a usable
+/// id, the session is reported as a root rather than as a subagent with no
+/// parent to name -- that combination has no honest representation.
+pub fn thread_role(header: &Header) -> ThreadRole {
+    if header.thread_source.as_deref() != Some("subagent") {
+        return ThreadRole::Root;
+    }
+    header
+        .parent_thread_id
+        .clone()
+        .or_else(|| header.session_id.clone())
+        .and_then(|parent| SessionId::new(parent).ok())
+        .map(|parent| ThreadRole::Subagent { parent })
+        .unwrap_or(ThreadRole::Root)
 }
 
 /// Parse a full Codex session.
@@ -1434,5 +1479,124 @@ mod tests {
             other => panic!("expected a token report, got {other:?}"),
         }
         assert_eq!(meta.context_window, Some(258_400));
+    }
+
+    // -----------------------------------------------------------------------
+    // Thread role (CT-069)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_session_with_no_thread_source_is_a_root() {
+        // Every rollout file written before the harness recorded this field
+        // at all. `thread_source` absent must mean "not a subagent", not
+        // "unknown" -- a typed absence, not a guess.
+        let header = Header {
+            id: Some("s".into()),
+            session_id: Some("s".into()),
+            parent_thread_id: None,
+            thread_source: None,
+            cwd: None,
+            timestamp: None,
+        };
+        assert_eq!(thread_role(&header), ThreadRole::Root);
+    }
+
+    #[test]
+    fn a_subagent_thread_names_its_parent_from_parent_thread_id() {
+        let header = Header {
+            id: Some("child".into()),
+            session_id: Some("root".into()),
+            parent_thread_id: Some("root".into()),
+            thread_source: Some("subagent".into()),
+            cwd: None,
+            timestamp: None,
+        };
+        assert_eq!(
+            thread_role(&header),
+            ThreadRole::Subagent {
+                parent: SessionId::new("root").unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_subagent_thread_falls_back_to_session_id_when_parent_thread_id_is_missing() {
+        // The same fact CT-069 was filed about, used deliberately: a subagent
+        // thread's `session_id` holds the parent's id even when
+        // `parent_thread_id` itself is absent.
+        let header = Header {
+            id: Some("child".into()),
+            session_id: Some("root".into()),
+            parent_thread_id: None,
+            thread_source: Some("subagent".into()),
+            cwd: None,
+            timestamp: None,
+        };
+        assert_eq!(
+            thread_role(&header),
+            ThreadRole::Subagent {
+                parent: SessionId::new("root").unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_non_subagent_thread_source_is_a_root_even_with_a_parent_thread_id() {
+        // The state this type must not represent: `Some(parent)` next to a
+        // `thread_source` that names something other than a subagent. A
+        // stray `parent_thread_id` on an ordinary session must not promote it
+        // to a subagent thread.
+        let header = Header {
+            id: Some("s".into()),
+            session_id: Some("s".into()),
+            parent_thread_id: Some("root".into()),
+            thread_source: Some("user".into()),
+            cwd: None,
+            timestamp: None,
+        };
+        assert_eq!(thread_role(&header), ThreadRole::Root);
+    }
+
+    #[test]
+    fn a_subagent_thread_with_no_derivable_parent_is_reported_as_root() {
+        // Neither field yields a usable id. There is no honest way to state
+        // "subagent with an unnamed parent", so this falls back to root
+        // rather than fabricating one or panicking.
+        let header = Header {
+            id: Some("child".into()),
+            session_id: None,
+            parent_thread_id: None,
+            thread_source: Some("subagent".into()),
+            cwd: None,
+            timestamp: None,
+        };
+        assert_eq!(thread_role(&header), ThreadRole::Root);
+    }
+
+    #[test]
+    fn read_header_reads_the_thread_fields_of_a_subagent_line() {
+        let raw = concat!(
+            r#"{"timestamp":"2026-08-01T10:00:00.000Z","type":"session_meta","payload":{"#,
+            r#""id":"child-id","session_id":"root-id","parent_thread_id":"root-id","#,
+            r#""thread_source":"subagent","cwd":"C:\\repos\\demo"}}"#,
+        );
+        let path = std::env::temp_dir().join(format!(
+            "ct-codex-subagent-header-{}.jsonl",
+            std::process::id()
+        ));
+        fs::write(&path, raw).unwrap();
+        let header = read_header(&path).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(header.id.as_deref(), Some("child-id"));
+        assert_eq!(header.session_id.as_deref(), Some("root-id"));
+        assert_eq!(header.parent_thread_id.as_deref(), Some("root-id"));
+        assert_eq!(header.thread_source.as_deref(), Some("subagent"));
+        assert_eq!(
+            thread_role(&header),
+            ThreadRole::Subagent {
+                parent: SessionId::new("root-id").unwrap()
+            }
+        );
     }
 }

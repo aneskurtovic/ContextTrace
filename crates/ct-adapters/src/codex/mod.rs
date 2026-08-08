@@ -157,11 +157,15 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
         .and_then(|s| s.to_str())
         .unwrap_or_default();
 
-    // Prefer the id the file states; fall back to the one in its name, which is
-    // the tail of `rollout-<timestamp>-<uuid>`.
+    // `payload.id` is the file's own identity and is unique across every
+    // local rollout file, including a subagent thread's -- unlike
+    // `session_id`, which a subagent thread reports as its *parent's* id (see
+    // CT-069). Prefer it; fall back to `session_id` only when a line predates
+    // `id` entirely, then to the uuid in the filename.
     let id = header
-        .session_id
+        .id
         .clone()
+        .or_else(|| header.session_id.clone())
         .or_else(|| id_from_filename(stem))
         .unwrap_or_else(|| stem.to_string());
 
@@ -176,6 +180,7 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
         project: header.cwd.clone(),
         started_at: header.timestamp,
         last_activity: header.timestamp,
+        thread_role: parse::thread_role(&header),
     })
 }
 
@@ -195,6 +200,7 @@ fn id_from_filename(stem: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ct_domain::ThreadRole;
 
     #[test]
     fn extracts_uuid_from_rollout_filename() {
@@ -215,5 +221,53 @@ mod tests {
         let adapter = CodexAdapter::with_home("Z:/definitely/not/here");
         assert!(adapter.roots().is_empty());
         assert!(adapter.discover().unwrap().is_empty());
+    }
+
+    fn temp_rollout(name: &str, first_line: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "ct-codex-describe-{name}-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(&path, first_line).unwrap();
+        path
+    }
+
+    // CT-069: a subagent thread's `session_id` names its *parent*, not
+    // itself. Before the fix, `describe` reported `session_id` as identity,
+    // so every thread in a group collapsed onto the same id and only one file
+    // per group was reachable.
+    #[test]
+    fn describe_uses_payload_id_not_the_parents_session_id() {
+        let path = temp_rollout(
+            "child",
+            r#"{"timestamp":"2026-08-01T10:00:00.000Z","type":"session_meta","payload":{"id":"child-id","session_id":"root-id","parent_thread_id":"root-id","thread_source":"subagent","cwd":"C:\\repos\\demo"}}"#,
+        );
+        let descriptor = describe(&path).expect("a minimal session_meta line parses");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            descriptor.id.as_str(),
+            "child-id",
+            "identity must be the file's own id, not its parent's"
+        );
+        assert_eq!(
+            descriptor.thread_role,
+            ThreadRole::Subagent {
+                parent: SessionId::new("root-id").unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn describe_reports_an_ordinary_session_as_a_root() {
+        let path = temp_rollout(
+            "root",
+            r#"{"timestamp":"2026-08-01T10:00:00.000Z","type":"session_meta","payload":{"id":"root-id","session_id":"root-id","cwd":"C:\\repos\\demo"}}"#,
+        );
+        let descriptor = describe(&path).expect("a minimal session_meta line parses");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(descriptor.id.as_str(), "root-id");
+        assert_eq!(descriptor.thread_role, ThreadRole::Root);
     }
 }

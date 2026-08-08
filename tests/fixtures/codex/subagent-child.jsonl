@@ -1,0 +1,4 @@
+{"timestamp":"2026-08-01T10:05:00.000Z","type":"session_meta","payload":{"id":"bbbbbbbb-5555-6666-7777-888888888888","session_id":"aaaaaaaa-1111-2222-3333-444444444444","parent_thread_id":"aaaaaaaa-1111-2222-3333-444444444444","thread_source":"subagent","cwd":"C:\\repos\\demo","cli_version":"0.9.0","model_provider":"openai","context_window":272000}}
+{"timestamp":"2026-08-01T10:05:01.000Z","type":"turn_context","payload":{"model":"gpt-5-codex","cwd":"C:\\repos\\demo","approval_policy":"on-request","sandbox_policy":"workspace-write"}}
+{"timestamp":"2026-08-01T10:05:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Subagent thread message."}]}}
+{"timestamp":"2026-08-01T10:05:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":300,"output_tokens":30},"model_context_window":272000}}}

@@ -22,7 +22,7 @@ use ct_adapters::{ClaudeCodeAdapter, CodexAdapter};
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::AgentAdapter;
 use ct_domain::{
-    AgentKind, AgentSession, ContextCategory, SessionDescriptor, SessionId, TurnNumber,
+    AgentKind, AgentSession, ContextCategory, SessionDescriptor, SessionId, ThreadRole, TurnNumber,
 };
 use std::path::PathBuf;
 
@@ -43,6 +43,7 @@ fn descriptor(path: PathBuf, agent: AgentKind, id: &str) -> SessionDescriptor {
         project: None,
         started_at: None,
         last_activity: None,
+        thread_role: ThreadRole::Root,
     }
 }
 
@@ -318,6 +319,75 @@ fn codex_reads_the_per_request_usage_not_the_running_total() {
         turn.prompt_tokens(),
         Some(12_480),
         "total_token_usage accumulates across the session and is not a prompt size"
+    );
+}
+
+/// CT-069: a subagent thread's `session_id` names its *parent*, not itself.
+/// Before the fix, the adapter reported `session_id` as identity, so every
+/// thread in a group collapsed onto one id and `ContextTrace::resolve`'s
+/// exact-match short circuit made all but the first file in a group
+/// unreachable. This builds a two-file corpus shaped exactly like a real
+/// group -- one root, one subagent naming it -- through the adapter's public
+/// discovery and load API, so it fails the same way the real defect did if
+/// identity regresses to `session_id`.
+#[test]
+fn a_subagent_thread_and_its_root_are_independently_reachable() {
+    let unique = format!("ct-adapters-subagent-group-{}", std::process::id());
+    let home = std::env::temp_dir().join(unique);
+    let sessions_dir = home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("create synthetic CODEX_HOME/sessions");
+    std::fs::copy(
+        fixture("codex", "subagent-root.jsonl"),
+        sessions_dir.join("rollout-root.jsonl"),
+    )
+    .expect("stage the root fixture");
+    std::fs::copy(
+        fixture("codex", "subagent-child.jsonl"),
+        sessions_dir.join("rollout-child.jsonl"),
+    )
+    .expect("stage the child fixture");
+
+    let adapter = CodexAdapter::with_home(&home);
+    let discovered = adapter
+        .discover()
+        .expect("both fixture files parse")
+        .into_iter()
+        .map(|d| (d.id.to_string(), d))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    assert_eq!(
+        discovered.len(),
+        2,
+        "each file is independently listed under its own payload.id, not collapsed onto one"
+    );
+
+    let root = discovered
+        .get("aaaaaaaa-1111-2222-3333-444444444444")
+        .expect("the root's own payload.id resolves to it, not to the child");
+    assert_eq!(root.thread_role, ThreadRole::Root);
+
+    let child = discovered
+        .get("bbbbbbbb-5555-6666-7777-888888888888")
+        .expect("the child's own payload.id resolves to it, not to the parent's session_id");
+    assert_eq!(
+        child.thread_role,
+        ThreadRole::Subagent {
+            parent: SessionId::new("aaaaaaaa-1111-2222-3333-444444444444").unwrap()
+        }
+    );
+
+    // Each opens independently and reports different content -- resolving
+    // both to the same file would fail here even if the ids above happened
+    // to look right.
+    let root_session = adapter.load(root).expect("the root parses on its own");
+    let child_session = adapter.load(child).expect("the child parses on its own");
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(root_session.turn_count(), 2);
+    assert_eq!(child_session.turn_count(), 1);
+    assert_ne!(
+        root_session.events().len(),
+        child_session.events().len(),
+        "each thread's own content, not one file read twice"
     );
 }
 

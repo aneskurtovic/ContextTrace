@@ -89,8 +89,42 @@ a clean Windows host, downloaded-artifact/CLI checks and candidate soak remain.
 
 ## Todo
 
+### CT-026 · Cost projection
+`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
+**Done when:** per-category cost is derived from a local pricing table, clearly
+marked as an estimate that depends on a table which will go stale.
+
+### CT-028 · Session family trees
+`status: todo` · `tier: C` · `size: M` · `source: IDEAS.md §9`
+**Why:** the DAG already parsed for reconstruction contains every abandoned
+branch; showing them is nearly free and no other tool does it.
+**Done when:** branches are enumerated and each is separately inspectable.
+
+### CT-029 · `ct-index` SQLite cache
+`status: todo` · `tier: C` · `size: L` · `source: plan`
+**Why:** deliberately deferred until a command feels slow, so the access
+patterns are known before the cache is tuned. The figure this deferral rests on
+was re-measured under CT-057, because the old one timed a cheaper path than the
+one users wait on. On the largest local session (94.6 MiB, 88 turns) the
+content-analysis path — discovery through to the first rendered turn, the
+slowest route a user can reach — completes in **1.26–1.28 seconds** across three
+runs on an otherwise idle machine, with the file's bytes already in the OS page
+cache. A single genuinely cold observation, taken on a file this machine had not
+read that day and not repeatable without dropping the cache, was **1.71
+seconds**. Cached turn switches stay below 1 ms. Both figures sit inside the
+2-second budget CT-044 accepted, so 0.1 still has no evidence that a persistent
+index is needed — but the warm figure is the repeatable one and the cold figure
+is the one a first-run user meets, and neither is quotable as the other.
+**Done when:** derived metadata is cached, disposable and rebuildable, and no
+domain type depends on it.
+
+
+---
+
+## Done
+
 ### CT-069 · Codex subagent threads collapse onto their parent's id
-`status: todo` · `tier: A` · `size: M` · `source: CT-055`
+`status: done` · `tier: A` · `size: M` · `source: CT-055`
 
 **Why:** the Codex adapter reports `session_meta.payload.session_id` as a
 session's identity. For an ordinary session that equals `payload.id` and
@@ -134,8 +168,45 @@ root, so there is no recursive structure to model. Group sizes are 2, 4, 8 and
 uniquely, a thread group's structure is stated rather than flattened, and the
 corpus sweep above reports no unreachable session.
 
+**Accepted on 2026-08-08.** A session is identified by `payload.id`, falling
+back to `session_id` only when `id` is absent. `SessionDescriptor` carries a
+`ThreadRole` — `Root`, or `Subagent { parent }` — so a parent id can exist only
+on the variant that has one, and `thread_source: "user"` sitting beside a parent
+is unrepresentable rather than merely unlikely. `ct sessions` marks a subagent
+row with its parent, and the desktop shows the same in the list row and the
+detail header.
+
+**Measured, not asserted.** Against the real local corpus the CLI now lists
+**100 Codex sessions with 100 distinct ids — zero unreachable**, where the old
+identity rule collapsed the same files onto 74. Every session in the corpus,
+both agents together, is now distinct: **596 sessions, 596 ids, no id repeated
+within an agent or across two.** That last figure also closes CT-070, which
+asked for exactly this measurement. The largest thread group was opened member
+by member and each reports a different turn and event count, so resolving twice
+to the same file would fail the check rather than pass it quietly.
+
+The frontend mirror is a discriminated union, not `{ kind, parent: string |
+null }`. The looser shape typechecks every call site through a `parent ?? ""`
+fallback that can never fire — three of them had already been written — and a
+branch no test can reach is a branch no reader can justify. The invalid pairing
+is now a compile error, which was confirmed by writing one and watching `tsc`
+reject it rather than by trusting that it would.
+
+Two things were deliberately not done. Resolution in `ct-application` is
+untouched: with ids unique, the existing exact-match path already answers
+correctly, and changing it would have been a fix aimed at a defect that no
+longer exists. And no tree or nesting was modelled — the sweep found every
+subagent pointing directly at its group's root, so a recursive structure would
+have been built for a shape the corpus does not contain. That remains CT-028's
+question.
+
+One path is defensive rather than exercised: deriving a parent from
+`session_id` when a subagent carries no `parent_thread_id`. All 26 local
+subagent threads carry one. It is covered by unit test and named here so it is
+not later mistaken for measured behaviour.
+
 ### CT-070 · Let the CLI name the agent when two sessions share an id
-`status: todo` · `tier: C` · `size: S` · `source: CT-055`
+`status: done` · `tier: C` · `size: S` · `source: CT-055`
 
 **Why:** `ContextTrace::resolve` takes an id with no agent and its exact-match
 short circuit returns whichever binding was wired first. CT-055 gave the
@@ -151,39 +222,26 @@ incidence.
 disambiguate, or the decision to leave it is recorded against a fresh
 measurement.
 
-### CT-026 · Cost projection
-`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
-**Done when:** per-category cost is derived from a local pricing table, clearly
-marked as an estimate that depends on a table which will go stale.
+**Accepted on 2026-08-08 — the decision is to leave it, recorded against a
+fresh measurement, which is the second of the two outcomes this entry allowed.**
 
-### CT-028 · Session family trees
-`status: todo` · `tier: C` · `size: M` · `source: IDEAS.md §9`
-**Why:** the DAG already parsed for reconstruction contains every abandoned
-branch; showing them is nearly free and no other tool does it.
-**Done when:** branches are enumerated and each is separately inspectable.
+The measurement had to be retaken rather than cited. CT-069 changed what a
+Codex session's id *is*, so the earlier "zero cross-agent collisions in 590
+sessions" described an identity scheme that no longer exists — a number that
+stayed true by luck would have been indistinguishable from one that stayed true
+by argument. Re-measured under the new scheme: **596 sessions, 596 distinct
+ids, zero shared across agents and zero repeated within one.**
 
-### CT-029 · `ct-index` SQLite cache
-`status: todo` · `tier: C` · `size: L` · `source: plan`
-**Why:** deliberately deferred until a command feels slow, so the access
-patterns are known before the cache is tuned. The figure this deferral rests on
-was re-measured under CT-057, because the old one timed a cheaper path than the
-one users wait on. On the largest local session (94.6 MiB, 88 turns) the
-content-analysis path — discovery through to the first rendered turn, the
-slowest route a user can reach — completes in **1.26–1.28 seconds** across three
-runs on an otherwise idle machine, with the file's bytes already in the OS page
-cache. A single genuinely cold observation, taken on a file this machine had not
-read that day and not repeatable without dropping the cache, was **1.71
-seconds**. Cached turn switches stay below 1 ms. Both figures sit inside the
-2-second budget CT-044 accepted, so 0.1 still has no evidence that a persistent
-index is needed — but the warm figure is the repeatable one and the cold figure
-is the one a first-run user meets, and neither is quotable as the other.
-**Done when:** derived metadata is cached, disposable and rebuildable, and no
-domain type depends on it.
+So the unscoped `resolve` retains its documented behaviour of answering with the
+first binding, and that behaviour is still asserted by the test CT-055 added
+rather than left accidental. Refusing a collision by name would be code for a
+case with no observed instance, and this project does not ship a defence it
+cannot demonstrate a need for. The desktop keeps `resolve_in_agent`, because a
+catalog row carries both halves of the identity and there is no reason to
+discard one.
 
-
----
-
-## Done
+If this is revisited, the trigger is a non-zero count from the sweep above, not
+a new argument.
 
 ### CT-066 · Match compaction history without a quadratic scan
 `status: done` · `tier: C` · `size: S` · `source: review`

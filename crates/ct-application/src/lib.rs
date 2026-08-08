@@ -782,6 +782,7 @@ fn matches_filter(descriptor: &SessionDescriptor, filter: &SessionFilter) -> boo
 mod tests {
     use super::*;
     use chrono::{NaiveDate, TimeZone, Utc};
+    use ct_domain::ThreadRole;
 
     fn descriptor(id: &str, agent: AgentKind, project: &str, day: u32) -> SessionDescriptor {
         SessionDescriptor {
@@ -792,6 +793,7 @@ mod tests {
             project: Some(project.into()),
             started_at: None,
             last_activity: Some(Utc.with_ymd_and_hms(2026, 7, day, 0, 0, 0).unwrap()),
+            thread_role: ThreadRole::Root,
         }
     }
 

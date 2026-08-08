@@ -1,0 +1,6 @@
+{"timestamp":"2026-08-01T10:00:00.000Z","type":"session_meta","payload":{"id":"aaaaaaaa-1111-2222-3333-444444444444","session_id":"aaaaaaaa-1111-2222-3333-444444444444","cwd":"C:\\repos\\demo","cli_version":"0.9.0","model_provider":"openai","context_window":272000}}
+{"timestamp":"2026-08-01T10:00:01.000Z","type":"turn_context","payload":{"model":"gpt-5-codex","cwd":"C:\\repos\\demo","approval_policy":"on-request","sandbox_policy":"workspace-write"}}
+{"timestamp":"2026-08-01T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Root thread message one."}]}}
+{"timestamp":"2026-08-01T10:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":500,"output_tokens":50},"model_context_window":272000}}}
+{"timestamp":"2026-08-01T10:00:04.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Root thread message two."}]}}
+{"timestamp":"2026-08-01T10:00:05.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":900,"output_tokens":80},"model_context_window":272000}}}

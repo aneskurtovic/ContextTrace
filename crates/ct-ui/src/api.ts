@@ -8,6 +8,7 @@ import type {
   SessionPage,
   SessionSummary,
   StartupSummary,
+  ThreadRole,
 } from "./types";
 import {
   demoContext,
@@ -50,6 +51,21 @@ function isNumberOrNull(value: unknown) {
   return typeof value === "number" || value === null;
 }
 
+/**
+ * `parent` must be a string exactly when `kind` is `"subagent"`. Checking the
+ * pairing rather than each field alone is the point: the backend's
+ * `ThreadRole` makes the other combination unrepresentable, and a validator
+ * that only checked types independently would silently accept a payload the
+ * type system on the other side of the IPC boundary cannot produce.
+ */
+function isThreadRole(value: unknown): value is ThreadRole {
+  return (
+    isRecord(value) &&
+    ((value.kind === "root" && value.parent === null) ||
+      (value.kind === "subagent" && typeof value.parent === "string"))
+  );
+}
+
 function isSession(value: unknown): value is SessionSummary {
   return (
     isRecord(value) &&
@@ -60,7 +76,8 @@ function isSession(value: unknown): value is SessionSummary {
     typeof value.sizeBytes === "number" &&
     isStringOrNull(value.project) &&
     isStringOrNull(value.startedAt) &&
-    isStringOrNull(value.lastActivity)
+    isStringOrNull(value.lastActivity) &&
+    isThreadRole(value.threadRole)
   );
 }
 

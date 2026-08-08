@@ -5,7 +5,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 import { getContext, getLifecycle, runDoctor, searchSessions } from "./api";
-import { demoDoctor } from "./demo";
+import { demoDoctor, demoSessions } from "./demo";
 
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -62,6 +62,77 @@ describe("desktop IPC response validation", () => {
       "search_sessions",
       expect.objectContaining({ refresh: true }),
     );
+  });
+
+  it("validates a session's thread role, root and subagent alike", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const root = { ...demoSessions[0], threadRole: { kind: "root", parent: null } };
+    const subagent = {
+      ...demoSessions[0],
+      id: "subagent-id",
+      threadRole: { kind: "subagent", parent: demoSessions[0].id },
+    };
+    invoke.mockResolvedValue({
+      sessions: [root, subagent],
+      total: 2,
+      offset: 0,
+      hasMore: false,
+    });
+
+    await expect(searchSessions()).resolves.toMatchObject({
+      sessions: [root, subagent],
+    });
+  });
+
+  it("rejects a session whose thread role pairs a subagent kind with no parent", async () => {
+    // The Rust `ThreadRole` makes this combination unrepresentable; the
+    // frontend validator has to reject it too, or a malformed IPC payload
+    // would slip past the boundary the type system enforces on the other
+    // side.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      sessions: [{ ...demoSessions[0], threadRole: { kind: "subagent", parent: null } }],
+      total: 1,
+      offset: 0,
+      hasMore: false,
+    });
+
+    await expect(searchSessions()).rejects.toThrow(
+      "ContextTrace received an invalid response from session search. Refresh and try again.",
+    );
+  });
+
+  it("rejects a session reporting a root with a parent still attached", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      sessions: [{ ...demoSessions[0], threadRole: { kind: "root", parent: "stray-parent" } }],
+      total: 1,
+      offset: 0,
+      hasMore: false,
+    });
+
+    await expect(searchSessions()).rejects.toThrow(
+      "ContextTrace received an invalid response from session search. Refresh and try again.",
+    );
+  });
+
+  it("holds the demo session catalog to the same contract as the real backend", async () => {
+    // Every other test in this suite stubs `__TAURI_INTERNALS__` and only
+    // exercises the IPC branch, so nothing else would notice `demo.ts`
+    // drifting away from what `search_sessions` actually returns. Feeding the
+    // demo catalog through the validated IPC path is what makes a field wired
+    // into the Rust struct and `types.ts` but forgotten in `demo.ts` (or vice
+    // versa) fail here instead of only at runtime in the unpackaged app.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      sessions: demoSessions,
+      total: demoSessions.length,
+      offset: 0,
+      hasMore: false,
+    });
+
+    await expect(searchSessions()).resolves.toMatchObject({ total: demoSessions.length });
+    expect(demoSessions.some((session) => session.threadRole.kind === "subagent")).toBe(true);
   });
 
   it("rejects malformed paged session responses", async () => {

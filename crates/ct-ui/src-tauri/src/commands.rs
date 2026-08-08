@@ -2,7 +2,7 @@ use ct_application::{timeline, ContextTrace, Departure, LifecycleSweep, SessionF
 use ct_domain::model::context::unmeasured_content_items;
 use ct_domain::{
     AgentKind, CategoryBreakdown, Confidence, ContextItemId, ContextSource, SessionDescriptor,
-    TurnNumber,
+    ThreadRole, TurnNumber,
 };
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -573,6 +573,34 @@ pub struct StartupSummary {
     warnings: Vec<String>,
 }
 
+/// A session's place in its thread group, for the desktop's session list.
+///
+/// Mirrors [`ThreadRole`] rather than flattening it into two nullable fields:
+/// `kind` is `"subagent"` if and only if `parent` is present, because the
+/// domain type makes the other combination unrepresentable and this DTO must
+/// not reopen that door on the way to JSON.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRoleSummary {
+    kind: &'static str,
+    parent: Option<String>,
+}
+
+impl From<ThreadRole> for ThreadRoleSummary {
+    fn from(value: ThreadRole) -> Self {
+        match value {
+            ThreadRole::Root => Self {
+                kind: "root",
+                parent: None,
+            },
+            ThreadRole::Subagent { parent } => Self {
+                kind: "subagent",
+                parent: Some(parent.to_string()),
+            },
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
@@ -583,6 +611,7 @@ pub struct SessionSummary {
     project: Option<String>,
     started_at: Option<String>,
     last_activity: Option<String>,
+    thread_role: ThreadRoleSummary,
 }
 
 /// A bounded, searchable page of locally discovered sessions.
@@ -608,6 +637,7 @@ impl From<SessionDescriptor> for SessionSummary {
             project: value.project,
             started_at: value.started_at.map(|time| time.to_rfc3339()),
             last_activity: value.last_activity.map(|time| time.to_rfc3339()),
+            thread_role: value.thread_role.into(),
         }
     }
 }
@@ -1121,6 +1151,7 @@ mod tests {
             project: Some(project.to_string()),
             started_at: None,
             last_activity: None,
+            thread_role: ThreadRole::Root,
         }
     }
 
@@ -1194,12 +1225,39 @@ mod tests {
             project: Some("ContextTrace".to_string()),
             started_at: None,
             last_activity: None,
+            thread_role: ThreadRole::Root,
         };
 
         let summary = SessionSummary::from(descriptor);
         assert_eq!(summary.id, "abc123");
         assert_eq!(summary.agent, "codex");
         assert_eq!(summary.size_bytes, 42);
+        assert_eq!(summary.thread_role.kind, "root");
+        assert_eq!(summary.thread_role.parent, None);
+    }
+
+    #[test]
+    fn session_summary_reports_a_subagent_thread_and_its_parent() {
+        let descriptor = SessionDescriptor {
+            id: ct_domain::SessionId::new("child-id").unwrap(),
+            agent: AgentKind::Codex,
+            path: "session.jsonl".to_string(),
+            size_bytes: 42,
+            project: Some("ContextTrace".to_string()),
+            started_at: None,
+            last_activity: None,
+            thread_role: ThreadRole::Subagent {
+                parent: ct_domain::SessionId::new("root-id").unwrap(),
+            },
+        };
+
+        let summary = SessionSummary::from(descriptor);
+        assert_eq!(summary.thread_role.kind, "subagent");
+        assert_eq!(summary.thread_role.parent.as_deref(), Some("root-id"));
+
+        let json = serde_json::to_value(&summary).expect("session summary serializes for IPC");
+        assert_eq!(json["threadRole"]["kind"], "subagent");
+        assert_eq!(json["threadRole"]["parent"], "root-id");
     }
 
     #[test]

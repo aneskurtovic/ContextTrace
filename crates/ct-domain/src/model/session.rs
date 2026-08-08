@@ -38,6 +38,32 @@ impl fmt::Display for AgentKind {
     }
 }
 
+/// Where a session sits in its thread group.
+///
+/// Codex's harness writes a subagent thread's `payload.session_id` as its
+/// *parent's* id, not its own, and separately records `thread_source` and
+/// `parent_thread_id`. Two independent `Option` fields would let those
+/// disagree -- `Some(parent)` next to a `thread_source` that names something
+/// other than a subagent -- so the relationship is one field with one shape:
+/// a session is either a root, or a subagent naming the parent it forked
+/// from. The state this rules out ("`Some(parent)` alongside a
+/// non-subagent `thread_source`") cannot be constructed at all, rather than
+/// merely being unlikely to occur.
+///
+/// Deliberately flat, not a tree: CT-069 measured every local subagent thread
+/// naming its group's root directly, with no nesting to model. A nested or
+/// tree presentation is a separate, later question.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ThreadRole {
+    /// An ordinary session, or the root of a thread group.
+    #[default]
+    Root,
+    /// A subagent thread. `parent` is the session id of the thread it forked
+    /// from.
+    Subagent { parent: SessionId },
+}
+
 /// Everything known about a session without parsing its body.
 ///
 /// Discovery produces these cheaply, from filenames and directory structure, so
@@ -56,6 +82,10 @@ pub struct SessionDescriptor {
     pub project: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub last_activity: Option<DateTime<Utc>>,
+    /// This session's place in its thread group. `Root` for every agent that
+    /// records no such structure at all -- see [`ThreadRole`].
+    #[serde(default)]
+    pub thread_role: ThreadRole,
 }
 
 /// Metadata extracted from a parsed session body.
@@ -253,6 +283,11 @@ impl AgentSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_role_defaults_to_root() {
+        assert_eq!(ThreadRole::default(), ThreadRole::Root);
+    }
 
     #[test]
     fn agent_kind_parses_common_spellings() {

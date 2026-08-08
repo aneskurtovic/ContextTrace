@@ -308,6 +308,11 @@ button:disabled {
   padding-top: 2px;
 }
 
+.thread-marker {
+  font-style: italic;
+  color: #83adf6;
+}
+
 .sidebar-footer {
   position: relative;
   padding: 10px 12px 13px;
