@@ -474,6 +474,10 @@ function medianOf(values: number[]): number {
  * not make — which is the same defect as fabricating the fit, one layer down.
  * Turns whose remainder is unknown are excluded from the windows here too,
  * because they are excluded there.
+ *
+ * The five is `ct_application::STEP_WINDOW`. This is the one place that number
+ * is duplicated in TypeScript; if it moves there, these demo markers go quietly
+ * wrong and only looking at the chart would show it.
  */
 function demoStepAt(points: ResidualPoint[], turn: number, nearCompaction: boolean): ResidualStep {
   const known = points.filter(
