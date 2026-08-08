@@ -23,11 +23,18 @@ ct-domain.workspace = true
 ct-application.workspace = true
 ct-runtime.workspace = true
 serde.workspace = true
+# Already in this crate's compiled graph twice over -- `tauri` serializes every
+# command's return value with it, and `ct-adapters` parses session logs with it
+# -- so naming it directly adds an edge, not a crate. `ct export` is the one
+# path where this UI must produce bytes itself rather than hand a value to
+# Tauri's IPC layer, and the alternative was re-implementing `ExportRecord`'s
+# wire shape in a file that does not own it, under a schema version that
+# promises it will not drift.
+serde_json.workspace = true
 tauri = { version = "2.11.5", features = [] }
 
 [dev-dependencies]
 ct-adapters.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

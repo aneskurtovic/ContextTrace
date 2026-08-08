@@ -25,6 +25,10 @@ use ct_domain::{
 /// write to, not only the ones it already has -- and this is the one path
 /// ContextTrace writes, which makes naming it more important than naming the
 /// ones it only reads.
+///
+/// Still one directory now that the desktop writes too: its exports go to a
+/// subdirectory of this root rather than to a second location, so this stays a
+/// complete answer instead of becoming the CLI's half of one.
 pub fn roots(app: &ContextTrace, archive_root: &str) {
     println!("ContextTrace reads these local directories (read-only):\n");
     for (agent, paths) in app.roots() {
@@ -37,7 +41,7 @@ pub fn roots(app: &ContextTrace, archive_root: &str) {
         }
     }
     println!("\nNothing is written to them.\n");
-    println!("It writes to one directory, and only when you run `ct archive`:\n");
+    println!("It writes to one directory, and only when you archive or export a session:\n");
     println!("  {archive_root}\n");
     println!("Nothing leaves this machine either way.");
 }

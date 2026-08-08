@@ -5,16 +5,23 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 import {
+  archivedSessions,
+  archiveSession,
+  exportSession,
   getCompactionDiff,
   getContext,
   getLifecycle,
   getResidual,
-  inspectSession,
+  getStartup,
   getTurnDiff,
+  inspectSession,
   runDoctor,
   searchSessions,
+  verifyArchived,
 } from "./api";
 import {
+  demoArchiveHolding,
+  demoArchiveVerification,
   demoCompactionDiff,
   demoDetail,
   demoDoctor,
@@ -151,9 +158,14 @@ describe("desktop IPC response validation", () => {
     expect(demoSessions.some((session) => session.threadRole.kind === "subagent")).toBe(true);
   });
 
+  // A same-session comparison: both sides name one session, only the turn
+  // differs, the shape most of these tests are actually about.
+  const leftTarget = { agent: "codex" as const, id: "s", turn: 4 };
+  const rightTarget = { agent: "codex" as const, id: "s", turn: 12 };
+
   it("validates each comparability arm on its own terms", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-    const base = demoTurnDiff(4, 12);
+    const base = demoTurnDiff(leftTarget, rightTarget);
 
     for (const comparability of [
       { kind: "identical", estimator: "o200k_base" },
@@ -161,7 +173,7 @@ describe("desktop IPC response validation", () => {
       { kind: "incomparable", left: "o200k_base", right: "chars/2.4", reason: "mixed" },
     ]) {
       invoke.mockResolvedValue({ ...base, comparability });
-      await expect(getTurnDiff("codex", "s", 4, 12)).resolves.toMatchObject({
+      await expect(getTurnDiff(leftTarget, rightTarget)).resolves.toMatchObject({
         comparability,
       });
     }
@@ -174,37 +186,86 @@ describe("desktop IPC response validation", () => {
     // absence of a bound arrive looking like a perfect one.
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     invoke.mockResolvedValue({
-      ...demoTurnDiff(4, 12),
+      ...demoTurnDiff(leftTarget, rightTarget),
       comparability: { kind: "incomparable", skew: 0 },
     });
 
-    await expect(getTurnDiff("codex", "s", 4, 12)).rejects.toThrow(
+    await expect(getTurnDiff(leftTarget, rightTarget)).rejects.toThrow(
       "invalid response from the turn comparison",
     );
   });
 
   it("rejects a category row missing the bound that qualifies its delta", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-    const base = demoTurnDiff(4, 12);
+    const base = demoTurnDiff(leftTarget, rightTarget);
     const [first, ...rest] = base.categories;
     const { instrumentBound: _dropped, ...withoutBound } = first;
     invoke.mockResolvedValue({ ...base, categories: [withoutBound, ...rest] });
 
-    await expect(getTurnDiff("codex", "s", 4, 12)).rejects.toThrow(
+    await expect(getTurnDiff(leftTarget, rightTarget)).rejects.toThrow(
+      "invalid response from the turn comparison",
+    );
+  });
+
+  it("rejects a turn side naming an agent the backend does not know", async () => {
+    // `agentLabel` in the UI falls back to "Claude Code" for anything that
+    // is not literally "codex" -- an unvalidated agent string here would
+    // silently mislabel a side, which is the "two different sessions
+    // presented as one" failure `TurnSide.agent` exists to prevent.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const base = demoTurnDiff(leftTarget, rightTarget);
+    invoke.mockResolvedValue({ ...base, left: { ...base.left, agent: "gpt-5" } });
+
+    await expect(getTurnDiff(leftTarget, rightTarget)).rejects.toThrow(
       "invalid response from the turn comparison",
     );
   });
 
   it("holds the demo turn diff to the same contract as the real backend", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-    invoke.mockResolvedValue(demoTurnDiff(4, 12));
+    invoke.mockResolvedValue(demoTurnDiff(leftTarget, rightTarget));
 
-    const diff = await getTurnDiff("codex", "s", 4, 12);
+    const diff = await getTurnDiff(leftTarget, rightTarget);
     expect(diff.left.turn).toBe(4);
     expect(diff.right.turn).toBe(12);
+    expect(diff.left.id).toBe("s");
+    expect(diff.right.id).toBe("s");
     // Sorted by magnitude, like the engine sorts them.
     const magnitudes = diff.categories.map((row) => Math.abs(row.delta));
     expect([...magnitudes].sort((a, b) => b - a)).toEqual(magnitudes);
+  });
+
+  it("reports a genuine skew for two different Claude Code demo sessions", async () => {
+    // The item this suite used to be unable to exercise at all: `skewed` was
+    // dead code on the wire until the right side could name a different
+    // session. Two different Claude Code demo sessions carry two different
+    // fitted ratios (see `DEMO_CLAUDE_RATIOS` in demo.ts), so comparing them
+    // is a real cross-session request, not a hand-picked fixture.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const left = { agent: "claude-code" as const, id: "a30cb9e1-f9f4-4a37", turn: 4 };
+    const right = { agent: "claude-code" as const, id: "f485150f-0982-4876", turn: 12 };
+    invoke.mockResolvedValue(demoTurnDiff(left, right));
+
+    const diff = await getTurnDiff(left, right);
+    expect(diff.comparability.kind).toBe("skewed");
+    expect(diff.left.id).toBe(left.id);
+    expect(diff.right.id).toBe(right.id);
+  });
+
+  it("reports incomparable for a Codex turn against a Claude Code turn", async () => {
+    // The other previously-unreachable arm: no scale relates a real
+    // tokenizer to a fitted heuristic, and mixing agents is the ordinary way
+    // that happens now that the two sides can be different sessions.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const left = { agent: "codex" as const, id: "0198fce2e48a7b12", turn: 4 };
+    const right = { agent: "claude-code" as const, id: "a30cb9e1-f9f4-4a37", turn: 12 };
+    invoke.mockResolvedValue(demoTurnDiff(left, right));
+
+    const diff = await getTurnDiff(left, right);
+    expect(diff.comparability.kind).toBe("incomparable");
+    if (diff.comparability.kind === "incomparable") {
+      expect(diff.comparability.reason).toContain("Codex records its system prompt");
+    }
   });
 
   it("validates a fitted unlogged-context report and keeps an unknown remainder null", async () => {
@@ -612,6 +673,222 @@ describe("desktop IPC response validation", () => {
     invoke.mockResolvedValue(demoCompactionDiff("claude-code", 4821));
     await expect(getCompactionDiff("claude-code", "session-1", 4821)).resolves.toMatchObject({
       status: "unsupported",
+    });
+  });
+
+  it("requires the written archive root on startup, not just the read roots", async () => {
+    // A missing `archiveRoot` must not pass validation and render `undefined`
+    // exactly where this tool's privacy claim names the one directory it
+    // writes to.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      roots: [{ agent: "codex", paths: ["C:\\fixtures\\codex"] }],
+      warnings: [],
+    });
+
+    await expect(getStartup()).rejects.toThrow(
+      "ContextTrace received an invalid response from startup. Refresh and try again.",
+    );
+
+    invoke.mockResolvedValue({
+      roots: [{ agent: "codex", paths: ["C:\\fixtures\\codex"] }],
+      warnings: [],
+      archiveRoot: "C:\\fixtures\\archive",
+    });
+    await expect(getStartup()).resolves.toMatchObject({ archiveRoot: "C:\\fixtures\\archive" });
+  });
+
+  describe("archive & export", () => {
+    const entry = {
+      id: "abc123",
+      agent: "codex" as const,
+      project: "C:\\work\\demo",
+      archivedAt: "2026-01-01T00:00:00Z",
+      redaction: "redacted" as const,
+      records: 10,
+      sourceBytes: 1_000,
+      archivedBytes: 1_000,
+      redactedRecords: 0,
+      redactedValues: 0,
+      differsFromSource: false,
+    };
+
+    it("validates and forwards the archive listing", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({ root: "C:\\fixtures\\archive", entries: [entry] });
+
+      await expect(archivedSessions()).resolves.toEqual({
+        root: "C:\\fixtures\\archive",
+        entries: [entry],
+      });
+      expect(invoke).toHaveBeenCalledWith("archived_sessions");
+    });
+
+    it("rejects a redaction value outside the two the domain can produce", async () => {
+      // A drifted `"Redacted"` (capitalised) or any other stray string must
+      // not pass a bare `typeof === "string"` check -- this is the one field
+      // that tells a reader whether a copy still holds credentials, and a
+      // loose validator here would render a false "redacted" for a payload
+      // whose actual mode is unknown.
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({
+        root: "C:\\fixtures\\archive",
+        entries: [{ ...entry, redaction: "Redacted" }],
+      });
+
+      await expect(archivedSessions()).rejects.toThrow(
+        "ContextTrace received an invalid response from the archive. Refresh and try again.",
+      );
+    });
+
+    it("rejects an entry missing the flag that says a copy differs from its source", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const { differsFromSource: _dropped, ...withoutFlag } = entry;
+      invoke.mockResolvedValue({ root: "C:\\fixtures\\archive", entries: [withoutFlag] });
+
+      await expect(archivedSessions()).rejects.toThrow(
+        "ContextTrace received an invalid response from the archive. Refresh and try again.",
+      );
+    });
+
+    it("archives a session through the requested mode and forwards raw explicitly", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue(entry);
+
+      await expect(archiveSession("codex", "abc123", true)).resolves.toEqual(entry);
+      expect(invoke).toHaveBeenCalledWith("archive_session", { id: "abc123", agent: "codex", raw: true });
+    });
+
+    it("refuses to archive or export with a stated refusal, not a malformed-response error", async () => {
+      // Demo mode has no real session to copy and no real file to write.
+      // The rejection must read as a refusal ("nothing to write") rather
+      // than as `malformed()`'s "invalid response" wording, which would
+      // surface in the UI's error banner as though something had broken.
+      delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+
+      await expect(archiveSession("codex", "abc123", false)).rejects.toThrow(
+        "Demo mode has nothing to write.",
+      );
+      await expect(exportSession("codex", "abc123", false)).rejects.toThrow(
+        "Demo mode has nothing to write.",
+      );
+      expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("validates each ArchiveIntegritySummary kind on its own terms", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const cases: Array<Record<string, unknown>> = [
+        { kind: "intact" },
+        {
+          kind: "sourceChanged",
+          recordedDigest: "a",
+          currentDigest: "b",
+          recordedBytes: 1,
+          currentBytes: 2,
+        },
+        { kind: "sourceGone", archiveMatchesDigest: true },
+        { kind: "archiveDamaged", recordedDigest: "a", currentDigest: "b" },
+      ];
+      for (const integrity of cases) {
+        invoke.mockResolvedValue({ integrity, copyIsSound: true, rebuildable: false });
+        await expect(verifyArchived("codex", "abc123")).resolves.toMatchObject({ integrity });
+      }
+    });
+
+    it("rejects a sourceGone verification missing its own boolean rather than defaulting it", async () => {
+      // `archiveMatchesDigest` is the one field that distinguishes "the only
+      // copy left, and it proves itself" from "the only copy left, and it
+      // does not" -- a missing value must not silently read as `false`.
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({
+        integrity: { kind: "sourceGone" },
+        copyIsSound: true,
+        rebuildable: false,
+      });
+
+      await expect(verifyArchived("codex", "abc123")).rejects.toThrow(
+        "invalid response from verifying this archived session",
+      );
+    });
+
+    it("rejects a verification missing copyIsSound or rebuildable rather than re-deriving them", async () => {
+      // These are the domain's own judgements
+      // (`ArchiveIntegrity::copy_is_sound`/`::rebuildable`), carried across
+      // the wire rather than recomputed here -- a missing one must fail
+      // loudly, not fall back to a locally guessed answer.
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({ integrity: { kind: "intact" }, rebuildable: false });
+
+      await expect(verifyArchived("codex", "abc123")).rejects.toThrow(
+        "invalid response from verifying this archived session",
+      );
+    });
+
+    it("validates and forwards an export outcome", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const outcome = {
+        path: "C:\\fixtures\\archive\\export\\codex\\abc123.ndjson",
+        bytes: 4_096,
+        records: 12,
+        redaction: "secrets" as const,
+        redactions: 2,
+      };
+      invoke.mockResolvedValue(outcome);
+
+      await expect(exportSession("codex", "abc123", true)).resolves.toEqual(outcome);
+      expect(invoke).toHaveBeenCalledWith("export_session", {
+        id: "abc123",
+        agent: "codex",
+        redactSecrets: true,
+      });
+    });
+
+    it("rejects an export redaction value outside none/secrets", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({
+        path: "p",
+        bytes: 1,
+        records: 1,
+        redaction: "all",
+        redactions: 0,
+      });
+
+      await expect(exportSession("codex", "abc123", false)).rejects.toThrow(
+        "invalid response from exporting this session",
+      );
+    });
+
+    it("holds the demo archive fixtures to the same contract as the real backend", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue(demoArchiveHolding);
+      await expect(archivedSessions()).resolves.toEqual(demoArchiveHolding);
+
+      // Every one of the demo holding's entries verifies to a valid,
+      // validator-passing shape -- including the four integrity kinds and
+      // both readings of `sourceGone`'s own boolean, so all of them are
+      // actually reachable by clicking "Verify" on a demo row rather than
+      // only existing in demo.ts's own tables.
+      const seenKinds = new Set<string>();
+      const seenSourceGoneReadings = new Set<boolean>();
+      for (const holdingEntry of demoArchiveHolding.entries) {
+        const verification = demoArchiveVerification(holdingEntry.agent, holdingEntry.id);
+        invoke.mockResolvedValue(verification);
+        await expect(verifyArchived(holdingEntry.agent, holdingEntry.id)).resolves.toEqual(
+          verification,
+        );
+        seenKinds.add(verification.integrity.kind);
+        if (verification.integrity.kind === "sourceGone") {
+          seenSourceGoneReadings.add(verification.integrity.archiveMatchesDigest);
+        }
+        // A row whose entry says it differs from its source must actually
+        // carry replaced values, and vice versa -- the flag and the count it
+        // is computed from must agree in the fixture the same way
+        // `ArchiveEntry::differs_from_source` requires them to on the real
+        // backend.
+        expect(holdingEntry.differsFromSource).toBe(holdingEntry.redactedValues > 0);
+      }
+      expect(seenKinds).toEqual(new Set(["intact", "sourceChanged", "sourceGone", "archiveDamaged"]));
+      expect(seenSourceGoneReadings).toEqual(new Set([true, false]));
     });
   });
 });

@@ -191,6 +191,70 @@ domain type depends on it.
 
 ## Done
 
+### CT-076 · Close the desktop's gap on the CLI
+`status: done` · `tier: A` · `size: L` · `source: product decision`
+
+**Why:** the CLI had fourteen commands and the desktop app answered nine of
+them. Three capabilities were missing outright — archiving, export, and
+comparing turns across two sessions — so the surface most people would actually
+open was the weaker one, and the newest capability (CT-074's archive) existed
+only in a terminal.
+
+**Done when:** every measurement the CLI can produce is reachable from the
+desktop, or its absence is stated rather than left to be discovered.
+
+**Cross-session diff was not a new feature — it was making reachable what was
+already written.** `ComparabilitySummary` has three variants and the desktop
+already rendered all three, but `get_turn_diff` took one session and two turn
+numbers, so only `identical` could ever be constructed. Two of three arms were
+serialized, styled and dead. Widening the command to name two sessions is what
+brought `skewed` and `incomparable` into existence on this surface; the demo
+fixtures now produce all three from the same rule the domain applies, so the
+arms are exercised rather than asserted.
+
+**The pin followed the selection.** The baseline is a bare turn number, and
+opening a different session carried it across — rebasing onto a session the
+user never pinned, at a turn chosen for a different one and which the new
+session may not even have. The reset block that clears the cross-session pick
+and the last export result on selection change already stated the principle;
+the pin had simply been missed. Found by using the feature in a browser, not by
+a test.
+
+**One directory, still.** The desktop's exports nest under the archive root
+rather than claiming a second path, because `ct roots` says there is one
+written directory and an export landing elsewhere would falsify that sentence
+instead of extending it. That sentence itself was re-captured from a real run:
+it used to end "only when you run `ct archive`", which stopped being true the
+moment a second interface could write.
+
+**The desktop's export redacts by default and `ct export` does not**, which is
+a deliberate divergence rather than an oversight. The CLI writes to stdout —
+the destination is chosen in the same breath as the command and is often a pipe
+that never becomes a file. The desktop writes a durable file into a directory
+it chose, beside the archive, so the reasoning that made the archive redact by
+default applies unchanged. Having one subdirectory of that root default to
+redacted while its sibling defaulted to raw would be a distinction nobody could
+hold in their head.
+
+**Rows that would lie about being clickable.** In a GUI a list of sessions
+reads as "click to open", and nothing reads an archived session back yet —
+CT-075 is that item. A row that silently did nothing would make the desktop
+worse than the CLI on the same capability, and one that opened the *live*
+session instead would present a copy as the thing itself. So the rows carry
+exactly one control, it verifies rather than opens, and the panel says plainly
+that nothing reads a copy back yet on either surface.
+
+**Verified:** `cargo fmt --check`, `cargo clippy --workspace --all-targets -D
+warnings` at zero, 392 Rust tests and 75 frontend tests, the production bundle,
+and a browser pass over every new panel — which is where the unstyled archive
+list and the drifting baseline were both caught.
+
+**Deliberately not done:** `--exact` tokenizer measurement and item filters on
+the context and largest views. `--exact` is Codex-only, so it needs a control
+that is disabled with a stated reason on Claude Code sessions rather than
+silently inert, and that is a real piece of work rather than a flag. Left out
+and said so rather than shipped thin.
+
 ### CT-074 · Archive sessions so they outlive the logs
 `status: done` · `tier: B` · `size: L` · `source: product decision`
 

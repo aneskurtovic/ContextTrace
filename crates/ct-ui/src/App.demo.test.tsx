@@ -37,4 +37,20 @@ describe("desktop without the Tauri bridge", () => {
     expect(await screen.findByText("Demo data")).not.toBeNull();
     expect(screen.queryByText("Local only")).toBeNull();
   });
+
+  it("refuses to write rather than pretending it wrote something", async () => {
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+
+    render(<App />);
+
+    // Archiving and exporting are this app's only writes. With no bridge there
+    // is no session to copy and no directory to copy it into, so the controls
+    // are disabled and say why — a fabricated success here would be the one
+    // demo claim a user could act on and be wrong about.
+    const archive = await screen.findByRole("button", { name: /to the archive$/ });
+    expect(archive.hasAttribute("disabled")).toBe(true);
+    const write = screen.getByRole("button", { name: "Export to NDJSON" });
+    expect(write.hasAttribute("disabled")).toBe(true);
+    expect(screen.getAllByText(/Demo mode has nothing to write/).length).toBe(2);
+  });
 });

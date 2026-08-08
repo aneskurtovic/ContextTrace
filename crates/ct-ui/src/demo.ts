@@ -1,5 +1,9 @@
 import type {
   Agent,
+  ArchiveHolding,
+  ArchiveIntegritySummary,
+  ArchiveVerification,
+  Comparability,
   CompactionDiff,
   ContextDetail,
   DoctorReport,
@@ -13,6 +17,7 @@ import type {
   StartupSummary,
   ThreadRole,
   TurnDiff,
+  TurnTarget,
 } from "./types";
 
 /** The log line the demo session's one compaction marker sits on. Arbitrary
@@ -113,13 +118,157 @@ const RESIDUAL_FITTED_SESSION = "a30cb9e1-f9f4-4a37";
 const RESIDUAL_OVER_COUNTED_SESSION = "f485150f-0982-4876";
 const RESIDUAL_SHORT_SESSION = "b71d4c08-2e55-41aa";
 
+/** The one directory this demo pretends to write to. Named consistently with
+ *  `demoArchiveHolding.root` below -- the startup panel and the archive
+ *  panel are stating the same fact from two places, and a real backend
+ *  would have to agree with itself too. */
+const DEMO_ARCHIVE_ROOT = "C:\\Users\\demo\\AppData\\Local\\ContextTrace-archive";
+
 export const demoStartup: StartupSummary = {
   roots: [
     { agent: "codex", paths: ["C:\\Users\\demo\\.codex\\sessions"] },
     { agent: "claude-code", paths: ["C:\\Users\\demo\\.claude\\projects"] },
   ],
   warnings: [],
+  archiveRoot: DEMO_ARCHIVE_ROOT,
 };
+
+/**
+ * What checking each demo archived session finds, keyed by id.
+ *
+ * Five entries cover the four `ArchiveIntegrity` kinds plus both readings of
+ * `sourceGone`'s own boolean -- `archiveMatchesDigest: true` is the case this
+ * whole feature exists for (a vanished source with a copy that still proves
+ * itself), and `false` is the one situation nothing can recover from, which
+ * a demo that stopped at the first `sourceGone` would never show.
+ */
+const DEMO_ARCHIVE_SOURCE_CHANGED_ID = "0198fb914e330a81";
+const DEMO_ARCHIVE_SOURCE_GONE_SOUND_ID = "0198e0a1b2c3d4e5";
+const DEMO_ARCHIVE_SOURCE_GONE_UNSOUND_ID = "0198e0f9c1a2b3d4";
+const DEMO_ARCHIVE_DAMAGED_ID = "0198e155d2e3f405";
+
+const DEMO_ARCHIVE_INTEGRITY: Record<string, ArchiveIntegritySummary> = {
+  "0198fce2e48a7b12": { kind: "intact" },
+  [DEMO_ARCHIVE_SOURCE_CHANGED_ID]: {
+    kind: "sourceChanged",
+    recordedDigest: "3f2c9a7e1d5b8046b12f0c3ae99d21a4",
+    currentDigest: "8b41ff02cc7719ad4e6a0d5f8b213c77",
+    recordedBytes: 640_000,
+    // Matches this id's live `sizeBytes` in `demoSessions`: the session kept
+    // going after it was archived, which is the ordinary reason a log grows.
+    currentBytes: 812_413,
+  },
+  [DEMO_ARCHIVE_SOURCE_GONE_SOUND_ID]: { kind: "sourceGone", archiveMatchesDigest: true },
+  [DEMO_ARCHIVE_SOURCE_GONE_UNSOUND_ID]: { kind: "sourceGone", archiveMatchesDigest: false },
+  [DEMO_ARCHIVE_DAMAGED_ID]: {
+    kind: "archiveDamaged",
+    recordedDigest: "1a2b3c4d5e6f70899fedcba012345678",
+    currentDigest: "90a1b2c3d4e5f60712345678abcdefab",
+  },
+};
+
+/** Mirrors `ArchiveIntegrity::copy_is_sound` / `::rebuildable`
+ *  (`ct_domain::model::archive`) so the demo booleans agree with the rule
+ *  the domain actually enforces, rather than being typed in by hand beside
+ *  it -- the same discipline `demoStepAt` uses for the residual step rule. */
+function deriveArchiveVerification(integrity: ArchiveIntegritySummary): ArchiveVerification {
+  const copyIsSound =
+    integrity.kind === "archiveDamaged"
+      ? false
+      : integrity.kind === "sourceGone"
+        ? integrity.archiveMatchesDigest
+        : true;
+  const rebuildable = integrity.kind === "sourceChanged" || integrity.kind === "archiveDamaged";
+  return { integrity, copyIsSound, rebuildable };
+}
+
+/** Everything this demo pretends the archive holds, most recently archived
+ *  first like the real listing. Two entries reuse a live demo session's id
+ *  (the ordinary case: the source is still on disk) and three name sessions
+ *  that appear nowhere in `demoSessions` at all -- the archive is the only
+ *  place left holding them, which is what `sourceGone` and `archiveDamaged`
+ *  mean. */
+export const demoArchiveHolding: ArchiveHolding = {
+  root: DEMO_ARCHIVE_ROOT,
+  entries: [
+    {
+      id: DEMO_ARCHIVE_DAMAGED_ID,
+      agent: "codex",
+      project: "C:\\work\\bit-rot-check",
+      archivedAt: ago(300),
+      redaction: "redacted",
+      records: 12,
+      sourceBytes: 40_000,
+      archivedBytes: 40_000,
+      redactedRecords: 0,
+      redactedValues: 0,
+      differsFromSource: false,
+    },
+    {
+      id: DEMO_ARCHIVE_SOURCE_GONE_UNSOUND_ID,
+      agent: "claude-code",
+      project: "C:\\work\\retired-service",
+      archivedAt: ago(1_400),
+      // Raw is the explicit, unusual opt-in -- the one demo row that carries
+      // it, so the "not the default" copy has something concrete beside it.
+      redaction: "raw",
+      records: 58,
+      sourceBytes: 98_000,
+      archivedBytes: 98_000,
+      redactedRecords: 0,
+      redactedValues: 0,
+      differsFromSource: false,
+    },
+    {
+      id: DEMO_ARCHIVE_SOURCE_GONE_SOUND_ID,
+      agent: "codex",
+      project: "C:\\work\\deprecated-tool",
+      archivedAt: ago(900),
+      redaction: "redacted",
+      records: 96,
+      sourceBytes: 210_000,
+      archivedBytes: 210_340,
+      redactedRecords: 2,
+      redactedValues: 3,
+      // The row this flag exists for: the copy is not byte-identical to a
+      // source that no longer exists to compare it against.
+      differsFromSource: true,
+    },
+    {
+      id: DEMO_ARCHIVE_SOURCE_CHANGED_ID,
+      agent: "codex",
+      project: "C:\\work\\semantic-search",
+      archivedAt: ago(50),
+      redaction: "redacted",
+      records: 210,
+      sourceBytes: 640_000,
+      archivedBytes: 640_000,
+      redactedRecords: 0,
+      redactedValues: 0,
+      differsFromSource: false,
+    },
+    {
+      id: "0198fce2e48a7b12",
+      agent: "codex",
+      project: "C:\\work\\ContextTrace",
+      archivedAt: ago(4),
+      redaction: "redacted",
+      records: 842,
+      sourceBytes: 3_829_760,
+      archivedBytes: 3_829_760,
+      redactedRecords: 0,
+      redactedValues: 0,
+      differsFromSource: false,
+    },
+  ],
+};
+
+/** Verifying one demo archived session. Any id not named in
+ *  `DEMO_ARCHIVE_INTEGRITY` reports `intact` -- the ordinary case for a copy
+ *  nothing has checked yet, not a refusal. */
+export function demoArchiveVerification(_agent: Agent, id: string): ArchiveVerification {
+  return deriveArchiveVerification(DEMO_ARCHIVE_INTEGRITY[id] ?? { kind: "intact" });
+}
 
 const growthValues = [
   12_840, 15_320, 18_010, 22_870, 27_430, 31_220, 37_980, 41_500,
@@ -351,30 +500,102 @@ export function demoCompactionDiff(agent: Agent, lineNo: number): CompactionDiff
 }
 
 /**
- * A comparison of two turns of the demonstration session.
+ * Fitted characters-per-token ratios for the demo Claude Code sessions,
+ * named individually rather than derived from a hash of the id.
  *
- * Derived from the same category table and growth series `demoContext` uses,
- * so the deltas here agree with what the composition panel shows for those two
- * turns rather than being a second, independently invented set of numbers.
- *
- * Comparability is `identical` because both sides come from one session, and a
- * session is calibrated once — which is what the real backend reports on this
- * path too. Fabricating a `skewed` or `incomparable` case here would put a
- * state on screen that the app cannot actually produce.
+ * A hash can collide two different sessions onto the same ratio, which would
+ * make a cross-session comparison between them report `identical` -- the
+ * exact defect a hash-based stand-in would reproduce in demo mode. Naming
+ * the three real Claude Code demo sessions here, each with its own figure,
+ * is what `ct_runtime::calibrate_session` actually does: one fit per
+ * session, from that session's own turns.
  */
-export function demoTurnDiff(leftTurn: number, rightTurn: number): TurnDiff {
-  const left = demoContext(leftTurn);
-  const right = demoContext(rightTurn);
+const DEMO_CLAUDE_RATIOS: Record<string, number> = {
+  "a30cb9e1-f9f4-4a37": 2.05,
+  "f485150f-0982-4876": 2.42,
+  "b71d4c08-2e55-41aa": 2.3,
+};
+
+/** The instrument one demo session would report, mirroring
+ *  `ct_application::Instrument` and how `commands.rs`'s `turn_diff` picks
+ *  one: a fitted ratio for Claude Code, the session's own tokenizer name for
+ *  Codex. Codex's `chars_per_token` is `null` -- it has nothing to fit --
+ *  which is what lets two different Codex sessions still compare as
+ *  `identical` below, the same as the real backend. */
+function demoInstrument(agent: Agent, id: string): { name: string; charsPerToken: number | null } {
+  if (agent === "codex") return { name: "o200k_base", charsPerToken: null };
+  const ratio = DEMO_CLAUDE_RATIOS[id] ?? 2.2;
+  return { name: `heuristic:chars/${ratio.toFixed(1)}`, charsPerToken: ratio };
+}
+
+/**
+ * Mirrors `Comparability::of` (`ct_application::diff`) exactly, including its
+ * reason text, so a demo cross-session comparison is reachable for *any* two
+ * demo sessions a caller names -- not one hand-picked pair -- and reports the
+ * same kind a real backend would for the same instrument combination.
+ */
+function demoComparability(left: TurnTarget, right: TurnTarget): Comparability {
+  const agentsDiffer = left.agent !== right.agent;
+  const l = demoInstrument(left.agent, left.id);
+  const r = demoInstrument(right.agent, right.id);
+
+  if (l.charsPerToken != null && r.charsPerToken != null) {
+    if (l.charsPerToken === r.charsPerToken && l.name === r.name) {
+      return { kind: "identical", estimator: l.name };
+    }
+    return { kind: "skewed", left: l.name, right: r.name, skew: Math.abs(l.charsPerToken / r.charsPerToken - 1) };
+  }
+  if (l.charsPerToken == null && r.charsPerToken == null && l.name === r.name) {
+    return { kind: "identical", estimator: l.name };
+  }
+  return {
+    kind: "incomparable",
+    left: l.name,
+    right: r.name,
+    reason: agentsDiffer
+      ? "one side is measured with a tokenizer and the other estimated from a ratio, and the " +
+        "two agents do not log the same things -- Codex records its system prompt, so the " +
+        "residuals are not the same quantity"
+      : "the two sides were sized by different kinds of instrument, and no factor relates their scales",
+  };
+}
+
+/**
+ * A comparison of two turns -- of one demo session, as before, or of two
+ * different ones now that the panel can ask for that.
+ *
+ * Category and tool figures are still read from `demoContext`, so the deltas
+ * agree with what the composition panel shows for each turn rather than
+ * being a second, independently invented set of numbers. What changed is
+ * `comparability`: it is computed from the two sides' identities via
+ * `demoComparability` instead of asserted as `identical`, so `skewed` and
+ * `incomparable` are genuinely reachable here -- pick two different Claude
+ * Code demo sessions for a skew, or a Codex and a Claude Code session for an
+ * incomparable pair -- exactly as choosing them would produce on a real
+ * backend.
+ */
+export function demoTurnDiff(left: TurnTarget, right: TurnTarget): TurnDiff {
+  const leftContext = demoContext(left.turn);
+  const rightContext = demoContext(right.turn);
   const byCategory = (detail: ContextDetail, label: string) =>
     detail.categories.find((category) => category.label === label);
 
-  const labels = [...new Set(left.categories.concat(right.categories).map((c) => c.label))];
+  const comparability = demoComparability(left, right);
+  // `Comparability::of` never widens the bound for skew; `identical` bounds
+  // nothing away (0) and `incomparable` states no bound at all (null) --
+  // mirrored here rather than read off `tokensComparable` in the UI, so the
+  // fixture is honest about what a real backend would attach to each row.
+  const skew =
+    comparability.kind === "identical" ? 0 : comparability.kind === "skewed" ? comparability.skew : null;
+
+  const labels = [...new Set(leftContext.categories.concat(rightContext.categories).map((c) => c.label))];
   const categories = labels
     .map((label) => {
-      const l = byCategory(left, label);
-      const r = byCategory(right, label);
+      const l = byCategory(leftContext, label);
+      const r = byCategory(rightContext, label);
       const leftTokens = l?.tokens ?? 0;
       const rightTokens = r?.tokens ?? 0;
+      const bound = skew == null ? null : Math.ceil(Math.max(leftTokens, rightTokens) * skew);
       return {
         category: label,
         left: leftTokens,
@@ -383,14 +604,15 @@ export function demoTurnDiff(leftTurn: number, rightTurn: number): TurnDiff {
         leftItems: l?.itemCount ?? 0,
         rightItems: r?.itemCount ?? 0,
         itemDelta: (r?.itemCount ?? 0) - (l?.itemCount ?? 0),
-        // One instrument on both sides, so nothing but content can move a row.
-        instrumentBound: 0,
-        meaningful: rightTokens !== leftTokens,
+        instrumentBound: bound,
+        meaningful: bound != null && Math.abs(rightTokens - leftTokens) > bound,
       };
     })
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 
-  const side = (detail: ContextDetail) => ({
+  const side = (target: TurnTarget, detail: ContextDetail) => ({
+    id: target.id,
+    agent: target.agent,
     turn: detail.turn,
     totalTokens: detail.totalTokens,
     items: detail.categories.reduce((sum, category) => sum + category.itemCount, 0),
@@ -399,10 +621,10 @@ export function demoTurnDiff(leftTurn: number, rightTurn: number): TurnDiff {
   });
 
   return {
-    left: side(left),
-    right: side(right),
-    comparability: { kind: "identical", estimator: "o200k_base" },
-    promptDelta: right.totalTokens - left.totalTokens,
+    left: side(left, leftContext),
+    right: side(right, rightContext),
+    comparability,
+    promptDelta: rightContext.totalTokens - leftContext.totalTokens,
     totalsAreObserved: true,
     categories,
     tools: [
@@ -418,8 +640,9 @@ export function demoTurnDiff(leftTurn: number, rightTurn: number): TurnDiff {
           tokens: Math.round((tokens as number) * share),
         };
       };
-      const l = at(left);
-      const r = at(right);
+      const l = at(leftContext);
+      const r = at(rightContext);
+      const bound = skew == null ? null : Math.ceil(Math.max(l.tokens, r.tokens) * skew);
       return {
         tool: String(tool),
         leftCalls: l.calls,
@@ -428,8 +651,8 @@ export function demoTurnDiff(leftTurn: number, rightTurn: number): TurnDiff {
         rightTokens: r.tokens,
         callDelta: r.calls - l.calls,
         tokenDelta: r.tokens - l.tokens,
-        instrumentBound: 0,
-        meaningful: r.tokens !== l.tokens,
+        instrumentBound: bound,
+        meaningful: bound != null && Math.abs(r.tokens - l.tokens) > bound,
       };
     }),
   };

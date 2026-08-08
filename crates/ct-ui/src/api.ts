@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Agent,
+  ArchiveEntrySummary,
+  ArchiveHolding,
+  ArchiveIntegritySummary,
+  ArchiveVerification,
   CategoryDelta,
   Comparability,
   CompactionDiff,
@@ -8,6 +12,7 @@ import type {
   CompactionItemDisposition,
   ContextDetail,
   DoctorReport,
+  ExportOutcome,
   LifecycleReport,
   ResidualPoint,
   ResidualReport,
@@ -20,8 +25,11 @@ import type {
   ToolDelta,
   TurnDiff,
   TurnSide,
+  TurnTarget,
 } from "./types";
 import {
+  demoArchiveHolding,
+  demoArchiveVerification,
   demoCompactionDiff,
   demoContext,
   demoDetail,
@@ -52,6 +60,8 @@ type UnknownRecord = Record<string, unknown>;
 
 const agents = new Set(["codex", "claude-code"]);
 const confidenceLevels = new Set(["observed", "derived", "estimated"]);
+const redactionModes = new Set(["redacted", "raw"]);
+const exportRedactionLevels = new Set(["none", "secrets"]);
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
@@ -112,7 +122,11 @@ function asStartup(value: unknown): StartupSummary {
         root.paths.every((path) => typeof path === "string"),
     ) ||
     !Array.isArray(value.warnings) ||
-    !value.warnings.every((warning) => typeof warning === "string")
+    !value.warnings.every((warning) => typeof warning === "string") ||
+    // Required, not optional: an absent written root would render as
+    // `undefined` exactly where this tool's privacy claim names the one
+    // directory it writes to.
+    typeof value.archiveRoot !== "string"
   ) {
     throw malformed("startup");
   }
@@ -493,6 +507,14 @@ function isComparability(value: unknown): value is Comparability {
 function isTurnSide(value: unknown): value is TurnSide {
   return (
     isRecord(value) &&
+    typeof value.id === "string" &&
+    // Checked against the known set, not just `typeof`: `agentLabel` falls
+    // back to "Claude Code" for anything that isn't literally `"codex"`, so
+    // an unrecognised agent string here would silently mislabel a side --
+    // the exact "two different sessions presented as one" failure this field
+    // exists to prevent.
+    typeof value.agent === "string" &&
+    agents.has(value.agent) &&
     typeof value.turn === "number" &&
     typeof value.totalTokens === "number" &&
     typeof value.items === "number" &&
@@ -549,14 +571,22 @@ function asTurnDiff(value: unknown): TurnDiff {
   return value as unknown as TurnDiff;
 }
 
-export function getTurnDiff(
-  agent: Agent,
-  id: string,
-  leftTurn: number,
-  rightTurn: number,
-): Promise<TurnDiff> {
-  if (!inTauri()) return Promise.resolve(demoTurnDiff(leftTurn, rightTurn));
-  return invoke<unknown>("get_turn_diff", { id, agent, leftTurn, rightTurn }).then(asTurnDiff);
+/**
+ * Compare a turn against another turn -- of the same session or a different
+ * one. `left`/`right` each carry their own `agent`/`id` rather than sharing
+ * one, because the right side is no longer guaranteed to be the session the
+ * left side came from.
+ */
+export function getTurnDiff(left: TurnTarget, right: TurnTarget): Promise<TurnDiff> {
+  if (!inTauri()) return Promise.resolve(demoTurnDiff(left, right));
+  return invoke<unknown>("get_turn_diff", {
+    leftId: left.id,
+    leftAgent: left.agent,
+    leftTurn: left.turn,
+    rightId: right.id,
+    rightAgent: right.agent,
+    rightTurn: right.turn,
+  }).then(asTurnDiff);
 }
 
 function isResidualPoint(value: unknown): value is ResidualPoint {
@@ -640,4 +670,155 @@ function asResidual(value: unknown): ResidualReport {
 export function getResidual(agent: Agent, id: string): Promise<ResidualReport> {
   if (!inTauri()) return Promise.resolve(demoResidual(agent, id));
   return invoke<unknown>("get_residual", { id, agent }).then(asResidual);
+}
+
+// ---- Archive & export -----------------------------------------------------
+
+/** A write action asked for with no desktop bridge to carry it out. Thrown
+ *  rather than faked, because claiming a file was written when nothing was
+ *  is the one lie this tool cannot afford: its whole claim is evidence over
+ *  invention, and a fabricated write is invention with a path attached. */
+function demoRefusesToWrite(action: string): Error {
+  return new Error(`Demo mode has nothing to write. ${action} needs the desktop app reading a local log.`);
+}
+
+function isArchiveEntry(value: unknown): value is ArchiveEntrySummary {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.agent === "string" &&
+    agents.has(value.agent) &&
+    isStringOrNull(value.project) &&
+    typeof value.archivedAt === "string" &&
+    typeof value.redaction === "string" &&
+    redactionModes.has(value.redaction) &&
+    typeof value.records === "number" &&
+    typeof value.sourceBytes === "number" &&
+    typeof value.archivedBytes === "number" &&
+    typeof value.redactedRecords === "number" &&
+    typeof value.redactedValues === "number" &&
+    // Required: this is the flag that keeps a redacted copy from being read
+    // as byte-identical to its source once the source is gone. A missing
+    // value must not fall back to `undefined` reading as falsy -- that would
+    // silently assert the copy matches when the backend never said so.
+    typeof value.differsFromSource === "boolean"
+  );
+}
+
+/**
+ * Each arm checks only the fields that arm carries, mirroring `isComparability`
+ * and `isThreadRole` above: `sourceGone.archiveMatchesDigest` is a required
+ * boolean, not an optional one that would read as `false` -- "the copy no
+ * longer matches" -- if the backend ever omitted it.
+ */
+function isArchiveIntegrity(value: unknown): value is ArchiveIntegritySummary {
+  if (!isRecord(value)) return false;
+  if (value.kind === "intact") return true;
+  if (value.kind === "sourceChanged") {
+    return (
+      typeof value.recordedDigest === "string" &&
+      typeof value.currentDigest === "string" &&
+      typeof value.recordedBytes === "number" &&
+      typeof value.currentBytes === "number"
+    );
+  }
+  if (value.kind === "sourceGone") {
+    return typeof value.archiveMatchesDigest === "boolean";
+  }
+  if (value.kind === "archiveDamaged") {
+    return typeof value.recordedDigest === "string" && typeof value.currentDigest === "string";
+  }
+  return false;
+}
+
+function asArchiveEntrySummary(value: unknown): ArchiveEntrySummary {
+  if (!isArchiveEntry(value)) throw malformed("archiving this session");
+  return value;
+}
+
+function asArchiveHolding(value: unknown): ArchiveHolding {
+  if (
+    !isRecord(value) ||
+    typeof value.root !== "string" ||
+    !Array.isArray(value.entries) ||
+    !value.entries.every(isArchiveEntry)
+  ) {
+    throw malformed("the archive");
+  }
+  return value as unknown as ArchiveHolding;
+}
+
+function asArchiveVerification(value: unknown): ArchiveVerification {
+  if (
+    !isRecord(value) ||
+    !isArchiveIntegrity(value.integrity) ||
+    // Not re-derived from `integrity`: the domain owns `copy_is_sound` and
+    // `rebuildable`, and a required-boolean check here is what keeps a
+    // missing field from silently reading as "false" -- which for
+    // `copyIsSound` would understate exactly the case (`sourceGone`) this
+    // feature exists to get right.
+    typeof value.copyIsSound !== "boolean" ||
+    typeof value.rebuildable !== "boolean"
+  ) {
+    throw malformed("verifying this archived session");
+  }
+  return value as unknown as ArchiveVerification;
+}
+
+function asExportOutcome(value: unknown): ExportOutcome {
+  if (
+    !isRecord(value) ||
+    typeof value.path !== "string" ||
+    typeof value.bytes !== "number" ||
+    typeof value.records !== "number" ||
+    typeof value.redaction !== "string" ||
+    !exportRedactionLevels.has(value.redaction) ||
+    typeof value.redactions !== "number"
+  ) {
+    throw malformed("exporting this session");
+  }
+  return value as unknown as ExportOutcome;
+}
+
+/** Everything currently held in the archive, most recently archived first. */
+export function archivedSessions(): Promise<ArchiveHolding> {
+  if (!inTauri()) return Promise.resolve(demoArchiveHolding);
+  return invoke<unknown>("archived_sessions").then(asArchiveHolding);
+}
+
+/**
+ * Copy one session into the archive. `raw` opts out of the default
+ * redaction and must be requested explicitly by whatever calls this --
+ * there is no path here that defaults to it.
+ *
+ * Refuses outright with no Tauri bridge: archiving is this tool's first
+ * write, and demo mode has no real session to copy and no real directory to
+ * copy it into. A caller should keep the control that reaches this disabled
+ * in demo mode; the refusal below is the backstop, not the primary guard.
+ */
+export function archiveSession(agent: Agent, id: string, raw: boolean): Promise<ArchiveEntrySummary> {
+  if (!inTauri()) return Promise.reject(demoRefusesToWrite("Archiving a session"));
+  return invoke<unknown>("archive_session", { id, agent, raw }).then(asArchiveEntrySummary);
+}
+
+/** Re-check one archived session against the world: has its source changed,
+ *  vanished, or has the copy itself gone bad. */
+export function verifyArchived(agent: Agent, id: string): Promise<ArchiveVerification> {
+  if (!inTauri()) return Promise.resolve(demoArchiveVerification(agent, id));
+  return invoke<unknown>("verify_archived", { id, agent }).then(asArchiveVerification);
+}
+
+/**
+ * Write one session out as NDJSON. `redactSecrets` mirrors `ct export
+ * --redact-secrets`; unset is the CLI's own default (`ExportRedaction::None`),
+ * so this reaches for *no* redaction unless a caller asks otherwise -- the
+ * opposite default from `archiveSession` above, which is intentional and
+ * documented where the export control renders it.
+ *
+ * Refuses with no Tauri bridge, for the same reason `archiveSession` does:
+ * there is no local file for demo mode to write.
+ */
+export function exportSession(agent: Agent, id: string, redactSecrets: boolean): Promise<ExportOutcome> {
+  if (!inTauri()) return Promise.reject(demoRefusesToWrite("Exporting a session"));
+  return invoke<unknown>("export_session", { id, agent, redactSecrets }).then(asExportOutcome);
 }

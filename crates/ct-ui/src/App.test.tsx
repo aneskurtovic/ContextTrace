@@ -3,12 +3,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import App from "./App";
 import * as api from "./api";
 import {
+  demoArchiveHolding,
   demoContext,
   demoDetail,
   demoDoctor,
   demoLifecycle,
   demoResidual,
   demoSessions,
+  demoTurnDiff,
 } from "./demo";
 import type {
   ContextDetail,
@@ -27,11 +29,18 @@ vi.mock("./api", () => ({
   runDoctor: vi.fn(),
   getLifecycle: vi.fn(),
   getResidual: vi.fn(),
+  getTurnDiff: vi.fn(),
+  getCompactionDiff: vi.fn(),
+  archivedSessions: vi.fn(),
+  archiveSession: vi.fn(),
+  verifyArchived: vi.fn(),
+  exportSession: vi.fn(),
 }));
 
 const startup: StartupSummary = {
   roots: [{ agent: "codex", paths: ["C:\\fixtures\\codex"] }],
   warnings: [],
+  archiveRoot: "C:\\fixtures\\archive",
 };
 
 const mockedApi = vi.mocked(api);
@@ -68,6 +77,9 @@ beforeEach(() => {
   mockedApi.runDoctor.mockImplementation(async (_agent, _id, turn) => demoDoctor(turn));
   mockedApi.getLifecycle.mockImplementation(async (_agent, _id, item) => demoLifecycle(item));
   mockedApi.getResidual.mockImplementation(async (agent, id) => demoResidual(agent, id));
+  // Fetched unconditionally on mount, like `getStartup` -- every test needs a
+  // resolved value here or the archive panel's load spins forever.
+  mockedApi.archivedSessions.mockResolvedValue(demoArchiveHolding);
 });
 
 afterEach(() => {
@@ -505,5 +517,166 @@ describe("desktop accessibility and state handling", () => {
     // With every step already accounted for by the log, attributing one to an
     // unrecorded harness change would invent a second cause for one event.
     expect(screen.queryByText(/a tool registered, an MCP server connected/)).toBeNull();
+  });
+});
+
+describe("the two panels that write", () => {
+  /** The first session auto-selects, so waiting for the archive panel's own
+   *  control is enough to know the workspace has rendered. */
+  async function openFirstSession() {
+    const session = demoSessions[0];
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    render(<App />);
+    await screen.findByRole("button", { name: /to the archive$/ });
+    return session;
+  }
+
+  it("archives redacted unless the opt-out is ticked, and never the other way round", async () => {
+    const session = await openFirstSession();
+    mockedApi.archiveSession.mockResolvedValue(demoArchiveHolding.entries[0]);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Add .* to the archive/ }));
+    await waitFor(() => expect(mockedApi.archiveSession).toHaveBeenCalled());
+    // The third argument is `raw`. Defaulting it the other way would make
+    // the safe choice the one a user has to find.
+    expect(mockedApi.archiveSession).toHaveBeenLastCalledWith(session.agent, session.id, false);
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Keep credentials instead of redacting them/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Add .* to the archive/ }));
+    await waitFor(() => expect(mockedApi.archiveSession).toHaveBeenCalledTimes(2));
+    expect(mockedApi.archiveSession).toHaveBeenLastCalledWith(session.agent, session.id, true);
+  });
+
+  it("exports redacted unless the opt-out is ticked, unlike ct export's own default", async () => {
+    const session = await openFirstSession();
+    mockedApi.exportSession.mockResolvedValue({
+      path: "C:\\fixtures\\archive\\exports\\codex\\session.ndjson",
+      bytes: 4096,
+      records: 128,
+      redaction: "secrets",
+      redactions: 0,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export to NDJSON" }));
+    await waitFor(() => expect(mockedApi.exportSession).toHaveBeenCalled());
+    // `redactSecrets` is the third argument, and the desktop writes into a
+    // directory it chose rather than to a pipe the user chose.
+    expect(mockedApi.exportSession).toHaveBeenLastCalledWith(session.agent, session.id, true);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Keep recognised credentials/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Export to NDJSON" }));
+    await waitFor(() => expect(mockedApi.exportSession).toHaveBeenCalledTimes(2));
+    expect(mockedApi.exportSession).toHaveBeenLastCalledWith(session.agent, session.id, false);
+  });
+
+  it("reports where an export landed and what it did about credentials", async () => {
+    await openFirstSession();
+    mockedApi.exportSession.mockResolvedValue({
+      path: "C:\\fixtures\\archive\\exports\\codex\\session.ndjson",
+      bytes: 4096,
+      records: 128,
+      redaction: "secrets",
+      redactions: 3,
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export to NDJSON" }));
+
+    expect(
+      await screen.findByText("C:\\fixtures\\archive\\exports\\codex\\session.ndjson"),
+    ).not.toBeNull();
+    expect(screen.getByText("scanned — 3 value(s) replaced")).not.toBeNull();
+  });
+
+  it("says a kept-credentials export holds whatever the log held", async () => {
+    await openFirstSession();
+    mockedApi.exportSession.mockResolvedValue({
+      path: "C:\\fixtures\\archive\\exports\\codex\\session.ndjson",
+      bytes: 4096,
+      records: 128,
+      redaction: "none",
+      redactions: 0,
+    });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Keep recognised credentials/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Export to NDJSON" }));
+
+    // A zero replacement count must never be what tells the user this file is
+    // clean: nothing was replaced because nothing was looked for.
+    expect(
+      await screen.findByText("kept — this file holds whatever the log held"),
+    ).not.toBeNull();
+  });
+
+  it("offers no way to open an archived session, and says so rather than staying silent", async () => {
+    await openFirstSession();
+
+    const rows = await screen.findAllByRole("listitem");
+    const archived = rows.filter((row) => row.className.includes("archive-row"));
+    expect(archived.length).toBe(demoArchiveHolding.entries.length);
+    // Exactly one control per row, and it verifies rather than opens. A row
+    // that reads as clickable and does nothing is worse than the CLI here.
+    for (const row of archived) {
+      const buttons = row.querySelectorAll("button");
+      expect(buttons.length).toBe(1);
+      expect(buttons[0].textContent).toBe("Verify");
+    }
+    expect(screen.getByText(/Nothing reads a copy back yet/)).not.toBeNull();
+  });
+
+  it("names the directory it writes to in both panels that write to it", async () => {
+    await openFirstSession();
+
+    expect(await screen.findByText(demoArchiveHolding.root)).not.toBeNull();
+    expect(screen.getByText(`${demoArchiveHolding.root}\\exports`)).not.toBeNull();
+  });
+});
+
+describe("comparing turns across two sessions", () => {
+  it("drops the pinned baseline when a different session is opened", async () => {
+    const [codex, claude] = [demoSessions[0], demoSessions.find((s) => s.agent === "claude-code")!];
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([codex, claude]));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
+    expect(await screen.findByText(/^Baseline pinned at/)).not.toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(`session: .*${claude.id.slice(0, 8)}`) }),
+    );
+
+    // A pin is a bare turn number. Carried across, it would rebase onto the
+    // new session at a turn chosen for a different one -- which this session
+    // may not even have.
+    await waitFor(() => expect(screen.queryByText(/^Baseline pinned at/)).toBeNull());
+    expect(await screen.findByRole("button", { name: /^Pin this turn/ })).not.toBeNull();
+  });
+
+  it("withholds token deltas when the two sides were sized by different instruments", async () => {
+    const [codex, claude] = [demoSessions[0], demoSessions.find((s) => s.agent === "claude-code")!];
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([codex, claude]));
+    mockedApi.getTurnDiff.mockImplementation(async (left, right) => demoTurnDiff(left, right));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
+    fireEvent.change(await screen.findByRole("combobox"), {
+      target: { value: JSON.stringify({ agent: claude.agent, id: claude.id }) },
+    });
+    fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "12" } });
+
+    await waitFor(() => expect(mockedApi.getTurnDiff).toHaveBeenCalled());
+    const [left, right] = mockedApi.getTurnDiff.mock.calls.at(-1)!;
+    expect(left.agent).toBe(codex.agent);
+    expect(right.agent).toBe(claude.agent);
+    expect(right.turn).toBe(12);
+
+    // `incomparable` is not "skew zero". Across two agents no factor relates
+    // the scales, so the deltas are withheld rather than widened -- and this
+    // arm was unreachable from the desktop until the diff could name two
+    // sessions at all.
+    expect(await screen.findByText(/do not log the same things/)).not.toBeNull();
   });
 });

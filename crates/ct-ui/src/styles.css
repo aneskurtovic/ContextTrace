@@ -1738,3 +1738,274 @@ h2 {
 .residual-fall {
   color: var(--cyan);
 }
+
+/* --- Archive and export: the two panels that write ---------------------- */
+
+.archive-panel,
+.export-panel {
+  margin-top: 12px;
+  padding: 18px 20px 20px;
+}
+
+/* The written directory reads as a fact about this machine, so it gets the
+   monospace treatment paths get everywhere else here rather than being folded
+   into prose. */
+.archive-root {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.archive-root code,
+.export-outcome code {
+  color: #a9c5ff;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+/* Blue rather than the callout's amber: "these rows do not open" is an
+   explanation of the affordance, not a warning about a risk, and the amber
+   callout is already carrying the credential warnings on this screen. */
+.archive-affordance {
+  border-color: rgba(79, 140, 255, .2);
+  background: rgba(79, 140, 255, .07);
+  color: #93a6c4;
+}
+
+.archive-affordance > span {
+  border-color: #3c5a8f;
+  color: var(--blue);
+}
+
+.archive-affordance code {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.archive-add,
+.export-panel > .export-toggle {
+  display: flex;
+  margin-top: 16px;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.archive-raw-toggle,
+.export-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.archive-raw-toggle input,
+.export-toggle input {
+  accent-color: var(--orange);
+  cursor: pointer;
+}
+
+/* Keeping credentials is the unusual choice, so selecting it colours its own
+   label rather than leaving the checkbox as the only signal. */
+.archive-raw-toggle:has(input:checked),
+.export-toggle:has(input:checked) {
+  color: var(--orange);
+}
+
+.archive-add button,
+.export-panel > button {
+  min-width: 118px;
+  padding: 8px 11px;
+  border: 1px solid rgba(79, 140, 255, .45);
+  border-radius: 7px;
+  background: rgba(79, 140, 255, .12);
+  color: #a9c5ff;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.export-panel > button {
+  margin-top: 14px;
+}
+
+.archive-add button:hover:not(:disabled),
+.export-panel > button:hover:not(:disabled),
+.archive-row-actions button:hover:not(:disabled) {
+  border-color: rgba(111, 162, 255, .8);
+  background: rgba(79, 140, 255, .2);
+}
+
+.archive-add button:disabled,
+.export-panel > button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.archive-list {
+  display: flex;
+  margin-top: 16px;
+  gap: 8px;
+  flex-direction: column;
+}
+
+.archive-row {
+  display: grid;
+  padding: 11px 13px;
+  gap: 6px 14px;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.archive-row-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.archive-row-title {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.archive-row-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-row-title .agent-mark {
+  width: 25px;
+  height: 25px;
+  font-size: 9px;
+}
+
+.redaction-badge {
+  padding: 2px 7px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(100, 201, 147, .3);
+  border-radius: 20px;
+  background: rgba(100, 201, 147, .1);
+  color: var(--green);
+  font-size: 9px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+/* A raw copy holds whatever the log held. It is a legitimate choice and not an
+   error, so this is amber rather than red -- but it must never read the same
+   as a redacted one. */
+.redaction-badge.redaction-raw {
+  border-color: rgba(241, 167, 89, .35);
+  background: rgba(241, 167, 89, .1);
+  color: var(--orange);
+}
+
+.archive-row-meta {
+  color: var(--muted);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.archive-differs {
+  color: var(--orange);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.archive-row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.archive-row-actions button {
+  padding: 6px 13px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-hover);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.archive-row-actions button:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
+/* Verification results span both columns so a four-line explanation is not
+   squeezed beside the button that asked for it. */
+.archive-note {
+  margin-top: 4px;
+  grid-column: 1 / -1;
+}
+
+.archive-alert {
+  border-color: rgba(226, 118, 118, .3);
+  background: rgba(226, 118, 118, .08);
+  color: #cf9d9d;
+}
+
+.archive-alert > span {
+  border-color: #7f4444;
+  color: #e27676;
+}
+
+/* The source is gone: this copy is the only remaining evidence. The one
+   outcome that is neither a problem with the copy nor routine. */
+.archive-important {
+  border-color: rgba(209, 122, 223, .3);
+  background: rgba(209, 122, 223, .08);
+  color: #bda0c6;
+}
+
+.archive-important > span {
+  border-color: #74497e;
+  color: var(--pink);
+}
+
+.export-outcome {
+  display: grid;
+  margin: 16px 0 0;
+  gap: 9px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.export-outcome > div {
+  display: flex;
+  min-width: 0;
+  padding: 9px 11px;
+  gap: 4px;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+}
+
+.export-outcome dt {
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.export-outcome dd {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}

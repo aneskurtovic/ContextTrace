@@ -42,14 +42,17 @@ What runs today:
 | Context composition | What filled a turn's context window, by category and confidence | CLI + desktop |
 | Largest contributors | Which items are biggest, ranked and named by what they acted on | CLI + desktop |
 | Item lifecycle tracing | When an item entered context, and when — or why — it left | CLI + desktop |
-| Codex compaction diffs | Exactly what a compaction dropped, kept or replaced | CLI |
-| Turn and session comparison | What changed between two turns, with measurement skew bounded | CLI |
+| Codex compaction diffs | Exactly what a compaction dropped, kept or replaced | CLI + desktop |
+| Turn and session comparison | What changed between two turns, with measurement skew bounded | CLI + desktop |
+| Unlogged context | The prompt an agent never wrote down, and when its harness changed | CLI + desktop |
 | Growth chart | The whole session's prompt size over time, purely from observed data | CLI + desktop |
 | Exact duplicate detection | Identical content repeated in a turn, and its token cost | CLI + desktop |
 | Low-information scoring | Large, highly-compressible blocks ranked by likely waste | CLI + desktop |
-| Secret scanning and redacted export | Where credential-shaped strings appear, without ever printing them | CLI |
-| Format-drift sweep | Whether this build recognises every event type in a local corpus | CLI |
-| NDJSON export | The whole session as typed records, cross-checked against the totals | CLI |
+| Secret scanning and redacted export | Where credential-shaped strings appear, without ever printing them | CLI + desktop |
+| Format-drift sweep | Whether this build recognises every event type across a local corpus | CLI |
+| Parse fidelity | How much of one session this build understood, and what it did not | CLI + desktop |
+| NDJSON export | The whole session as typed records, cross-checked against the totals | CLI + desktop |
+| Session archive | A copy that outlives the log, and whether it still matches its source | CLI + desktop |
 | Desktop app | The same measurements in a native Windows browsing and inspection UI | Desktop |
 
 ## Install
@@ -160,7 +163,7 @@ ContextTrace reads these local directories (read-only):
 
 Nothing is written to them.
 
-It writes to one directory, and only when you run `ct archive`:
+It writes to one directory, and only when you archive or export a session:
 
   C:\Users\anesk\AppData\Local\ContextTrace-archive
 
@@ -239,10 +242,11 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-Next up: a desktop compaction autopsy — the exact Codex compaction diff,
-surfaced in the desktop app (CT-047); turn comparison in the desktop app
-(CT-048); an installable 0.1.0 — clean-machine install/upgrade validation
-and a release-candidate soak (CT-043).
+Next up: reading a session back out of the archive, so a copy still answers
+once its log is gone — and says it was the one answering (CT-075); a read-only
+MCP surface, so the agent that lost the context can ask what it had (CT-073);
+an installable 0.1.0 — clean-machine install/upgrade validation and a
+release-candidate soak (CT-043).
 
 Deliberately deferred: a persistent SQLite index, until measured
 performance requires one; crates.io publication; Windows code signing,
@@ -296,7 +300,12 @@ it outlives its log — a log that is rotated, pruned, or lost with a wiped home
 directory takes its evidence with it, and nothing can reconstruct a file that is
 gone. Copies go to a ContextTrace-owned directory, never back to an agent's, and
 `ct roots` prints its exact path whether or not anything has been archived yet.
-Nothing is copied until you run that command.
+Nothing is copied until you ask for it.
+
+The desktop app writes to the same directory and no other: its Archive panel
+does what `ct archive` does, and its Export panel writes NDJSON to an `exports`
+subdirectory of that same root. There is still one path to audit, which is why
+exports nest there rather than going somewhere of their own.
 
 An archive concentrates by construction what was previously scattered: one place
 holding every prompt, tool output and credential a machine has produced is a
@@ -304,6 +313,12 @@ materially better target than the logs it came from. So credential-shaped values
 are replaced on the way in by default, `--raw` is the explicit opt-out, and which
 of the two was used is recorded against each session. Most sessions contain no
 credentials at all, and for those the copy is byte-identical to the log.
+
+The desktop's export redacts by default too, which `ct export` does not. The
+CLI writes to stdout — you choose the destination in the same breath as the
+command, and often it is a pipe that never becomes a file. The desktop writes a
+durable file into that shared directory, so the argument that made the archive
+redact by default applies to it unchanged.
 
 ## Documentation
 

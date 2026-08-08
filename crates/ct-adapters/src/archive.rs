@@ -21,7 +21,7 @@ use crate::home_dir;
 use chrono::{DateTime, Utc};
 use ct_domain::model::archive::{ArchiveEntry, ArchiveIntegrity};
 use ct_domain::ports::{ArchiveStore, PortError, PortResult, RecordTransform};
-use ct_domain::{AgentKind, SessionDescriptor};
+use ct_domain::{AgentKind, SessionDescriptor, SessionId};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -149,29 +149,17 @@ fn default_root() -> PathBuf {
 /// A session id becomes a filename, so it must not be able to smuggle a path
 /// separator or a `..` component into that position -- a store that let an id
 /// escape its root would be a path traversal in a tool users hand their whole
-/// log directory to. `.` and `..` are rejected outright (they are the only
-/// strings entirely composed of otherwise-safe characters that still name
-/// something other than themselves on a filesystem); every other disallowed
-/// byte is percent-encoded rather than rejected, so an odd but real id from a
-/// future agent still gets archived instead of refused.
+/// log directory to. [`SessionId::file_stem`] holds that rule, because the
+/// desktop's export path needs the same one and a session should not appear
+/// under two different stems in two subdirectories of the same root.
 fn safe_filename(id: &str) -> PortResult<String> {
-    if id.is_empty() || id == "." || id == ".." {
-        return Err(PortError::Malformed {
+    SessionId::new(id)
+        .ok()
+        .and_then(|id| id.file_stem())
+        .ok_or_else(|| PortError::Malformed {
             path: id.to_string(),
             detail: "session id is not safe to use as an archive filename".into(),
-        });
-    }
-    let mut out = String::with_capacity(id.len());
-    for byte in id.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => out.push(byte as char),
-            _ => {
-                use std::fmt::Write as _;
-                write!(out, "%{byte:02X}").expect("writing to a String cannot fail");
-            }
-        }
-    }
-    Ok(out)
+        })
 }
 
 /// Digest a file's full contents, streaming, and report the byte count seen.

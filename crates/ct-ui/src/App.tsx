@@ -11,6 +11,9 @@ import {
 } from "./format";
 import type {
   Agent,
+  ArchiveEntrySummary,
+  ArchiveHolding,
+  ArchiveVerification,
   Comparability,
   CompactionDiff,
   CompactionDiffItem,
@@ -18,6 +21,7 @@ import type {
   CompactionItemDisposition,
   ContextDetail,
   DoctorReport,
+  ExportOutcome,
   GrowthPoint,
   LifecycleReport,
   ResidualPoint,
@@ -27,6 +31,7 @@ import type {
   SessionSummary,
   StartupSummary,
   TurnDiff,
+  TurnTarget,
 } from "./types";
 
 type AgentFilter = "all" | Agent;
@@ -39,6 +44,20 @@ type SessionKey = { agent: Agent; id: string };
 
 function sameSession(a: SessionKey | null, b: SessionKey | null): boolean {
   return a != null && b != null && a.agent === b.agent && a.id === b.id;
+}
+
+/**
+ * Whether two comparison targets name the same turn of the same session.
+ *
+ * The turn-comparison panel used to guard against comparing a turn with
+ * itself by checking turn numbers alone, because both sides were always the
+ * currently-open session. That guard would now misfire the moment the right
+ * side is a *different* session: turn 5 of session A against turn 5 of
+ * session B is a legitimate request, not a self-comparison. Identity has to
+ * include the session, not just the turn.
+ */
+function sameTarget(a: TurnTarget | null, b: TurnTarget | null): boolean {
+  return a != null && b != null && a.agent === b.agent && a.id === b.id && a.turn === b.turn;
 }
 
 function AgentMark({ agent }: { agent: Agent }) {
@@ -127,13 +146,19 @@ function signed(value: number): string {
  * The third case deliberately does not fall back to showing token deltas
  * anyway — counts still mean something when scales do not, so those are what
  * it points the reader at.
+ *
+ * `identical` claims one *instrument*, never one session: two different
+ * Codex sessions both report through the same named tokenizer with nothing
+ * fitted per session, so a genuine cross-session pair can land here too. The
+ * side labels beside each turn, not this note, are what say whether the two
+ * turns came from the same session.
  */
 function ComparabilityNote({ comparability }: { comparability: Comparability }) {
   if (comparability.kind === "identical") {
     return (
       <p className="diff-instrument">
-        <strong>{comparability.estimator}</strong> sized both turns — one session, one
-        instrument, so every delta below is content.
+        <strong>{comparability.estimator}</strong> sized both turns — one instrument, so
+        every delta below is content.
       </p>
     );
   }
@@ -156,32 +181,143 @@ function ComparabilityNote({ comparability }: { comparability: Comparability }) 
   );
 }
 
+/** A turn side, labelled with which session it belongs to -- never just a
+ *  turn number, now that the two sides may be different sessions. */
+function sideLabel(side: { agent: Agent; id: string; turn: number }): string {
+  return `${agentLabel(side.agent)} ${shortId(side.id)} turn ${side.turn}`;
+}
+
+/**
+ * The right-hand session picker for the turn comparison.
+ *
+ * Encodes each option as `JSON.stringify({agent,id})` rather than a
+ * delimited string: session ids are opaque and some observed on real
+ * machines carry punctuation, so building a compound key by concatenation
+ * risks two different sessions parsing back to the same pair.
+ */
+function CrossSessionPicker({
+  sessions,
+  leftTarget,
+  crossSession,
+  crossTurnInput,
+  onSetCrossSession,
+  onSetCrossTurnInput,
+}: {
+  sessions: SessionSummary[];
+  leftTarget: TurnTarget;
+  crossSession: { agent: Agent; id: string } | null;
+  crossTurnInput: string;
+  onSetCrossSession: (target: { agent: Agent; id: string } | null) => void;
+  onSetCrossTurnInput: (value: string) => void;
+}) {
+  const otherSessions = sessions.filter(
+    (session) => !(session.agent === leftTarget.agent && session.id === leftTarget.id),
+  );
+  return (
+    <div className="diff-cross-session">
+      <label>
+        <span>Compare against</span>
+        <select
+          value={crossSession ? JSON.stringify(crossSession) : ""}
+          onChange={(event) => {
+            if (!event.target.value) {
+              onSetCrossSession(null);
+              return;
+            }
+            onSetCrossSession(JSON.parse(event.target.value));
+          }}
+        >
+          <option value="">This session, the turn on the slider</option>
+          {otherSessions.map((session) => (
+            <option
+              key={`${session.agent}:${session.id}`}
+              value={JSON.stringify({ agent: session.agent, id: session.id })}
+            >
+              {agentLabel(session.agent)} · {projectName(session.project)} · {shortId(session.id)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {crossSession && (
+        <label>
+          <span>Turn</span>
+          <input
+            type="number"
+            min={1}
+            value={crossTurnInput}
+            onChange={(event) => onSetCrossTurnInput(event.target.value)}
+            aria-label={`Turn to compare against in ${agentLabel(crossSession.agent)} ${shortId(crossSession.id)}`}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
 function TurnComparison({
   diff,
   loading,
-  pinnedTurn,
-  comparisonTurn,
+  leftTarget,
+  rightTarget,
+  sessions,
+  crossSession,
+  crossTurnInput,
+  onSetCrossSession,
+  onSetCrossTurnInput,
 }: {
   diff: TurnDiff | null;
   loading: boolean;
-  pinnedTurn: number | null;
-  comparisonTurn: number | null;
+  leftTarget: TurnTarget | null;
+  rightTarget: TurnTarget | null;
+  sessions: SessionSummary[];
+  crossSession: { agent: Agent; id: string } | null;
+  crossTurnInput: string;
+  onSetCrossSession: (target: { agent: Agent; id: string } | null) => void;
+  onSetCrossTurnInput: (value: string) => void;
 }) {
-  if (pinnedTurn == null) return null;
-  if (loading && !diff) return <Spinner label="Comparing turns…" />;
-  if (pinnedTurn === comparisonTurn) {
+  if (leftTarget == null) return null;
+
+  const picker = (
+    <CrossSessionPicker
+      sessions={sessions}
+      leftTarget={leftTarget}
+      crossSession={crossSession}
+      crossTurnInput={crossTurnInput}
+      onSetCrossSession={onSetCrossSession}
+      onSetCrossTurnInput={onSetCrossTurnInput}
+    />
+  );
+
+  const noComparisonPicked = rightTarget == null || sameTarget(leftTarget, rightTarget);
+  if (noComparisonPicked) {
     return (
       <section className="panel diff-panel" aria-labelledby="diff-heading">
         <div className="panel-heading">
           <div>
             <span className="eyebrow">Turn comparison</span>
-            <h2 id="diff-heading">Baseline pinned at turn {pinnedTurn}</h2>
+            <h2 id="diff-heading">Baseline pinned at {sideLabel(leftTarget)}</h2>
           </div>
         </div>
+        {picker}
         <p className="diff-empty">
-          Scrub the slider or pick a point on the chart to choose a turn to compare this
-          one against.
+          {crossSession
+            ? "Enter a turn number to compare against in the selected session."
+            : "Scrub the slider or pick a point on the chart to choose a turn to compare this one against, or pick a different session above."}
         </p>
+      </section>
+    );
+  }
+  if (loading && !diff) {
+    return (
+      <section className="panel diff-panel" aria-labelledby="diff-heading">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">Turn comparison</span>
+            <h2 id="diff-heading">Comparing turns…</h2>
+          </div>
+        </div>
+        {picker}
+        <Spinner label="Comparing turns…" />
       </section>
     );
   }
@@ -194,7 +330,7 @@ function TurnComparison({
         <div>
           <span className="eyebrow">Turn comparison</span>
           <h2 id="diff-heading">
-            Turn {diff.left.turn} → turn {diff.right.turn}
+            {sideLabel(diff.left)} → {sideLabel(diff.right)}
           </h2>
         </div>
         {diff.totalsAreObserved && (
@@ -203,6 +339,8 @@ function TurnComparison({
           </span>
         )}
       </div>
+
+      {picker}
 
       <ComparabilityNote comparability={diff.comparability} />
 
@@ -1256,6 +1394,323 @@ function ContextDoctor({
   );
 }
 
+/** How this row's redaction reads to someone glancing down the list: the
+ *  default named plainly, the opt-in named as the unusual choice it is. */
+function redactionLabel(redaction: ArchiveEntrySummary["redaction"]): string {
+  return redaction === "raw" ? "Raw — credentials kept" : "Redacted";
+}
+
+/**
+ * What one verification found, rendered as the four genuinely different
+ * situations `ArchiveIntegritySummary` is -- never collapsed to a red/green
+ * badge. `sourceGone` is the case archiving exists for, and reads as
+ * important information rather than as an error: the source is gone, and
+ * this copy either still proves itself or it does not, and both outcomes get
+ * their own sentence rather than one badge trying to cover both.
+ */
+function ArchiveIntegrityNote({ verification }: { verification: ArchiveVerification }) {
+  const integrity = verification.integrity;
+  if (integrity.kind === "intact") {
+    return (
+      <p className="callout archive-note">
+        <span aria-hidden="true">✓</span>
+        Matches its source exactly. Nothing to do.
+      </p>
+    );
+  }
+  if (integrity.kind === "sourceChanged") {
+    return (
+      <p className="callout archive-note">
+        <span aria-hidden="true">i</span>
+        The live log has grown since this copy was made ({formatBytes(integrity.recordedBytes)} →{" "}
+        {formatBytes(integrity.currentBytes)}) — the session kept going. Re-archive to bring the
+        copy current.
+      </p>
+    );
+  }
+  if (integrity.kind === "sourceGone") {
+    return (
+      <p
+        className={
+          verification.copyIsSound
+            ? "callout archive-note archive-important"
+            : "callout archive-note archive-alert"
+        }
+      >
+        <span aria-hidden="true">{verification.copyIsSound ? "◆" : "!"}</span>
+        {verification.copyIsSound
+          ? "The source log is gone. This copy is the only evidence left, and it still matches what was written — nothing can rebuild it, so this is what there is."
+          : "The source log is gone, and this copy no longer matches what was written either. Treat it as unreliable; nothing here can recover the original."}
+      </p>
+    );
+  }
+  return (
+    <p className="callout archive-note archive-alert">
+      <span aria-hidden="true">!</span>
+      This archived file no longer matches its recorded digest. Whatever it says now, it is not
+      what was archived. Re-archive from the source if it is still present.
+    </p>
+  );
+}
+
+/** One archived session. Deliberately not a button: see `ArchivePanel` for
+ *  why a clickable row here would be worse than doing nothing at all. */
+function ArchiveEntryRow({
+  entry,
+  verification,
+  onVerify,
+}: {
+  entry: ArchiveEntrySummary;
+  verification: ArchiveVerification | "loading" | Error | undefined;
+  onVerify: () => void;
+}) {
+  return (
+    <div className="archive-row" role="listitem">
+      <div className="archive-row-copy">
+        <div className="archive-row-title">
+          <AgentMark agent={entry.agent} />
+          <strong title={entry.project ?? undefined}>{projectName(entry.project)}</strong>
+          <span className={entry.redaction === "raw" ? "redaction-badge redaction-raw" : "redaction-badge"}>
+            {redactionLabel(entry.redaction)}
+          </span>
+        </div>
+        <span className="archive-row-meta">
+          {shortId(entry.id)} · archived {formatActivity(entry.archivedAt)} ·{" "}
+          {entry.records.toLocaleString()} record(s) · {formatBytes(entry.archivedBytes)}
+        </span>
+        {entry.differsFromSource && (
+          <small className="archive-differs">
+            {entry.redactedValues.toLocaleString()} value(s) replaced — this copy is not
+            byte-identical to its source.
+          </small>
+        )}
+      </div>
+      <div className="archive-row-actions">
+        <button type="button" onClick={onVerify} disabled={verification === "loading"}>
+          {verification === "loading" ? "Verifying…" : "Verify"}
+        </button>
+      </div>
+      {verification &&
+        verification !== "loading" &&
+        (verification instanceof Error ? (
+          <p className="callout archive-note archive-alert">
+            <span aria-hidden="true">!</span>
+            {verification.message}
+          </p>
+        ) : (
+          <ArchiveIntegrityNote verification={verification} />
+        ))}
+    </div>
+  );
+}
+
+/**
+ * What the archive holds, and the one control that adds to it.
+ *
+ * Rows are deliberately not clickable: in a GUI a list this shape reads as
+ * "open on click", and nothing can read an archived session back yet -- that
+ * is a separate, not-yet-built capability. A row that silently did nothing
+ * would make this worse than the CLI on the same capability; a row that
+ * opened the *live* session in its place would misrepresent a copy as the
+ * thing itself. So the affordance is stated in words, and the only
+ * interactive element per row is the explicit "Verify" action.
+ *
+ * `holding.root` is shown unconditionally: it is the first directory this
+ * tool ever writes to, and the app's privacy claim rests on naming it. The
+ * startup panel's roots disclosure also names it (as the written entry
+ * alongside the read ones), so a user who never opens a session still sees
+ * it -- this panel repeats it for whoever is already looking here.
+ */
+function ArchivePanel({
+  holding,
+  loading,
+  selected,
+  archiving,
+  archiveRaw,
+  onToggleRaw,
+  onArchive,
+  verifications,
+  onVerify,
+  demoData,
+}: {
+  holding: ArchiveHolding | null;
+  loading: boolean;
+  selected: SessionSummary;
+  archiving: boolean;
+  archiveRaw: boolean;
+  onToggleRaw: (raw: boolean) => void;
+  onArchive: () => void;
+  verifications: Record<string, ArchiveVerification | "loading" | Error>;
+  onVerify: (agent: Agent, id: string) => void;
+  demoData: boolean;
+}) {
+  return (
+    <section className="panel archive-panel" aria-labelledby="archive-heading">
+      <div className="panel-heading">
+        <div>
+          <span className="eyebrow">Archive</span>
+          <h2 id="archive-heading">What this tool has copied</h2>
+        </div>
+        {holding && <span className="panel-total">{holding.entries.length} held</span>}
+      </div>
+
+      <p className="archive-root">
+        Written to <code>{holding ? holding.root : "…"}</code> — the one directory ContextTrace
+        writes to.
+      </p>
+
+      <p className="callout archive-affordance">
+        <span aria-hidden="true">i</span>
+        These rows do not open a session. Nothing reads a copy back yet — here or in the CLI —
+        so a copy taken now is insurance against losing the log, not a second way to read it.
+        <code>Verify</code> re-checks a copy against its source without opening either.
+      </p>
+
+      <div className="archive-add">
+        <label className="archive-raw-toggle">
+          <input
+            type="checkbox"
+            checked={archiveRaw}
+            onChange={(event) => onToggleRaw(event.target.checked)}
+          />
+          Keep credentials instead of redacting them — not the usual choice
+        </label>
+        <button type="button" onClick={onArchive} disabled={archiving || demoData}>
+          {archiving ? "Archiving…" : `Add ${projectName(selected.project)} to the archive`}
+        </button>
+      </div>
+      {demoData && (
+        <p className="callout">
+          <span aria-hidden="true">i</span>
+          Demo mode has nothing to write. Run the desktop app against local logs to archive a
+          session.
+        </p>
+      )}
+
+      {loading && !holding ? (
+        <Spinner label="Reading the archive…" />
+      ) : holding && holding.entries.length ? (
+        <div className="archive-list" role="list" aria-label="Archived sessions">
+          {holding.entries.map((entry) => (
+            <ArchiveEntryRow
+              key={`${entry.agent}:${entry.id}`}
+              entry={entry}
+              verification={verifications[`${entry.agent}:${entry.id}`]}
+              onVerify={() => onVerify(entry.agent, entry.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="empty-inline">Nothing has been archived yet.</p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Writing one session out as NDJSON, and reporting exactly what was written.
+ *
+ * Defaults to redaction, which `ct export` does not, because the two write to
+ * different places. The CLI writes to stdout: the user picks the destination
+ * in the same breath as the command, and often it is a pipe that never
+ * becomes a file. This writes a durable file into a ContextTrace-owned
+ * directory that sits beside the archive -- so the argument that made the
+ * archive redact by default applies here unchanged, and having one
+ * subdirectory of that root default to redacted while its sibling defaulted
+ * to raw would be a distinction no one could hold in their head.
+ *
+ * The checkbox therefore turns redaction *off*, and says what that leaves in
+ * the file rather than merely naming the flag.
+ */
+function ExportControl({
+  exporting,
+  outcome,
+  error,
+  archiveRoot,
+  keepSecrets,
+  onToggleKeep,
+  onExport,
+  demoData,
+}: {
+  exporting: boolean;
+  outcome: ExportOutcome | null;
+  error: string | null;
+  archiveRoot: string | null;
+  keepSecrets: boolean;
+  onToggleKeep: (keep: boolean) => void;
+  onExport: () => void;
+  demoData: boolean;
+}) {
+  return (
+    <section className="panel export-panel" aria-labelledby="export-heading">
+      <div className="panel-heading">
+        <div>
+          <span className="eyebrow">Export</span>
+          <h2 id="export-heading">Write this session to NDJSON</h2>
+        </div>
+      </div>
+
+      {archiveRoot && (
+        <p className="archive-root">
+          Written under <code>{archiveRoot}\exports</code> — inside the one directory ContextTrace
+          writes to, not a second one.
+        </p>
+      )}
+
+      <label className="export-toggle">
+        <input
+          type="checkbox"
+          checked={keepSecrets}
+          onChange={(event) => onToggleKeep(event.target.checked)}
+        />
+        Keep recognised credentials in the file instead of replacing them — not the usual choice
+      </label>
+      <button type="button" onClick={onExport} disabled={exporting || demoData}>
+        {exporting ? "Exporting…" : "Export to NDJSON"}
+      </button>
+      {demoData && (
+        <p className="callout">
+          <span aria-hidden="true">i</span>
+          Demo mode has nothing to write. Run the desktop app against local logs to export a
+          session.
+        </p>
+      )}
+      {error && (
+        <p className="callout archive-note archive-alert">
+          <span aria-hidden="true">!</span>
+          {error}
+        </p>
+      )}
+      {outcome && (
+        <dl className="export-outcome">
+          <div>
+            <dt>Written to</dt>
+            <dd>
+              <code>{outcome.path}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Size</dt>
+            <dd>{formatBytes(outcome.bytes)}</dd>
+          </div>
+          <div>
+            <dt>Records</dt>
+            <dd>{outcome.records.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>Credentials</dt>
+            <dd>
+              {outcome.redaction === "secrets"
+                ? `scanned — ${outcome.redactions.toLocaleString()} value(s) replaced`
+                : "kept — this file holds whatever the log held"}
+            </dd>
+          </div>
+        </dl>
+      )}
+    </section>
+  );
+}
+
 function SessionWorkspace({
   detail,
   context,
@@ -1272,10 +1727,31 @@ function SessionWorkspace({
   turnDiffLoading,
   pinnedTurn,
   onTogglePin,
+  sessions,
+  leftTarget,
+  rightTarget,
+  crossSession,
+  crossTurnInput,
+  onSetCrossSession,
+  onSetCrossTurnInput,
   residual,
   residualLoading,
   onRunResidual,
   demoData,
+  archive,
+  archiveLoading,
+  archiving,
+  archiveRaw,
+  onToggleArchiveRaw,
+  onArchiveSelected,
+  verifications,
+  onVerifyEntry,
+  exporting,
+  exportOutcome,
+  exportError,
+  exportKeepSecrets,
+  onToggleExportKeep,
+  onExportSelected,
   onContributor,
   onCloseLifecycle,
   onRunDoctor,
@@ -1298,10 +1774,31 @@ function SessionWorkspace({
   turnDiffLoading: boolean;
   pinnedTurn: number | null;
   onTogglePin: () => void;
+  sessions: SessionSummary[];
+  leftTarget: TurnTarget | null;
+  rightTarget: TurnTarget | null;
+  crossSession: { agent: Agent; id: string } | null;
+  crossTurnInput: string;
+  onSetCrossSession: (target: { agent: Agent; id: string } | null) => void;
+  onSetCrossTurnInput: (value: string) => void;
   residual: ResidualReport | null;
   residualLoading: boolean;
   onRunResidual: () => void;
   demoData: boolean;
+  archive: ArchiveHolding | null;
+  archiveLoading: boolean;
+  archiving: boolean;
+  archiveRaw: boolean;
+  onToggleArchiveRaw: (raw: boolean) => void;
+  onArchiveSelected: () => void;
+  verifications: Record<string, ArchiveVerification | "loading" | Error>;
+  onVerifyEntry: (agent: Agent, id: string) => void;
+  exporting: boolean;
+  exportOutcome: ExportOutcome | null;
+  exportError: string | null;
+  exportKeepSecrets: boolean;
+  onToggleExportKeep: (keep: boolean) => void;
+  onExportSelected: () => void;
   onContributor: (item: string) => void;
   onCloseLifecycle: () => void;
   onRunDoctor: () => void;
@@ -1441,8 +1938,13 @@ function SessionWorkspace({
       <TurnComparison
         diff={turnDiff}
         loading={turnDiffLoading}
-        pinnedTurn={pinnedTurn}
-        comparisonTurn={context?.turn ?? null}
+        leftTarget={leftTarget}
+        rightTarget={rightTarget}
+        sessions={sessions}
+        crossSession={crossSession}
+        crossTurnInput={crossTurnInput}
+        onSetCrossSession={onSetCrossSession}
+        onSetCrossTurnInput={onSetCrossTurnInput}
       />
 
       <CompactionAutopsy
@@ -1452,6 +1954,30 @@ function SessionWorkspace({
       />
 
       <UnloggedContext report={residual} loading={residualLoading} onRun={onRunResidual} />
+
+      <ArchivePanel
+        holding={archive}
+        loading={archiveLoading}
+        selected={detail.session}
+        archiving={archiving}
+        archiveRaw={archiveRaw}
+        onToggleRaw={onToggleArchiveRaw}
+        onArchive={onArchiveSelected}
+        verifications={verifications}
+        onVerify={onVerifyEntry}
+        demoData={demoData}
+      />
+
+      <ExportControl
+        exporting={exporting}
+        outcome={exportOutcome}
+        error={exportError}
+        archiveRoot={archive?.root ?? null}
+        keepSecrets={exportKeepSecrets}
+        onToggleKeep={onToggleExportKeep}
+        onExport={onExportSelected}
+        demoData={demoData}
+      />
 
       {contextLoading && !context ? (
         <Spinner label="Reconstructing context…" />
@@ -1522,6 +2048,26 @@ export default function App() {
   const [loadingResidual, setLoadingResidual] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
+  // Which session the turn-comparison panel's right side names, when it is
+  // not the currently open session's own slider turn. `crossTurnInput` stays
+  // a string rather than a number so the field can sit empty mid-edit
+  // without snapping to 0, which would silently ask to compare against turn
+  // zero -- a request no session can answer.
+  const [crossSession, setCrossSession] = useState<{ agent: Agent; id: string } | null>(null);
+  const [crossTurnInput, setCrossTurnInput] = useState("");
+  const [archive, setArchive] = useState<ArchiveHolding | null>(null);
+  const [loadingArchive, setLoadingArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveRaw, setArchiveRaw] = useState(false);
+  const [verifications, setVerifications] = useState<
+    Record<string, ArchiveVerification | "loading" | Error>
+  >({});
+  const [exporting, setExporting] = useState(false);
+  const [exportOutcome, setExportOutcome] = useState<ExportOutcome | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  // Redaction is the default here even though `ct export`'s is not; see
+  // `ExportControl` for why the destination changes the answer.
+  const [exportKeepSecrets, setExportKeepSecrets] = useState(false);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
@@ -1530,6 +2076,7 @@ export default function App() {
   const turnDiffRequest = useRef(0);
   const residualRequest = useRef(0);
   const catalogRequest = useRef(0);
+  const archiveRequest = useRef(0);
 
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
@@ -1642,6 +2189,12 @@ export default function App() {
       setLoadingLifecycle(false);
       setLoadingCompaction(false);
       setLoadingResidual(false);
+      setPinnedTurn(null);
+      setCrossSession(null);
+      setCrossTurnInput("");
+      setExportOutcome(null);
+      setExportError(null);
+      setExporting(false);
       return;
     }
     const request = ++sessionRequest.current;
@@ -1665,6 +2218,18 @@ export default function App() {
     setLoadingLifecycle(false);
     setLoadingCompaction(false);
     setLoadingResidual(false);
+    // The baseline, the cross-session pick and the last export result all
+    // name a specific session; carrying any of them into a newly selected one
+    // would present a stale answer as though it were about the session now on
+    // screen. The pin is the sharpest case: it is a bare turn number, so it
+    // would silently rebase onto the new session -- at a turn the user picked
+    // for a different one, and which this session may not even have.
+    setPinnedTurn(null);
+    setCrossSession(null);
+    setCrossTurnInput("");
+    setExportOutcome(null);
+    setExportError(null);
+    setExporting(false);
     setError(null);
     Promise.all([
       api.inspectSession(selected.agent, selected.id),
@@ -1829,23 +2394,38 @@ export default function App() {
   // pinned reads as a live comparison rather than as a stale one the user has
   // to remember to refresh.
   const comparisonTurn = context?.turn ?? null;
+
+  // The baseline is always a turn of the currently open session -- only the
+  // right side can name a different one.
+  const leftTarget: TurnTarget | null =
+    selected && pinnedTurn != null ? { agent: selected.agent, id: selected.id, turn: pinnedTurn } : null;
+
+  const crossTurnParsed = crossTurnInput.trim() === "" ? null : Number(crossTurnInput);
+  const crossTurnValid =
+    crossTurnParsed != null && Number.isInteger(crossTurnParsed) && crossTurnParsed >= 1;
+  const rightTarget: TurnTarget | null = crossSession
+    ? crossTurnValid
+      ? { agent: crossSession.agent, id: crossSession.id, turn: crossTurnParsed as number }
+      : null
+    : selected && comparisonTurn != null
+      ? { agent: selected.agent, id: selected.id, turn: comparisonTurn }
+      : null;
+
   useEffect(() => {
-    if (!selected || pinnedTurn == null || comparisonTurn == null) {
-      setTurnDiff(null);
-      return;
-    }
-    if (pinnedTurn === comparisonTurn) {
-      // Comparing a turn with itself is a valid request with a useless answer;
-      // saying so beats rendering a table of zeroes.
+    if (!leftTarget || !rightTarget || sameTarget(leftTarget, rightTarget)) {
+      // Comparing a turn with itself is a valid request with a useless answer
+      // (or, with nothing picked yet, no request at all); saying so beats
+      // rendering a table of zeroes. Identity, not just the turn number,
+      // decides this now: turn 5 of one session against turn 5 of another is
+      // a real comparison, not a self-compare.
       setTurnDiff(null);
       return;
     }
     const request = ++turnDiffRequest.current;
-    const session = selected;
     let cancelled = false;
     setLoadingTurnDiff(true);
     api
-      .getTurnDiff(session.agent, session.id, pinnedTurn, comparisonTurn)
+      .getTurnDiff(leftTarget, rightTarget)
       .then((diff) => {
         if (!cancelled && request === turnDiffRequest.current) setTurnDiff(diff);
       })
@@ -1858,11 +2438,79 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selected, pinnedTurn, comparisonTurn]);
+    // Depends on the scalar fields of `leftTarget`/`rightTarget` rather than
+    // the objects themselves: both are plain literals rebuilt fresh every
+    // render, so depending on their identity would refire this effect on
+    // every render that touches unrelated state, not just when the turns or
+    // sessions being compared actually change.
+  }, [leftTarget?.agent, leftTarget?.id, leftTarget?.turn, rightTarget?.agent, rightTarget?.id, rightTarget?.turn]);
 
   const togglePin = useCallback(() => {
     setPinnedTurn((current) => (current == null ? (comparisonTurn ?? null) : null));
   }, [comparisonTurn]);
+
+  const loadArchive = useCallback(async () => {
+    const request = ++archiveRequest.current;
+    setLoadingArchive(true);
+    try {
+      const holding = await api.archivedSessions();
+      if (request === archiveRequest.current) setArchive(holding);
+    } catch (loadError) {
+      if (request === archiveRequest.current) setError(errorMessage(loadError));
+    } finally {
+      if (request === archiveRequest.current) setLoadingArchive(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadArchive();
+  }, [loadArchive]);
+
+  const archiveSelected = useCallback(async () => {
+    if (!selected) return;
+    setArchiving(true);
+    setError(null);
+    try {
+      await api.archiveSession(selected.agent, selected.id, archiveRaw);
+      // Re-read rather than splice the new entry in locally: the holding's
+      // `root` and ordering are the backend's to state, not this component's
+      // to reconstruct from one call's answer.
+      await loadArchive();
+    } catch (archiveErrorValue) {
+      setError(errorMessage(archiveErrorValue));
+    } finally {
+      setArchiving(false);
+    }
+  }, [selected, archiveRaw, loadArchive]);
+
+  const verifyEntry = useCallback(async (agent: Agent, id: string) => {
+    const key = `${agent}:${id}`;
+    setVerifications((current) => ({ ...current, [key]: "loading" }));
+    try {
+      const result = await api.verifyArchived(agent, id);
+      setVerifications((current) => ({ ...current, [key]: result }));
+    } catch (verifyErrorValue) {
+      setVerifications((current) => ({
+        ...current,
+        [key]: verifyErrorValue instanceof Error ? verifyErrorValue : new Error(errorMessage(verifyErrorValue)),
+      }));
+    }
+  }, []);
+
+  const exportSelected = useCallback(async () => {
+    if (!selected) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const outcome = await api.exportSession(selected.agent, selected.id, !exportKeepSecrets);
+      setExportOutcome(outcome);
+    } catch (exportErrorValue) {
+      setExportError(errorMessage(exportErrorValue));
+      setExportOutcome(null);
+    } finally {
+      setExporting(false);
+    }
+  }, [selected, exportKeepSecrets]);
 
   const visibleDetail = sameSession(detailFor, selected) ? detail : null;
 
@@ -1979,14 +2627,28 @@ export default function App() {
           </button>
           {showRoots && startup && (
             <div className="roots" id="local-log-roots">
-              {startup.roots.map((root) => (
-                <div key={root.agent}>
-                  <strong>{root.agent}</strong>
-                  {root.paths.map((path) => (
-                    <code key={path}>{path}</code>
-                  ))}
+              <div className="roots-group">
+                <span className="roots-group-label">Reads</span>
+                {startup.roots.map((root) => (
+                  <div key={root.agent}>
+                    <strong>{root.agent}</strong>
+                    {root.paths.map((path) => (
+                      <code key={path}>{path}</code>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              {/* The one directory this tool writes to, in the same
+                  disclosure as the ones it only reads -- distinguished by
+                  its own label rather than folded into the list above,
+                  where it would read as another source being observed. */}
+              <div className="roots-group">
+                <span className="roots-group-label">Writes</span>
+                <div>
+                  <strong>archive</strong>
+                  <code>{startup.archiveRoot}</code>
                 </div>
-              ))}
+              </div>
             </div>
           )}
         </footer>
@@ -2036,12 +2698,33 @@ export default function App() {
             compactionLineNo={compactionLineNo}
             turnDiff={turnDiff}
             turnDiffLoading={loadingTurnDiff}
+            pinnedTurn={pinnedTurn}
+            onTogglePin={togglePin}
+            sessions={sessions}
+            leftTarget={leftTarget}
+            rightTarget={rightTarget}
+            crossSession={crossSession}
+            crossTurnInput={crossTurnInput}
+            onSetCrossSession={setCrossSession}
+            onSetCrossTurnInput={setCrossTurnInput}
             residual={residual}
             residualLoading={loadingResidual}
             onRunResidual={runResidual}
-            pinnedTurn={pinnedTurn}
-            onTogglePin={togglePin}
             demoData={demoData}
+            archive={archive}
+            archiveLoading={loadingArchive}
+            archiving={archiving}
+            archiveRaw={archiveRaw}
+            onToggleArchiveRaw={setArchiveRaw}
+            onArchiveSelected={archiveSelected}
+            verifications={verifications}
+            onVerifyEntry={verifyEntry}
+            exporting={exporting}
+            exportOutcome={exportOutcome}
+            exportError={exportError}
+            exportKeepSecrets={exportKeepSecrets}
+            onToggleExportKeep={setExportKeepSecrets}
+            onExportSelected={exportSelected}
             onContributor={inspectContributor}
             onCloseLifecycle={closeLifecycle}
             onRunDoctor={runDoctor}

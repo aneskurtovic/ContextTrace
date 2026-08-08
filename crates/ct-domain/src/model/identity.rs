@@ -37,6 +37,41 @@ impl SessionId {
             .to_ascii_lowercase()
             .starts_with(&prefix.to_ascii_lowercase())
     }
+
+    /// This id rendered safe to name a file with, or `None` if it cannot be.
+    ///
+    /// The domain does not care what shape an id is, which is exactly why
+    /// something has to stand between an id and a path: `..` and a separator
+    /// are legal contents of an opaque string and would place a written file
+    /// outside the directory that was chosen for it. Every byte outside a
+    /// conservative set is percent-encoded rather than rejected, so an odd but
+    /// real id from a future agent is still writable rather than refused.
+    ///
+    /// Here rather than in whichever adapter needed it first because two
+    /// separate write paths now name files after ids, and a user reading one
+    /// directory beside the other should not find the same session under two
+    /// different stems. Callers map `None` onto their own error type.
+    pub fn file_stem(&self) -> Option<String> {
+        // Encoding these would produce a valid but confusing name, and no real
+        // agent emits them; refusing is the honest answer for an id that is
+        // only ever a relative path.
+        if self.0 == "." || self.0 == ".." {
+            return None;
+        }
+        let mut out = String::with_capacity(self.0.len());
+        for byte in self.0.bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => {
+                    out.push(byte as char)
+                }
+                _ => {
+                    use std::fmt::Write as _;
+                    write!(out, "%{byte:02X}").expect("writing to a String cannot fail");
+                }
+            }
+        }
+        Some(out)
+    }
 }
 
 impl fmt::Display for SessionId {

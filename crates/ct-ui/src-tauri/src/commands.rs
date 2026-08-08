@@ -1,9 +1,11 @@
 use ct_application::{
-    residual_steps, timeline, AppError, Comparability, ContextTrace, Departure, LifecycleSweep,
-    ResidualPoint, SessionDiff, SessionFilter, RESIDUAL_STEP_THRESHOLD, STEP_ATTRIBUTION_WINDOW,
+    residual_steps, timeline, AppError, Comparability, ContextTrace, Departure, ExportRedaction,
+    LifecycleSweep, ResidualPoint, SessionDiff, SessionFilter, RESIDUAL_STEP_THRESHOLD,
+    STEP_ATTRIBUTION_WINDOW,
 };
+use ct_domain::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use ct_domain::model::context::unmeasured_content_items;
-use ct_domain::ports::{PortError, TokenEstimator};
+use ct_domain::ports::{ArchiveStore, PortError, TokenEstimator};
 use ct_domain::{
     AgentKind, CategoryBreakdown, CompactionDiff, CompactionDiffItem, CompactionDiffUnavailable,
     CompactionItemDisposition, Confidence, ContextItemId, ContextSource, MessageRole,
@@ -11,6 +13,9 @@ use ct_domain::{
 };
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
@@ -249,6 +254,10 @@ impl AppState {
                 })
                 .collect(),
             warnings: self.warnings.clone(),
+            // The startup panel names every directory ContextTrace reads; now
+            // that the desktop can write too, the one directory it writes to
+            // belongs in the same disclosure.
+            archive_root: ct_runtime::archive_store().root(),
         }
     }
 
@@ -623,56 +632,96 @@ impl AppState {
         Ok(CompactionDiffSummary::from(diff))
     }
 
-    /// Compare two turns of one session.
+    /// Compare two turns, which may belong to two different sessions.
     ///
-    /// Both sides are sized by the same instrument, because both come from one
-    /// session and a session is calibrated once. `Comparability` is therefore
-    /// always `Identical` on this path, and it is still carried across the
-    /// boundary rather than assumed away: the frontend renders what the
-    /// comparison reports about itself, so the day a cross-session comparison
-    /// arrives it will state a skew or refuse a token delta without any of this
-    /// having to be revisited. Asserting `Identical` here instead would have to
-    /// be un-asserted there, and silently wrongly in between.
+    /// Same-session comparisons -- the only ones reachable before this
+    /// widening -- stay cheap: `cached_session` is asked for the right side
+    /// only when it names a genuinely different session, so the common case
+    /// (one session, two turns) still fits its characters-per-token ratio
+    /// once rather than twice. Fitting is a sweep of every turn, seconds on a
+    /// long session, so paying for it twice on the commonest comparison would
+    /// be a regression this widening must not introduce. Mirrors the
+    /// optimisation `ct diff` already makes at `ct-cli/src/main.rs`, around
+    /// the `Command::Diff` arm.
     ///
-    /// Loading once also matters for cost: `cached_session` fits the session's
-    /// character-per-token ratio by sweeping every turn, and comparing two turns
-    /// of one session must not pay for that twice.
+    /// Two sessions can be sized by two different instruments -- two Claude
+    /// Code sessions fitted to different ratios, or a Codex session measured
+    /// by a real tokenizer against a Claude Code one measured by a heuristic.
+    /// `Comparability` is the domain's judgement of whether the resulting
+    /// deltas may be read at all, and it is carried across the boundary
+    /// rather than assumed away, exactly as it already is for the
+    /// same-session case: this is the first desktop path where its `skewed`
+    /// and `incomparable` arms are reachable rather than dead code.
     fn turn_diff(
         &self,
-        agent: AgentKind,
-        id: &str,
+        left_agent: AgentKind,
+        left_id: &str,
         left_turn: u32,
+        right_agent: AgentKind,
+        right_id: &str,
         right_turn: u32,
     ) -> Result<TurnDiffSummary, String> {
-        let cached = self.cached_session(agent, id, false)?;
-        let left = TurnNumber::new(left_turn).map_err(|error| error.to_string())?;
-        let right = TurnNumber::new(right_turn).map_err(|error| error.to_string())?;
+        let left_turn = TurnNumber::new(left_turn).map_err(|error| error.to_string())?;
+        let right_turn = TurnNumber::new(right_turn).map_err(|error| error.to_string())?;
 
-        let fitted = cached
+        let left_cached = self.cached_session(left_agent, left_id, false)?;
+        let same_session = right_agent == left_agent && right_id == left_id;
+        let right_cached = if same_session {
+            Arc::clone(&left_cached)
+        } else {
+            self.cached_session(right_agent, right_id, false)?
+        };
+
+        let left_fitted = left_cached
             .chars_per_token()
             .map(ct_runtime::heuristic_estimator);
-        let estimator: &dyn TokenEstimator = match fitted.as_ref() {
+        let left_estimator: &dyn TokenEstimator = match left_fitted.as_ref() {
             Some(estimator) => estimator,
-            None => self.app.binding_estimator(cached.binding),
+            None => self.app.binding_estimator(left_cached.binding),
         };
-        let snapshot = |turn| {
-            self.app
-                .snapshot_with(&cached.session, cached.binding, turn, estimator)
-                .map_err(|error| error.to_string())
+        let right_fitted = right_cached
+            .chars_per_token()
+            .map(ct_runtime::heuristic_estimator);
+        let right_estimator: &dyn TokenEstimator = match right_fitted.as_ref() {
+            Some(estimator) => estimator,
+            None => self.app.binding_estimator(right_cached.binding),
         };
-        let left_snapshot = snapshot(left)?;
-        let right_snapshot = snapshot(right)?;
 
-        let instrument =
-            ct_application::Instrument::new(estimator.name(), estimator.chars_per_token());
+        let left_snapshot = self
+            .app
+            .snapshot_with(
+                &left_cached.session,
+                left_cached.binding,
+                left_turn,
+                left_estimator,
+            )
+            .map_err(|error| error.to_string())?;
+        let right_snapshot = self
+            .app
+            .snapshot_with(
+                &right_cached.session,
+                right_cached.binding,
+                right_turn,
+                right_estimator,
+            )
+            .map_err(|error| error.to_string())?;
+
+        let left_instrument = ct_application::Instrument::new(
+            left_estimator.name(),
+            left_estimator.chars_per_token(),
+        );
+        let right_instrument = ct_application::Instrument::new(
+            right_estimator.name(),
+            right_estimator.chars_per_token(),
+        );
         let diff = ct_application::compare(
             ct_application::Side {
                 snapshot: &left_snapshot,
-                instrument: instrument.clone(),
+                instrument: left_instrument,
             },
             ct_application::Side {
                 snapshot: &right_snapshot,
-                instrument,
+                instrument: right_instrument,
             },
         );
         Ok(TurnDiffSummary::from(diff))
@@ -785,6 +834,227 @@ impl AppState {
             steps,
         })
     }
+
+    /// Every session held in the archive, most recently archived first.
+    ///
+    /// `store.root()` is read here rather than left for a caller to derive
+    /// separately from `startup()`: the two must always name the same
+    /// directory, and reading it once from the one seam that constructs the
+    /// store (`ct_runtime::archive_store`) is what keeps that true rather
+    /// than merely intended.
+    fn archived_sessions(&self) -> Result<ArchiveHolding, String> {
+        let store = ct_runtime::archive_store();
+        let entries = self
+            .app
+            .archived_sessions(&store)
+            .map_err(|error| error.to_string())?;
+        Ok(ArchiveHolding {
+            root: store.root(),
+            entries: entries.into_iter().map(ArchiveEntrySummary::from).collect(),
+        })
+    }
+
+    /// Copy one session into the archive, named by both halves of its
+    /// identity.
+    ///
+    /// Always `archive_session_in_agent`, never the unscoped
+    /// `ContextTrace::archive_session`: the desktop always has the agent a
+    /// catalog row came from on hand, and two agents can hold the same id.
+    /// The unscoped lookup resolves to whichever binding was registered
+    /// first, which would make this silently archive the wrong session on a
+    /// collision instead of the one actually named.
+    fn archive_session(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        raw: bool,
+    ) -> Result<ArchiveEntrySummary, String> {
+        let store = ct_runtime::archive_store();
+        let mode = if raw {
+            RedactionMode::Raw
+        } else {
+            RedactionMode::Redacted
+        };
+        let entry = self
+            .app
+            .archive_session_in_agent(agent, id, &store, mode)
+            .map_err(|error| error.to_string())?;
+        Ok(ArchiveEntrySummary::from(entry))
+    }
+
+    /// Re-digest one archived session, named by both halves of its identity.
+    ///
+    /// `verify_archived_in_agent` for the reason `archive_session` above
+    /// gives, and for a sharper one here: verification is the feature that
+    /// exists for a session whose source log may already be gone, so it
+    /// cannot fall back to resolving against the live corpus at all. Scoping
+    /// by agent is the only way the second of two colliding ids is reachable.
+    fn verify_archived(&self, agent: AgentKind, id: &str) -> Result<ArchiveVerification, String> {
+        let store = ct_runtime::archive_store();
+        let integrity = self
+            .app
+            .verify_archived_in_agent(agent, id, &store)
+            .map_err(|error| error.to_string())?;
+        Ok(ArchiveVerification::from(integrity))
+    }
+
+    /// Stream one session out as NDJSON, and report what was written.
+    ///
+    /// The estimator is the session's own fitted ratio where one exists, which
+    /// is the same choice every other view here makes. Reaching for the
+    /// binding's default instead would make an export disagree with the
+    /// context panel beside it about the size of the same turn, with nothing
+    /// on either side to explain the difference.
+    fn export_session(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        redact_secrets: bool,
+    ) -> Result<ExportOutcome, String> {
+        self.export_session_into(
+            &ct_runtime::export_dir(&ct_runtime::archive_store().root()),
+            agent,
+            id,
+            redact_secrets,
+        )
+    }
+
+    /// The half of [`AppState::export_session`] that does not decide *where*.
+    ///
+    /// Split out so tests can name a scratch directory. The alternative --
+    /// pointing `CONTEXTTRACE_ARCHIVE` at one -- is process-wide state that
+    /// parallel tests would race on, and getting it wrong means writing into
+    /// the archive of whoever is running the suite.
+    fn export_session_into(
+        &self,
+        root: &Path,
+        agent: AgentKind,
+        id: &str,
+        redact_secrets: bool,
+    ) -> Result<ExportOutcome, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let fitted = cached
+            .chars_per_token()
+            .map(ct_runtime::heuristic_estimator);
+        let estimator: &dyn TokenEstimator = match fitted.as_ref() {
+            Some(estimator) => estimator,
+            None => self.app.binding_estimator(cached.binding),
+        };
+        let redaction = if redact_secrets {
+            ExportRedaction::Secrets
+        } else {
+            ExportRedaction::None
+        };
+
+        // The same rule the archive names its copies by, for the same reason:
+        // an id is an opaque string, and one containing a separator would
+        // place this file outside the directory chosen for it.
+        let stem = cached.descriptor.id.file_stem().ok_or_else(|| {
+            format!(
+                "session id '{}' is not safe to use as a filename",
+                cached.descriptor.id
+            )
+        })?;
+        let dir = root.join(cached.descriptor.agent.label());
+        fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        let path = dir.join(format!("{stem}.ndjson"));
+
+        // Written beside the destination and renamed over it only once the
+        // last record is on disk. A reader who finds the file finds a whole
+        // export: an interrupted one leaves the previous copy standing rather
+        // than a truncated file that still parses line by line and quietly
+        // stops half a session early.
+        let pending = path.with_extension("ndjson.pending");
+        let outcome = self.write_export(&pending, &cached, estimator, redaction);
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let _ = fs::remove_file(&pending);
+                return Err(error);
+            }
+        };
+        fs::rename(&pending, &path).map_err(|error| format!("{}: {error}", path.display()))?;
+
+        Ok(ExportOutcome {
+            path: path.display().to_string(),
+            bytes: outcome.bytes,
+            records: outcome.records,
+            redaction: redaction_label(redaction).to_string(),
+            redactions: outcome.redactions,
+        })
+    }
+
+    /// The streaming half of [`AppState::export_session`], kept separate so
+    /// the caller can delete a half-written file on any failure path.
+    ///
+    /// One record is serialized at a time and written straight through a
+    /// buffer. Collecting the export into a `String` first would materialise a
+    /// session that can reach tens of megabytes -- the one thing every other
+    /// read path in this tool is careful not to do.
+    fn write_export(
+        &self,
+        pending: &Path,
+        cached: &CachedSession,
+        estimator: &dyn TokenEstimator,
+        redaction: ExportRedaction,
+    ) -> Result<WrittenExport, String> {
+        let file =
+            fs::File::create(pending).map_err(|error| format!("{}: {error}", pending.display()))?;
+        let mut writer = BufWriter::new(file);
+        let mut records = 0u64;
+        let mut bytes = 0u64;
+
+        let report = self
+            .app
+            .export_ndjson(
+                &cached.session,
+                &cached.descriptor.path,
+                cached.binding,
+                estimator,
+                redaction,
+                |record| {
+                    let line = serde_json::to_string(record)
+                        .map_err(|error| AppError::Port(PortError::Io(error.to_string())))?;
+                    writer
+                        .write_all(line.as_bytes())
+                        .and_then(|()| writer.write_all(b"\n"))
+                        .map_err(|error| AppError::Port(PortError::Io(error.to_string())))?;
+                    records += 1;
+                    bytes += line.len() as u64 + 1;
+                    Ok(())
+                },
+            )
+            .map_err(|error| error.to_string())?;
+
+        writer
+            .flush()
+            .map_err(|error| format!("{}: {error}", pending.display()))?;
+        Ok(WrittenExport {
+            records,
+            bytes,
+            redactions: report.redactions,
+        })
+    }
+}
+
+/// What [`AppState::write_export`] observed while streaming, before the file
+/// it wrote has been renamed into place and can be described as an export.
+struct WrittenExport {
+    records: u64,
+    bytes: u64,
+    redactions: usize,
+}
+
+/// The wire name for what an export was asked to do about credentials.
+///
+/// Spelled out here rather than derived from the enum's `Debug`: this string
+/// is a claim about whether the file on disk still holds credentials, and it
+/// should not change because someone renamed a variant.
+fn redaction_label(redaction: ExportRedaction) -> &'static str {
+    match redaction {
+        ExportRedaction::None => "none",
+        ExportRedaction::Secrets => "secrets",
+    }
 }
 
 /// Whether at least one turn in a residual series has a known remainder.
@@ -810,6 +1080,12 @@ pub struct RootSummary {
 pub struct StartupSummary {
     roots: Vec<RootSummary>,
     warnings: Vec<String>,
+    /// The one directory `archive_session` and `export_session` write to --
+    /// the write-side counterpart of `roots`. Named here for the same reason
+    /// `ct roots` names it out loud: a tool whose privacy claim rests on
+    /// being auditable has to state every local path it touches, not just
+    /// the ones it reads.
+    archive_root: String,
 }
 
 /// Mirrors [`Comparability`], which decides whether the token deltas beside it
@@ -862,9 +1138,17 @@ impl From<Comparability> for ComparabilitySummary {
     }
 }
 
+/// One side of a turn comparison, labelled by the session it came from.
+///
+/// `id` and `agent` exist because the two sides may now name two different
+/// sessions: a comparison view that only showed `turn` could not tell a
+/// reader which session a number belonged to once a cross-session diff is
+/// possible.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnSideSummary {
+    id: String,
+    agent: String,
     turn: u32,
     total_tokens: u32,
     items: usize,
@@ -931,6 +1215,8 @@ impl From<SessionDiff> for TurnDiffSummary {
         let prompt_delta = diff.prompt_delta();
         let totals_are_observed = diff.totals_are_observed();
         let side = |summary: &ct_application::SideSummary| TurnSideSummary {
+            id: summary.session_id.clone(),
+            agent: summary.agent.to_string(),
             turn: summary.turn,
             total_tokens: summary.total.tokens(),
             items: summary.items,
@@ -1524,6 +1810,159 @@ impl From<CompactionDiff> for CompactionDiffSummary {
     }
 }
 
+/// Mirrors [`ArchiveEntry`]. `agent` is [`AgentKind::label`] -- the same
+/// string the session catalog already sends, so a desktop row can match an
+/// archive entry to a catalog entry by comparing two plain strings rather
+/// than parsing one back into an enum.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveEntrySummary {
+    id: String,
+    agent: String,
+    project: Option<String>,
+    archived_at: String,
+    redaction: String,
+    records: u64,
+    source_bytes: u64,
+    archived_bytes: u64,
+    redacted_records: u64,
+    redacted_values: u64,
+    differs_from_source: bool,
+}
+
+impl From<ArchiveEntry> for ArchiveEntrySummary {
+    fn from(value: ArchiveEntry) -> Self {
+        Self {
+            id: value.id().to_string(),
+            agent: value.agent().label().to_string(),
+            project: value.descriptor.project.clone(),
+            archived_at: value.archived_at.to_rfc3339(),
+            redaction: value.redaction.label().to_string(),
+            records: value.records,
+            source_bytes: value.source_bytes,
+            archived_bytes: value.archived_bytes,
+            redacted_records: value.redacted_records,
+            redacted_values: value.redacted_values,
+            differs_from_source: value.differs_from_source(),
+        }
+    }
+}
+
+/// Mirrors [`ArchiveIntegrity`]. A sum type, not a status string with a grab
+/// bag of nullable digest fields, for the same reason every other typed
+/// refusal in this file is one: the four outcomes call for different
+/// reactions, and a reader matching on `kind` cannot reach into
+/// `sourceChanged` for a digest that only `archiveDamaged` actually carries.
+///
+/// `rename_all` is repeated on every struct variant deliberately -- on an
+/// enum it renames only the `kind` tag, never a struct variant's own fields.
+/// See `ComparabilitySummary` above, which this file has already been bitten
+/// by getting this wrong once.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ArchiveIntegritySummary {
+    Intact,
+    #[serde(rename_all = "camelCase")]
+    SourceChanged {
+        recorded_digest: String,
+        current_digest: String,
+        recorded_bytes: u64,
+        current_bytes: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    SourceGone {
+        archive_matches_digest: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    ArchiveDamaged {
+        recorded_digest: String,
+        current_digest: String,
+    },
+}
+
+impl From<ArchiveIntegrity> for ArchiveIntegritySummary {
+    fn from(value: ArchiveIntegrity) -> Self {
+        match value {
+            ArchiveIntegrity::Intact => Self::Intact,
+            ArchiveIntegrity::SourceChanged {
+                recorded_digest,
+                current_digest,
+                recorded_bytes,
+                current_bytes,
+            } => Self::SourceChanged {
+                recorded_digest,
+                current_digest,
+                recorded_bytes,
+                current_bytes,
+            },
+            ArchiveIntegrity::SourceGone {
+                archive_matches_digest,
+            } => Self::SourceGone {
+                archive_matches_digest,
+            },
+            ArchiveIntegrity::ArchiveDamaged {
+                recorded_digest,
+                current_digest,
+            } => Self::ArchiveDamaged {
+                recorded_digest,
+                current_digest,
+            },
+        }
+    }
+}
+
+/// What checking an archived session found, as the desktop reads it.
+///
+/// `copy_is_sound` and `rebuildable` are read off [`ArchiveIntegrity`] here,
+/// not re-derived from `integrity` on the other side of the wire: the domain
+/// owns that judgement, and a second implementation of it in TypeScript is
+/// exactly how the two would drift.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveVerification {
+    integrity: ArchiveIntegritySummary,
+    copy_is_sound: bool,
+    rebuildable: bool,
+}
+
+impl From<ArchiveIntegrity> for ArchiveVerification {
+    fn from(value: ArchiveIntegrity) -> Self {
+        Self {
+            copy_is_sound: value.copy_is_sound(),
+            rebuildable: value.rebuildable(),
+            integrity: ArchiveIntegritySummary::from(value),
+        }
+    }
+}
+
+/// Everything the archive holds. `root` is the directory copies are written
+/// to -- the same string `ct roots` prints -- and `entries` arrive most
+/// recently archived first, exactly as [`ContextTrace::archived_sessions`]
+/// orders them; this DTO does not re-sort them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveHolding {
+    root: String,
+    entries: Vec<ArchiveEntrySummary>,
+}
+
+/// What one completed export wrote.
+///
+/// `redaction` says what was *asked* for and `redactions` how many values were
+/// actually replaced. Both, because they answer different questions: the first
+/// is whether this file can be shared, the second whether anything in this
+/// session was worth redacting. A zero count under `"secrets"` means the
+/// scanner found nothing, which is not the same claim as never having looked.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportOutcome {
+    path: String,
+    bytes: u64,
+    records: u64,
+    redaction: String,
+    redactions: usize,
+}
+
 #[tauri::command]
 pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
     state.startup()
@@ -1593,13 +2032,22 @@ pub fn get_compaction_diff(
 
 #[tauri::command]
 pub fn get_turn_diff(
-    id: String,
-    agent: String,
+    left_id: String,
+    left_agent: String,
     left_turn: u32,
+    right_id: String,
+    right_agent: String,
     right_turn: u32,
     state: tauri::State<'_, AppState>,
 ) -> Result<TurnDiffSummary, String> {
-    state.turn_diff(parse_agent(&agent)?, &id, left_turn, right_turn)
+    state.turn_diff(
+        parse_agent(&left_agent)?,
+        &left_id,
+        left_turn,
+        parse_agent(&right_agent)?,
+        &right_id,
+        right_turn,
+    )
 }
 
 #[tauri::command]
@@ -1609,6 +2057,40 @@ pub fn get_residual(
     state: tauri::State<'_, AppState>,
 ) -> Result<ResidualReport, String> {
     state.residual(parse_agent(&agent)?, &id)
+}
+
+#[tauri::command]
+pub fn archived_sessions(state: tauri::State<'_, AppState>) -> Result<ArchiveHolding, String> {
+    state.archived_sessions()
+}
+
+#[tauri::command]
+pub fn archive_session(
+    id: String,
+    agent: String,
+    raw: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<ArchiveEntrySummary, String> {
+    state.archive_session(parse_agent(&agent)?, &id, raw)
+}
+
+#[tauri::command]
+pub fn verify_archived(
+    id: String,
+    agent: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ArchiveVerification, String> {
+    state.verify_archived(parse_agent(&agent)?, &id)
+}
+
+#[tauri::command]
+pub fn export_session(
+    id: String,
+    agent: String,
+    redact_secrets: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExportOutcome, String> {
+    state.export_session(parse_agent(&agent)?, &id, redact_secrets)
 }
 
 fn format_source(source: &ContextSource) -> String {
@@ -1733,6 +2215,28 @@ mod tests {
             .search_sessions(None, None, Some(0), Some(MAX_SESSION_PAGE_SIZE), None)
             .expect("list committed synthetic fixtures")
             .sessions
+    }
+
+    /// An estimator that leaves `chars_per_token` at the port's default
+    /// `None` -- what a real tokenizer reports, unlike every
+    /// `HeuristicEstimator` this file otherwise wires. Exists only so an
+    /// `incomparable` cross-session diff is reachable in a test:
+    /// `FixtureHomes::state` wires the same heuristic to both agents on
+    /// purpose, so it alone can never produce this arm.
+    struct FakeTokenizer;
+
+    impl TokenEstimator for FakeTokenizer {
+        fn count_text(&self, text: &str) -> ct_domain::TokenCount {
+            ct_domain::TokenCount::estimated(text.chars().count() as u32)
+        }
+
+        fn estimate_from_chars(&self, char_len: u32) -> ct_domain::TokenCount {
+            ct_domain::TokenCount::estimated(char_len)
+        }
+
+        fn name(&self) -> &str {
+            "fake-tokenizer"
+        }
     }
 
     /// Discovery-only catalog used to exercise paging without creating hundreds
@@ -2271,12 +2775,11 @@ mod tests {
         );
     }
 
-    /// Two turns of one session, which is the only comparison the desktop can
-    /// currently ask for and therefore the only `Comparability` arm it can
-    /// reach. The other two are still modelled and validated at the boundary,
-    /// so a cross-session comparison lands without reopening the type -- and
-    /// so this test fails loudly if the desktop ever starts building its two
-    /// sides from separately calibrated loads without saying so.
+    /// Two turns of one session -- the commonest comparison, and the one that
+    /// must stay cheap now that `turn_diff` also accepts two different
+    /// sessions. Both sides come from one load, so one instrument sizes them
+    /// and `Comparability` is `identical`; the cross-session arms are pinned
+    /// separately below, where they are actually reachable.
     #[test]
     fn a_turn_diff_reports_one_instrument_and_camelcases_every_field() {
         let homes = FixtureHomes::new();
@@ -2304,6 +2807,8 @@ mod tests {
                 AgentKind::Codex,
                 &codex_id,
                 turns[0],
+                AgentKind::Codex,
+                &codex_id,
                 turns[turns.len() - 1],
             )
             .expect("two turns of one session compare");
@@ -2314,6 +2819,13 @@ mod tests {
         // building its two sides from separately calibrated loads.
         assert_eq!(json["comparability"]["kind"], "identical");
         assert!(json["comparability"]["estimator"].is_string());
+
+        // Each side now names the session it came from, which matters once
+        // the two sides can genuinely differ.
+        assert_eq!(json["left"]["id"], codex_id);
+        assert_eq!(json["left"]["agent"], "codex");
+        assert_eq!(json["right"]["id"], codex_id);
+        assert_eq!(json["right"]["agent"], "codex");
 
         assert_eq!(json["left"]["turn"], turns[0]);
         assert_eq!(json["right"]["turn"], turns[turns.len() - 1]);
@@ -2340,6 +2852,152 @@ mod tests {
             assert!(row["leftCalls"].is_number());
             assert!(row["tokenDelta"].is_i64());
             assert!(row.get("left_calls").is_none());
+        }
+    }
+
+    /// A same-session diff must not load and re-fit the session twice: that
+    /// is a sweep of every turn, seconds on a long session, and the reason
+    /// `ct diff` makes the same optimisation at `ct-cli/src/main.rs`. The
+    /// fixture is cached by the first `inspect_session` call and its file is
+    /// then removed from disk, so a second, independent load for the right
+    /// side would fail this test outright rather than merely run slowly.
+    #[test]
+    fn a_same_session_diff_does_not_reload_the_session_for_its_right_side() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let codex_id = session_id(&sessions, "codex");
+
+        let detail = state
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("first inspection populates the cache");
+        let turns: Vec<u32> = detail
+            .growth
+            .iter()
+            .filter(|point| point.prompt_tokens.is_some())
+            .map(|point| point.turn)
+            .collect();
+        assert!(turns.len() >= 2, "need two measured turns");
+        fs::remove_file(&homes.codex_session).expect("remove staged fixture after caching it");
+
+        state
+            .turn_diff(
+                AgentKind::Codex,
+                &codex_id,
+                turns[0],
+                AgentKind::Codex,
+                &codex_id,
+                turns[turns.len() - 1],
+            )
+            .expect("a same-session diff answers from the cached handle alone");
+    }
+
+    /// `homes.state()` cannot exercise `skewed` or `incomparable`: both its
+    /// bindings share one flat heuristic at the same ratio (see
+    /// `FixtureHomes::state`), so any diff through it is `identical`
+    /// whichever two sessions are named. These two tests wire the two
+    /// sessions to genuinely different instruments themselves -- the way two
+    /// differently-fitted Claude Code sessions, or a Codex session against a
+    /// Claude Code one, actually are on a real machine -- so the arms that
+    /// were dead code before this widening are proven reachable through the
+    /// desktop path, not just through `ct_application::compare`'s own tests.
+    #[test]
+    fn a_cross_session_diff_reports_skewed_when_two_ratios_differ() {
+        let homes = FixtureHomes::new();
+        let state = AppState::from_parts(
+            ContextTrace::new(vec![
+                AgentBinding::new(
+                    Box::new(ClaudeCodeAdapter::with_home(&homes.claude_home)),
+                    Box::new(HeuristicEstimator::with_ratio(2.0)),
+                ),
+                AgentBinding::new(
+                    Box::new(CodexAdapter::with_home(&homes.codex_home)),
+                    Box::new(HeuristicEstimator::with_ratio(2.5)),
+                ),
+            ]),
+            Vec::new(),
+        );
+        let sessions = all_sessions(&state);
+        let claude_id = session_id(&sessions, "claude-code");
+        let codex_id = session_id(&sessions, "codex");
+        let claude_turn = state
+            .inspect_session(AgentKind::ClaudeCode, &claude_id)
+            .expect("claude fixture inspects")
+            .peak_turn
+            .expect("fixture has prompt usage");
+        let codex_turn = state
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("codex fixture inspects")
+            .peak_turn
+            .expect("fixture has prompt usage");
+
+        let diff = state
+            .turn_diff(
+                AgentKind::ClaudeCode,
+                &claude_id,
+                claude_turn,
+                AgentKind::Codex,
+                &codex_id,
+                codex_turn,
+            )
+            .expect("two differently-ratioed sessions still bound a delta");
+        let json = serde_json::to_value(&diff).expect("serialises");
+
+        assert_eq!(json["comparability"]["kind"], "skewed");
+        assert!(json["comparability"]["skew"].as_f64().unwrap() > 0.0);
+        assert_eq!(json["left"]["id"], claude_id);
+        assert_eq!(json["left"]["agent"], "claude-code");
+        assert_eq!(json["right"]["id"], codex_id);
+        assert_eq!(json["right"]["agent"], "codex");
+    }
+
+    #[test]
+    fn a_cross_session_diff_reports_incomparable_across_two_kinds_of_instrument() {
+        let homes = FixtureHomes::new();
+        let state = AppState::from_parts(
+            ContextTrace::new(vec![
+                AgentBinding::new(
+                    Box::new(ClaudeCodeAdapter::with_home(&homes.claude_home)),
+                    Box::new(HeuristicEstimator::for_code()),
+                ),
+                AgentBinding::new(
+                    Box::new(CodexAdapter::with_home(&homes.codex_home)),
+                    Box::new(FakeTokenizer),
+                ),
+            ]),
+            Vec::new(),
+        );
+        let sessions = all_sessions(&state);
+        let claude_id = session_id(&sessions, "claude-code");
+        let codex_id = session_id(&sessions, "codex");
+        let claude_turn = state
+            .inspect_session(AgentKind::ClaudeCode, &claude_id)
+            .expect("claude fixture inspects")
+            .peak_turn
+            .expect("fixture has prompt usage");
+        let codex_turn = state
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("codex fixture inspects")
+            .peak_turn
+            .expect("fixture has prompt usage");
+
+        let diff = state
+            .turn_diff(
+                AgentKind::ClaudeCode,
+                &claude_id,
+                claude_turn,
+                AgentKind::Codex,
+                &codex_id,
+                codex_turn,
+            )
+            .expect("no comparability bound is still a typed success, not an IPC error");
+        let json = serde_json::to_value(&diff).expect("serialises");
+
+        assert_eq!(json["comparability"]["kind"], "incomparable");
+        assert!(json["comparability"]["reason"].is_string());
+        for row in json["categories"].as_array().expect("categories array") {
+            assert_eq!(row["instrumentBound"], serde_json::Value::Null);
+            assert_eq!(row["meaningful"], false);
         }
     }
 
@@ -2609,5 +3267,278 @@ mod tests {
             !series_has_a_measurable_remainder(&[]),
             "nothing can be drawn from zero points either"
         );
+    }
+
+    // ---- archive DTOs ---------------------------------------------------
+    //
+    // `AppState::archive_session`, `::archived_sessions` and
+    // `::verify_archived` each resolve the archive root through
+    // `ct_runtime::archive_store()`, which is not test-injectable: it always
+    // resolves the real per-user (or `CONTEXTTRACE_ARCHIVE`-overridden)
+    // directory. Exercising those three methods end-to-end here would mean
+    // either writing into a real machine's archive during `cargo test` or
+    // mutating that process-wide environment variable across a parallel test
+    // run -- both worse than the coverage gained. So these tests go around
+    // that seam and through `self.app` (a `ContextTrace`, reachable from a
+    // child module the ordinary way private fields are) with a
+    // `FileArchiveStore` pointed at a throwaway directory, which is exactly
+    // what `archive_session_in_agent`/`verify_archived_in_agent` themselves
+    // are -- the real logic under test is the DTO mapping this file owns,
+    // not the seam `ct_runtime` already tests on its own.
+
+    #[test]
+    fn archive_entry_summary_mirrors_the_domain_entry_camelcased() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let codex_id = session_id(&sessions, "codex");
+        let store = ct_adapters::FileArchiveStore::at(homes.root.join("archive-under-test"));
+
+        let entry = state
+            .app
+            .archive_session_in_agent(AgentKind::Codex, &codex_id, &store, RedactionMode::Redacted)
+            .expect("a discovered session archives");
+
+        let summary = ArchiveEntrySummary::from(entry);
+        let json = serde_json::to_value(&summary).expect("serializes for IPC");
+        assert_eq!(json["id"], codex_id);
+        assert_eq!(json["agent"], "codex");
+        assert_eq!(json["redaction"], "redacted");
+        assert!(json["records"].is_number());
+        assert!(json["sourceBytes"].is_number());
+        assert!(json["archivedBytes"].is_number());
+        assert!(json["archivedAt"].is_string());
+        assert!(json["differsFromSource"].is_boolean());
+        // `rename_all` is on the DTO struct, not inherited from anywhere
+        // else -- assert the snake_case sibling is truly gone, not merely
+        // that the camelCase key is present.
+        assert!(json.get("source_bytes").is_none());
+        assert!(json.get("archived_bytes").is_none());
+        assert!(json.get("differs_from_source").is_none());
+    }
+
+    #[test]
+    fn archive_entries_translate_into_dtos_in_the_same_order_they_arrived() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let codex_id = session_id(&sessions, "codex");
+        let claude_id = session_id(&sessions, "claude-code");
+        let store = ct_adapters::FileArchiveStore::at(homes.root.join("archive-under-test"));
+
+        state
+            .app
+            .archive_session_in_agent(AgentKind::Codex, &codex_id, &store, RedactionMode::Redacted)
+            .expect("codex fixture archives");
+        state
+            .app
+            .archive_session_in_agent(
+                AgentKind::ClaudeCode,
+                &claude_id,
+                &store,
+                RedactionMode::Redacted,
+            )
+            .expect("claude fixture archives");
+
+        // `ContextTrace::archived_sessions` orders most-recently-archived
+        // first and is tested on its own in `ct_application::archive`; this
+        // only pins that turning its entries into `ArchiveEntrySummary` does
+        // not re-sort them, the property `ArchiveHolding`'s own doc comment
+        // promises.
+        let entries = state
+            .app
+            .archived_sessions(&store)
+            .expect("list archived sessions");
+        let domain_order: Vec<String> =
+            entries.iter().map(|entry| entry.id().to_string()).collect();
+        let dto_order: Vec<String> = entries
+            .into_iter()
+            .map(ArchiveEntrySummary::from)
+            .map(|summary| summary.id)
+            .collect();
+        // Whichever order the domain settled on -- ties on `archived_at` are
+        // possible at whatever clock resolution a given machine has, and
+        // `ContextTrace::archived_sessions` already covers the ordering rule
+        // itself -- the DTO layer must reproduce it exactly rather than
+        // impose one of its own.
+        assert_eq!(domain_order, dto_order);
+        assert_eq!(
+            domain_order
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>(),
+            [&codex_id, &claude_id].into_iter().collect(),
+            "both archived sessions are present"
+        );
+    }
+
+    #[test]
+    fn archive_verification_reads_copy_is_sound_and_rebuildable_off_the_domain_value() {
+        // A vanished source with a matching digest: the case the whole
+        // feature exists for. The copy is sound (nothing to rebuild it from
+        // says otherwise) but not rebuildable (there is nothing left to
+        // re-read), and both figures must come from `ArchiveIntegrity`'s own
+        // methods rather than be re-derived here.
+        let integrity = ArchiveIntegrity::SourceGone {
+            archive_matches_digest: true,
+        };
+        let verification = ArchiveVerification::from(integrity);
+        assert!(verification.copy_is_sound);
+        assert!(!verification.rebuildable);
+
+        let json = serde_json::to_value(&verification).expect("serializes for IPC");
+        assert_eq!(json["integrity"]["kind"], "sourceGone");
+        assert_eq!(json["integrity"]["archiveMatchesDigest"], true);
+        assert_eq!(json["copyIsSound"], true);
+        assert_eq!(json["rebuildable"], false);
+        assert!(json.get("copy_is_sound").is_none());
+        assert!(json.get("archive_matches_digest").is_none());
+    }
+
+    #[test]
+    fn archive_damaged_is_the_one_outcome_the_copy_is_not_sound_under() {
+        let integrity = ArchiveIntegrity::ArchiveDamaged {
+            recorded_digest: "a".into(),
+            current_digest: "b".into(),
+        };
+        let json =
+            serde_json::to_value(ArchiveVerification::from(integrity)).expect("serializes for IPC");
+        assert_eq!(json["integrity"]["kind"], "archiveDamaged");
+        assert_eq!(json["integrity"]["recordedDigest"], "a");
+        assert_eq!(json["integrity"]["currentDigest"], "b");
+        assert!(json["integrity"].get("recorded_digest").is_none());
+        assert_eq!(json["copyIsSound"], false);
+        assert_eq!(json["rebuildable"], true);
+    }
+
+    #[test]
+    fn archive_intact_needs_no_rebuild_and_every_field_camelcases() {
+        let json = serde_json::to_value(ArchiveVerification::from(ArchiveIntegrity::Intact))
+            .expect("serializes for IPC");
+        assert_eq!(json["integrity"]["kind"], "intact");
+        assert_eq!(json["copyIsSound"], true);
+        assert_eq!(json["rebuildable"], false);
+
+        let source_changed = ArchiveIntegrity::SourceChanged {
+            recorded_digest: "old".into(),
+            current_digest: "new".into(),
+            recorded_bytes: 10,
+            current_bytes: 20,
+        };
+        let json = serde_json::to_value(ArchiveVerification::from(source_changed))
+            .expect("serializes for IPC");
+        assert_eq!(json["integrity"]["kind"], "sourceChanged");
+        assert_eq!(json["integrity"]["recordedBytes"], 10);
+        assert_eq!(json["integrity"]["currentBytes"], 20);
+        assert!(json["integrity"].get("recorded_bytes").is_none());
+        // A source that merely continued is still a sound copy of an earlier
+        // state, and re-ingesting is offered rather than refused.
+        assert_eq!(json["copyIsSound"], true);
+        assert_eq!(json["rebuildable"], true);
+    }
+
+    // ---- export ----------------------------------------------------------
+
+    #[test]
+    fn an_export_writes_every_record_as_a_line_that_parses_on_its_own() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let id = session_id(&all_sessions(&state), "codex");
+        let dest = homes.root.join("exports");
+
+        let outcome = state
+            .export_session_into(&dest, AgentKind::Codex, &id, false)
+            .expect("the fixture exports");
+
+        let written = fs::read_to_string(&outcome.path).expect("the export is on disk");
+        let lines: Vec<&str> = written.lines().collect();
+        assert_eq!(lines.len() as u64, outcome.records);
+        assert_eq!(written.len() as u64, outcome.bytes);
+        // NDJSON's whole promise is that a consumer can read one line at a
+        // time. A file that only parses as a whole would still look right.
+        for line in &lines {
+            serde_json::from_str::<serde_json::Value>(line)
+                .unwrap_or_else(|error| panic!("every exported line parses alone: {error}"));
+        }
+        assert_eq!(outcome.redaction, "none");
+        assert_eq!(outcome.redactions, 0);
+    }
+
+    #[test]
+    fn an_export_leaves_no_pending_file_behind() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let id = session_id(&all_sessions(&state), "codex");
+        let dest = homes.root.join("exports");
+
+        let outcome = state
+            .export_session_into(&dest, AgentKind::Codex, &id, false)
+            .expect("the fixture exports");
+
+        // The rename is what makes a complete export distinguishable from an
+        // interrupted one; a leftover `.pending` beside it would mean a reader
+        // has two files to choose between and no rule for which is whole.
+        let siblings: Vec<String> = fs::read_dir(dest.join("codex"))
+            .expect("the agent directory was created")
+            .map(|entry| {
+                entry
+                    .expect("readable")
+                    .file_name()
+                    .to_string_lossy()
+                    .into()
+            })
+            .collect();
+        assert_eq!(siblings.len(), 1, "found {siblings:?}");
+        assert!(outcome.path.ends_with(".ndjson"));
+    }
+
+    #[test]
+    fn an_export_asked_to_redact_says_so_even_when_it_finds_nothing() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let id = session_id(&all_sessions(&state), "codex");
+        let dest = homes.root.join("exports");
+
+        let outcome = state
+            .export_session_into(&dest, AgentKind::Codex, &id, true)
+            .expect("the fixture exports");
+
+        // The two fields answer different questions. This fixture carries no
+        // credentials, so the count is zero -- which must not be reportable as
+        // "nothing was redacted" in a file that was never scanned.
+        assert_eq!(outcome.redaction, "secrets");
+        assert_eq!(outcome.redactions, 0);
+    }
+
+    #[test]
+    fn re_exporting_replaces_the_previous_file_rather_than_appending_to_it() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let id = session_id(&all_sessions(&state), "codex");
+        let dest = homes.root.join("exports");
+
+        let first = state
+            .export_session_into(&dest, AgentKind::Codex, &id, false)
+            .expect("first export");
+        let second = state
+            .export_session_into(&dest, AgentKind::Codex, &id, false)
+            .expect("second export");
+
+        assert_eq!(first.path, second.path);
+        assert_eq!(first.bytes, second.bytes);
+        let on_disk = fs::metadata(&second.path).expect("still one file").len();
+        assert_eq!(on_disk, second.bytes);
+    }
+
+    #[test]
+    fn an_export_is_named_by_the_same_rule_the_archive_names_its_copies_by() {
+        // Both write paths put a session id in a filename, and a user reading
+        // one subdirectory beside the other should not find the same session
+        // under two different stems.
+        let id = ct_domain::SessionId::new("a/b..c").expect("non-blank");
+        assert_eq!(id.file_stem().as_deref(), Some("a%2Fb..c"));
+        assert!(ct_domain::SessionId::new("..")
+            .expect("non-blank")
+            .file_stem()
+            .is_none());
     }
 }

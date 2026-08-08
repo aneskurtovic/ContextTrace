@@ -8,6 +8,12 @@ export interface RootSummary {
 export interface StartupSummary {
   roots: RootSummary[];
   warnings: string[];
+  /** The one directory ContextTrace writes to -- `ct roots`' own figure for
+   *  it. `roots` above lists directories this tool only ever reads; the
+   *  written directory belongs in the same disclosure, distinguished as
+   *  written rather than read, not folded into `roots` as though archiving
+   *  were another source this tool merely observes. */
+  archiveRoot: string;
 }
 
 /**
@@ -51,7 +57,17 @@ export type Comparability =
   | { kind: "skewed"; left: string; right: string; skew: number }
   | { kind: "incomparable"; left: string; right: string; reason: string };
 
+/**
+ * One side of a turn comparison. Carries `id`/`agent` so the two sides of a
+ * cross-session diff never present as one session with two turn numbers --
+ * the comparison used to be within a single already-selected session, and a
+ * caller could read "which session" off the page it came from. It cannot
+ * once the right side may be a different session, so the fact travels with
+ * the side.
+ */
 export interface TurnSide {
+  id: string;
+  agent: Agent;
   turn: number;
   totalTokens: number;
   items: number;
@@ -83,6 +99,15 @@ export interface ToolDelta {
   tokenDelta: number;
   instrumentBound: number | null;
   meaningful: boolean;
+}
+
+/** One side of a turn comparison, as a caller names it before asking: which
+ *  session, and which turn of it. `TurnSide` above is the answer that comes
+ *  back; this is the question. */
+export interface TurnTarget {
+  agent: Agent;
+  id: string;
+  turn: number;
 }
 
 export interface TurnDiff {
@@ -413,3 +438,98 @@ export type ResidualReport =
   | { kind: "overCounted"; charsPerToken: number; pairsUsed: number; dispersion: number; turnsMeasured: number }
   | { kind: "agentNotFitted"; agent: Agent }
   | { kind: "insufficientGrowth"; turnsWithUsage: number };
+
+/**
+ * Whether an archived copy still holds the credentials its source held.
+ * Mirrors `ct_domain::model::archive::RedactionMode`. Redaction is the
+ * default on the write path (see `ArchiveEntrySummary`); `"raw"` only ever
+ * arrives from an explicit request, and every row states which it got so a
+ * reader never has to assume.
+ */
+export type RedactionMode = "redacted" | "raw";
+
+/**
+ * One session as the archive's manifest records it, mirroring
+ * `ct_domain::model::archive::ArchiveEntry`.
+ *
+ * `differsFromSource` is carried rather than re-derived from `redactedValues
+ * > 0`: the domain owns that judgement (`ArchiveEntry::differs_from_source`),
+ * and restating its condition here would be a second place for it to drift
+ * from what the backend actually enforces.
+ */
+export interface ArchiveEntrySummary {
+  id: string;
+  agent: Agent;
+  project: string | null;
+  archivedAt: string;
+  redaction: RedactionMode;
+  records: number;
+  sourceBytes: number;
+  archivedBytes: number;
+  redactedRecords: number;
+  redactedValues: number;
+  differsFromSource: boolean;
+}
+
+/**
+ * What checking an archived session against the world found, mirroring
+ * `ct_domain::model::archive::ArchiveIntegrity`.
+ *
+ * Four outcomes, not a red/green status: an intact archive needs nothing, a
+ * changed source needs a re-ingest, a damaged copy needs a re-ingest *and*
+ * means the previous copy cannot be trusted, and a vanished source makes this
+ * copy the only evidence left -- the case archiving exists for, and the one a
+ * plain "verified" badge would understate rather than state.
+ */
+export type ArchiveIntegritySummary =
+  | { kind: "intact" }
+  | {
+      kind: "sourceChanged";
+      recordedDigest: string;
+      currentDigest: string;
+      recordedBytes: number;
+      currentBytes: number;
+    }
+  | { kind: "sourceGone"; archiveMatchesDigest: boolean }
+  | { kind: "archiveDamaged"; recordedDigest: string; currentDigest: string };
+
+/**
+ * `copyIsSound` and `rebuildable` cross the wire as computed booleans rather
+ * than being re-derived from `integrity` in TypeScript: they are judgements
+ * the Rust domain owns (`ArchiveIntegrity::copy_is_sound`, `::rebuildable`),
+ * and a second implementation here would be a second place for either to
+ * drift from what the domain actually enforces.
+ */
+export interface ArchiveVerification {
+  integrity: ArchiveIntegritySummary;
+  copyIsSound: boolean;
+  rebuildable: boolean;
+}
+
+/** Everything the archive holds, mirroring the `ct archive` listing.
+ *  `root` is the directory copies are written to -- the same string `ct
+ *  roots` prints, and the app's whole privacy claim rests on naming it.
+ *  `entries` arrive most-recently-archived first; do not re-sort them. */
+export interface ArchiveHolding {
+  root: string;
+  entries: ArchiveEntrySummary[];
+}
+
+/** What was requested when a session was exported, mirroring
+ *  `ct_application::ExportRedaction`. `"none"` is the CLI's own default
+ *  (`ExportRedaction::default()`); redaction on export is an opt-in, unlike
+ *  the archive's default-redacted write path. */
+export type ExportRedaction = "none" | "secrets";
+
+/** The outcome of writing one session to NDJSON, mirroring
+ *  `ct_application::ExportReport` plus the file facts `ct export` prints
+ *  alongside it. `redactions` is how many values were actually replaced --
+ *  zero whenever `redaction` is `"none"` or the session held nothing to
+ *  redact, not an indication either way that the write failed. */
+export interface ExportOutcome {
+  path: string;
+  bytes: number;
+  records: number;
+  redaction: ExportRedaction;
+  redactions: number;
+}
