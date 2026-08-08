@@ -235,8 +235,8 @@ jobs:
           if ($exportStderrText -notmatch 'Redacted (\d+) potential secret occurrence') {
             throw 'Expected a redaction summary on stderr.'
           }
-          if ([int]$Matches[1] -le 0) { throw 'Expected the redacted export to have changed at least one field.' }
-
+          if ([int]$Matches[1] -le 0) { throw 'Expected the redacted export to have changed at least one field.' }
+
       # The archive is the one place ContextTrace writes, and it concentrates by
       # construction what was scattered across a home directory. So the same
       # fixture that proves `ct secrets` never prints a credential is used to
@@ -250,17 +250,17 @@ jobs:
           $archiveRoot = Join-Path $env:RUNNER_TEMP 'contexttrace-archive'
           $env:CONTEXTTRACE_ARCHIVE = $archiveRoot
 
-          $sessions = & .	argetelease\ct.exe sessions --json | ConvertFrom-Json
+          $sessions = & .\target\release\ct.exe sessions --json | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $id = @($sessions | Where-Object { $_.agent -eq 'codex' })[0].id
 
-          $roots = & .	argetelease\ct.exe roots
+          $roots = & .\target\release\ct.exe roots
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (($roots -join "`n") -notmatch [regex]::Escape($archiveRoot)) {
             throw 'ct roots must name the directory ContextTrace writes to.'
           }
 
-          $archived = & .	argetelease\ct.exe archive $id --json | ConvertFrom-Json
+          $archived = & .\target\release\ct.exe archive $id --json | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($archived.redaction -ne 'redacted') { throw 'Archiving must redact by default.' }
           if ($archived.redacted_values -le 0) {
@@ -293,10 +293,10 @@ jobs:
             try { $null = $line | ConvertFrom-Json } catch { throw 'Redaction left an archived record unparseable.' }
           }
 
-          $verify = & .	argetelease\ct.exe archive $id --verify
+          $verify = & .\target\release\ct.exe archive $id --verify
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (($verify -join "`n") -notmatch 'intact') { throw 'A freshly archived session must verify as intact.' }
 
-          $list = & .	argetelease\ct.exe archive --json | ConvertFrom-Json
+          $list = & .\target\release\ct.exe archive --json | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (@($list).Count -ne 1) { throw 'Expected exactly one archived session.' }
