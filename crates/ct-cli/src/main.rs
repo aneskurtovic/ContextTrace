@@ -9,7 +9,7 @@ mod format;
 mod render;
 
 use clap::{Parser, Subcommand};
-use ct_adapters::{FileArchiveStore, FileRawEventSource, HeuristicEstimator};
+use ct_adapters::{FileRawEventSource, HeuristicEstimator};
 use ct_application::{ContextTrace, ExportRedaction, ResolveError, ResolvedSession, SessionFilter};
 use ct_domain::ports::{ArchiveStore, ExactRecount, TokenEstimator};
 use ct_domain::services::DerivedRatio;
@@ -460,7 +460,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let app = build();
 
     match cli.command {
-        Command::Roots => render::roots(&app, &FileArchiveStore::new().root()),
+        Command::Roots => render::roots(&app, &ct_runtime::archive_store().root()),
 
         Command::Archive {
             id,
@@ -468,7 +468,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             raw,
             json,
         } => {
-            let store = FileArchiveStore::new();
+            let store = ct_runtime::archive_store();
             match (id, verify) {
                 (None, _) => {
                     if raw {

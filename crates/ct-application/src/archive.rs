@@ -12,9 +12,10 @@
 //! bytes, so a value invisible to one is invisible to the other.
 
 use crate::secrets::redact_text;
-use crate::{AppError, ContextTrace};
+use crate::{AppError, ContextTrace, ResolvedSession};
 use ct_domain::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use ct_domain::ports::{ArchiveStore, RecordTransform};
+use ct_domain::AgentKind;
 use std::borrow::Cow;
 
 /// Replace recognised credential shapes on the way into the archive. The
@@ -194,7 +195,33 @@ impl ContextTrace {
         store: &dyn ArchiveStore,
         mode: RedactionMode,
     ) -> Result<ArchiveEntry, AppError> {
-        let resolved = self.resolve(id)?;
+        self.archive_resolved(self.resolve(id)?, store, mode)
+    }
+
+    /// Archive one session named by both halves of its identity.
+    ///
+    /// Exists for the reason [`ContextTrace::resolve_in_agent`] does: a caller
+    /// holding a catalog row knows the agent, and two agents can hold the same
+    /// id. Copying the wrong one would be worse here than anywhere else in this
+    /// tool -- an unscoped lookup answers with the first agent's session every
+    /// time, so the collision would present as a successful archive of a
+    /// session the caller did not name.
+    pub fn archive_session_in_agent(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        store: &dyn ArchiveStore,
+        mode: RedactionMode,
+    ) -> Result<ArchiveEntry, AppError> {
+        self.archive_resolved(self.resolve_in_agent(agent, id)?, store, mode)
+    }
+
+    fn archive_resolved(
+        &self,
+        resolved: ResolvedSession,
+        store: &dyn ArchiveStore,
+        mode: RedactionMode,
+    ) -> Result<ArchiveEntry, AppError> {
         let entry = match mode {
             RedactionMode::Redacted => store.ingest(&resolved.descriptor, &RedactingTransform)?,
             RedactionMode::Raw => store.ingest(&resolved.descriptor, &VerbatimTransform)?,
@@ -236,10 +263,39 @@ impl ContextTrace {
         id: &str,
         store: &dyn ArchiveStore,
     ) -> Result<ArchiveIntegrity, AppError> {
+        self.verify_archived_scoped(None, id, store)
+    }
+
+    /// Re-digest one archived session named by both halves of its identity.
+    ///
+    /// The counterpart of [`ContextTrace::archive_session_in_agent`], and needed
+    /// for the same reason -- except that here the collision cannot be resolved
+    /// by falling back to the live corpus, because the copy outliving its log is
+    /// the case this whole feature exists for. Scoping the search over the
+    /// archive's own entries is the only way the second of two colliding ids is
+    /// reachable at all.
+    pub fn verify_archived_in_agent(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<ArchiveIntegrity, AppError> {
+        self.verify_archived_scoped(Some(agent), id, store)
+    }
+
+    fn verify_archived_scoped(
+        &self,
+        agent: Option<AgentKind>,
+        id: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<ArchiveIntegrity, AppError> {
         let entries = store.entries()?;
 
         let mut prefix_matches: Vec<&ArchiveEntry> = Vec::new();
         for entry in &entries {
+            if agent.is_some_and(|wanted| entry.agent() != wanted) {
+                continue;
+            }
             if entry.id().as_str() == id {
                 return Ok(store.verify(entry.agent(), entry.id().as_str())?);
             }
@@ -740,6 +796,76 @@ mod tests {
             .archive_session("nope", &store, RedactionMode::Redacted)
             .expect_err("no such session");
         assert!(matches!(err, AppError::SessionNotFound(id) if id == "nope"));
+    }
+
+    /// Two agents holding one id, in binding order.
+    fn app_with_colliding_id(id: &str) -> ContextTrace {
+        ContextTrace::new(vec![
+            AgentBinding::new(
+                Box::new(FakeAdapter {
+                    agent: AgentKind::Codex,
+                    sessions: vec![descriptor(id, AgentKind::Codex)],
+                }),
+                Box::new(CharProbe),
+            ),
+            AgentBinding::new(
+                Box::new(FakeAdapter {
+                    agent: AgentKind::ClaudeCode,
+                    sessions: vec![descriptor(id, AgentKind::ClaudeCode)],
+                }),
+                Box::new(CharProbe),
+            ),
+        ])
+    }
+
+    #[test]
+    fn archiving_a_colliding_id_scoped_to_an_agent_copies_that_agents_session() {
+        let app = app_with_colliding_id("shared");
+        let store = FakeArchiveStore::with_source("shared", vec![r#"{"type":"user"}"#]);
+
+        // The unscoped call cannot see past the first binding, which is
+        // precisely why the desktop must not use it: it would report a
+        // successful archive of a session the caller did not name.
+        let unscoped = app
+            .archive_session("shared", &store, RedactionMode::Redacted)
+            .expect("archives");
+        assert_eq!(unscoped.agent(), AgentKind::Codex);
+
+        let scoped = app
+            .archive_session_in_agent(
+                AgentKind::ClaudeCode,
+                "shared",
+                &store,
+                RedactionMode::Redacted,
+            )
+            .expect("archives");
+        assert_eq!(scoped.agent(), AgentKind::ClaudeCode);
+    }
+
+    #[test]
+    fn verifying_a_colliding_id_scoped_to_an_agent_is_not_ambiguous() {
+        let app = app_with_colliding_id("shared");
+        let store = FakeArchiveStore::default();
+        store.seed(FakeArchiveStore::seeded_entry(
+            "shared",
+            AgentKind::Codex,
+            DateTime::UNIX_EPOCH,
+        ));
+        store.seed(FakeArchiveStore::seeded_entry(
+            "shared",
+            AgentKind::ClaudeCode,
+            DateTime::UNIX_EPOCH,
+        ));
+
+        // Unscoped, an exact id match wins outright -- so whichever entry the
+        // store happens to iterate first answers, and the other is unreachable.
+        // Scoping names which copy is being checked.
+        for agent in [AgentKind::Codex, AgentKind::ClaudeCode] {
+            let integrity = app
+                .verify_archived_in_agent(agent, "shared", &store)
+                .expect("one copy per agent");
+            assert!(matches!(integrity, ArchiveIntegrity::Intact));
+        }
     }
 
     // ---- archived_sessions -------------------------------------------------

@@ -4,8 +4,11 @@
 //! and tokenizer selection here ensures they execute the same use cases with
 //! the same measurement policy.
 
+use std::path::{Path, PathBuf};
+
 use ct_adapters::{
-    ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, TiktokenEstimator,
+    ClaudeCodeAdapter, CodexAdapter, FileArchiveStore, FileRawEventSource, HeuristicEstimator,
+    TiktokenEstimator,
 };
 use ct_application::{AgentBinding, ContextTrace};
 use ct_domain::ports::TokenEstimator;
@@ -77,4 +80,25 @@ pub fn heuristic_estimator(chars_per_token: f32) -> HeuristicEstimator {
 /// same filesystem adapter without making UI code construct driven adapters.
 pub fn raw_event_source(path: &str) -> impl ct_domain::ports::RawEventSource {
     FileRawEventSource::for_session(path)
+}
+
+/// The one store ContextTrace writes session copies to.
+///
+/// Here rather than at each call site because "where does this tool write"
+/// is a claim `ct roots` makes out loud, and a second interface answering it
+/// from its own constructor is how that claim quietly stops being true. The
+/// desktop cannot construct this itself in any case: it depends on this crate
+/// and not on `ct-adapters`, which is the boundary working as intended.
+pub fn archive_store() -> FileArchiveStore {
+    FileArchiveStore::new()
+}
+
+/// Where an exported session is written, given the archive root.
+///
+/// Nested under the archive root deliberately. `ct roots` names *one* written
+/// directory, and an export landing somewhere else would falsify that sentence
+/// rather than extend it -- so exports become a subdirectory of the directory
+/// already disclosed, not a second disclosure to keep in sync.
+pub fn export_dir(archive_root: &str) -> PathBuf {
+    Path::new(archive_root).join("exports")
 }
