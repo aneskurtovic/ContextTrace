@@ -1,8 +1,10 @@
-use ct_application::{timeline, ContextTrace, Departure, LifecycleSweep, SessionFilter};
+use ct_application::{timeline, AppError, ContextTrace, Departure, LifecycleSweep, SessionFilter};
 use ct_domain::model::context::unmeasured_content_items;
+use ct_domain::ports::PortError;
 use ct_domain::{
-    AgentKind, CategoryBreakdown, Confidence, ContextItemId, ContextSource, SessionDescriptor,
-    ThreadRole, TurnNumber,
+    AgentKind, CategoryBreakdown, CompactionDiff, CompactionDiffItem, CompactionDiffUnavailable,
+    CompactionItemDisposition, Confidence, ContextItemId, ContextSource, MessageRole,
+    SessionDescriptor, ThreadRole, TurnNumber,
 };
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -325,6 +327,7 @@ impl AppState {
                     compaction: point.compaction.map(|event| CompactionSummary {
                         turn: Some(point.turn),
                         reclaimed: event.reclaimed,
+                        line_no: event.line_no,
                     }),
                 })
                 .collect(),
@@ -557,6 +560,44 @@ impl AppState {
             first_seen_disagrees,
         })
     }
+
+    /// The structural autopsy of one compaction: what its replacement history
+    /// dropped, preserved and added, looked up by the log line the marker on
+    /// the growth chart carries.
+    ///
+    /// `PortError::Unsupported` is the agent-level refusal -- Claude Code
+    /// never overrides `compaction_diffs`, so *every* one of its sessions
+    /// hits this before any single compaction is even looked at. That is a
+    /// different fact from [`CompactionDiffUnavailable`], which explains why
+    /// one specific Codex compaction's history could not be read even though
+    /// the agent generally supports this. Both are reported as typed,
+    /// explained outcomes rather than the generic error banner, so a Claude
+    /// Code user learns the evidence does not exist rather than that the
+    /// feature is broken.
+    fn compaction_diff(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        line_no: u32,
+    ) -> Result<CompactionDiffSummary, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+        let diffs = match self
+            .app
+            .compaction_diffs(&cached.session, cached.binding, &raw)
+        {
+            Ok(diffs) => diffs,
+            Err(AppError::Port(PortError::Unsupported(detail))) => {
+                return Ok(CompactionDiffSummary::Unsupported { detail });
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let diff = diffs
+            .into_iter()
+            .find(|diff| diff.source().line_no == line_no)
+            .ok_or_else(|| format!("no compaction recorded at line {line_no} in this session"))?;
+        Ok(CompactionDiffSummary::from(diff))
+    }
 }
 
 #[derive(Serialize)]
@@ -647,6 +688,11 @@ impl From<SessionDescriptor> for SessionSummary {
 pub struct CompactionSummary {
     turn: Option<u32>,
     reclaimed: Option<u32>,
+    /// The log line this compaction was recorded on -- the identity
+    /// [`AppState::compaction_diff`] looks its autopsy up by. A turn number
+    /// is not always present and, per `growth::timeline`'s turn-keyed map,
+    /// not guaranteed unique across compactions; the line is.
+    line_no: u32,
 }
 
 #[derive(Serialize)]
@@ -848,6 +894,171 @@ pub struct LifecycleReport {
     first_seen_disagrees: bool,
 }
 
+/// Mirrors [`CompactionItemDisposition`]. A discriminated union rather than a
+/// flattened `{ kind, historyIndex: Option<u32>, replacementIndex: Option<u32> }`
+/// -- the Rust type names its index on the variant that has it precisely so a
+/// preserved item's two positions cannot be pulled apart, and this DTO must
+/// not reopen that door on the way to JSON. `#[serde(rename_all = "camelCase")]`
+/// on the enum only renames the `kind` tag values; each struct variant needs
+/// its own `rename_all` to camelCase its own fields (`historyIndex`,
+/// `replacementIndex`), which is why it is repeated per variant below rather
+/// than assumed to cascade.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CompactionDispositionSummary {
+    #[serde(rename_all = "camelCase")]
+    Dropped { history_index: u32 },
+    #[serde(rename_all = "camelCase")]
+    Preserved {
+        history_index: u32,
+        replacement_index: u32,
+    },
+    #[serde(rename_all = "camelCase")]
+    AddedByReplacement { replacement_index: u32 },
+}
+
+impl From<CompactionItemDisposition> for CompactionDispositionSummary {
+    fn from(value: CompactionItemDisposition) -> Self {
+        match value {
+            CompactionItemDisposition::Dropped { history_index } => Self::Dropped { history_index },
+            CompactionItemDisposition::Preserved {
+                history_index,
+                replacement_index,
+            } => Self::Preserved {
+                history_index,
+                replacement_index,
+            },
+            CompactionItemDisposition::AddedByReplacement { replacement_index } => {
+                Self::AddedByReplacement { replacement_index }
+            }
+        }
+    }
+}
+
+/// Mirrors [`CompactionDiffUnavailable`], the reason one specific compaction's
+/// structural diff could not be produced even though this agent generally
+/// supports the feature.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompactionDiffUnavailableSummary {
+    MissingReplacementHistory,
+    OversizedRawLine,
+    UnavailableRawLine,
+    MalformedRawLine,
+    MalformedPrecedingItem,
+    UnknownPrecedingHistory,
+}
+
+impl From<CompactionDiffUnavailable> for CompactionDiffUnavailableSummary {
+    fn from(value: CompactionDiffUnavailable) -> Self {
+        match value {
+            CompactionDiffUnavailable::MissingReplacementHistory => Self::MissingReplacementHistory,
+            CompactionDiffUnavailable::OversizedRawLine => Self::OversizedRawLine,
+            CompactionDiffUnavailable::UnavailableRawLine => Self::UnavailableRawLine,
+            CompactionDiffUnavailable::MalformedRawLine => Self::MalformedRawLine,
+            CompactionDiffUnavailable::MalformedPrecedingItem => Self::MalformedPrecedingItem,
+            CompactionDiffUnavailable::UnknownPrecedingHistory => Self::UnknownPrecedingHistory,
+        }
+    }
+}
+
+/// Mirrors [`CompactionDiffItem`]. `role` is lowercased to the same
+/// vocabulary `ct compactions` prints (`user`/`assistant`/`developer`/
+/// `system`) rather than inventing a second spelling for the same fact.
+/// `textTokens` stays `null` for opaque or structured items -- see
+/// [`CompactionDiffItem::text_tokens`] -- rather than being coerced to `0`,
+/// which would misrepresent "not measured" as "measured as empty".
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionDiffItemSummary {
+    item_type: String,
+    role: Option<String>,
+    disposition: CompactionDispositionSummary,
+    normalized_json_bytes: u32,
+    text_tokens: Option<u32>,
+    confidence: Confidence,
+}
+
+impl From<CompactionDiffItem> for CompactionDiffItemSummary {
+    fn from(value: CompactionDiffItem) -> Self {
+        Self {
+            item_type: value.item_type,
+            role: value.role.map(role_label),
+            disposition: value.disposition.into(),
+            normalized_json_bytes: value.normalized_json_bytes,
+            text_tokens: value.text_tokens.map(|tokens| tokens.tokens()),
+            confidence: value.provenance.confidence,
+        }
+    }
+}
+
+fn role_label(role: MessageRole) -> String {
+    match role {
+        MessageRole::User => "user",
+        MessageRole::Assistant => "assistant",
+        MessageRole::Developer => "developer",
+        MessageRole::System => "system",
+    }
+    .to_string()
+}
+
+/// Mirrors [`CompactionDiff`], plus a third case [`CompactionDiff`] cannot
+/// express: an agent that never records a literal replacement history at
+/// all. That is [`ct_domain::ports::PortError::Unsupported`] surfacing from
+/// the adapter itself, before any single compaction's evidence is even
+/// considered -- a different fact from `Unavailable`, which explains why one
+/// specific compaction's evidence could not be read on an agent that
+/// otherwise supports this. Encoding both as typed success values (never a
+/// generic error string) is what lets the desktop panel explain the evidence
+/// limit instead of showing an empty view or a spinner that never resolves.
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum CompactionDiffSummary {
+    #[serde(rename_all = "camelCase")]
+    Available {
+        turn: Option<u32>,
+        line_no: u32,
+        items: Vec<CompactionDiffItemSummary>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Unavailable {
+        turn: Option<u32>,
+        line_no: u32,
+        reason: CompactionDiffUnavailableSummary,
+    },
+    Unsupported {
+        detail: String,
+    },
+}
+
+impl From<CompactionDiff> for CompactionDiffSummary {
+    fn from(value: CompactionDiff) -> Self {
+        match value {
+            CompactionDiff::Available {
+                source,
+                turn,
+                items,
+            } => Self::Available {
+                turn: turn.map(|turn| turn.get()),
+                line_no: source.line_no,
+                items: items
+                    .into_iter()
+                    .map(CompactionDiffItemSummary::from)
+                    .collect(),
+            },
+            CompactionDiff::Unavailable {
+                source,
+                turn,
+                reason,
+            } => Self::Unavailable {
+                turn: turn.map(|turn| turn.get()),
+                line_no: source.line_no,
+                reason: reason.into(),
+            },
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
     state.startup()
@@ -903,6 +1114,16 @@ pub fn get_lifecycle(
     state: tauri::State<'_, AppState>,
 ) -> Result<LifecycleReport, String> {
     state.lifecycle(parse_agent(&agent)?, &id, &item)
+}
+
+#[tauri::command]
+pub fn get_compaction_diff(
+    id: String,
+    agent: String,
+    line_no: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<CompactionDiffSummary, String> {
+    state.compaction_diff(parse_agent(&agent)?, &id, line_no)
 }
 
 fn format_source(source: &ContextSource) -> String {
@@ -1563,5 +1784,143 @@ mod tests {
             error,
             "turn 999 is out of range; this session has 2 turn(s)"
         );
+    }
+
+    /// The three acceptance shapes CT-047 names: a Codex compaction with a
+    /// real diff, a Claude Code session where the agent itself never records
+    /// replacement history, and a line number that names no compaction at
+    /// all.
+    #[test]
+    fn compaction_diff_covers_available_unsupported_and_unknown_line() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let codex_id = session_id(&sessions, "codex");
+        let claude_id = session_id(&sessions, "claude-code");
+
+        // -- Codex: the diff engine has evidence, and every field in it must
+        // reach the frontend camelCased, including the fields *inside* each
+        // disposition variant -- the enum-level `rename_all` only renames the
+        // `kind` tag, not a struct variant's own fields.
+        let codex_detail = state
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("inspect the Codex fixture");
+        let compaction = codex_detail
+            .growth
+            .iter()
+            .find_map(|point| point.compaction.as_ref())
+            .expect("the Codex fixture places one compaction on the timeline");
+        let line_no = compaction.line_no;
+
+        let diff = state
+            .compaction_diff(AgentKind::Codex, &codex_id, line_no)
+            .expect("the Codex fixture's compaction diff is available");
+        let (turn, reported_line_no, items) = match diff {
+            CompactionDiffSummary::Available {
+                turn,
+                line_no,
+                items,
+            } => (turn, line_no, items),
+            _ => panic!("the Codex fixture's one compaction has recorded replacement history"),
+        };
+        assert_eq!(reported_line_no, line_no);
+        assert!(turn.is_some());
+
+        // The committed fixture's one compaction is documented (BACKLOG.md
+        // CT-047) as 4 dropped, 1 preserved, 1 replacement-only.
+        let dropped = items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item.disposition,
+                    CompactionDispositionSummary::Dropped { .. }
+                )
+            })
+            .count();
+        let preserved = items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item.disposition,
+                    CompactionDispositionSummary::Preserved { .. }
+                )
+            })
+            .count();
+        let added = items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item.disposition,
+                    CompactionDispositionSummary::AddedByReplacement { .. }
+                )
+            })
+            .count();
+        assert_eq!((dropped, preserved, added), (4, 1, 1));
+
+        // The fixture-backed harness wires the heuristic estimator for both
+        // bindings (see `FixtureHomes::state`), not tiktoken, so
+        // `TokenCount::is_trustworthy` never passes here -- `text_tokens`
+        // must stay present-but-null, never coerced to a number that was not
+        // measured.
+        assert!(items.iter().all(|item| item.text_tokens.is_none()));
+        assert!(items
+            .iter()
+            .all(|item| matches!(item.confidence, Confidence::Derived)));
+
+        let json = serde_json::to_value(&items).expect("diff items serialize for IPC");
+        let preserved_json = json
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["disposition"]["kind"] == "preserved")
+            .expect("one item is preserved");
+        assert!(preserved_json["itemType"].is_string());
+        assert!(preserved_json.get("item_type").is_none());
+        assert!(preserved_json["normalizedJsonBytes"].is_number());
+        assert!(preserved_json.get("normalized_json_bytes").is_none());
+        assert!(preserved_json["disposition"]["historyIndex"].is_number());
+        assert!(preserved_json["disposition"]["replacementIndex"].is_number());
+        assert!(preserved_json["disposition"].get("history_index").is_none());
+        assert!(preserved_json["disposition"]
+            .get("replacement_index")
+            .is_none());
+        assert_eq!(preserved_json["textTokens"], serde_json::Value::Null);
+
+        // -- Claude Code: the adapter never overrides `compaction_diffs`, so
+        // every one of its sessions hits the agent-level refusal before any
+        // single compaction's evidence is considered -- regardless of
+        // whether this particular session recorded a compaction marker of
+        // its own kind. Reusing the Codex fixture's line number is
+        // deliberate: it proves the refusal is unconditional, not merely "no
+        // compaction found at that line".
+        let claude_diff = state
+            .compaction_diff(AgentKind::ClaudeCode, &claude_id, line_no)
+            .expect("Claude Code's refusal is a typed success, not an IPC error");
+        match &claude_diff {
+            CompactionDiffSummary::Unsupported { detail } => {
+                assert!(
+                    detail.contains("claude-code") || detail.contains("Claude"),
+                    "the refusal should name the agent, not just say something failed: {detail}"
+                );
+                assert!(
+                    detail.contains("replacement history"),
+                    "the refusal should explain the evidence limit, not merely say 'unsupported': {detail}"
+                );
+            }
+            _ => panic!("Claude Code records no replacement history at all"),
+        }
+        let claude_json = serde_json::to_value(&claude_diff).expect("serializes for IPC");
+        assert_eq!(claude_json["status"], "unsupported");
+        assert!(claude_json["detail"].is_string());
+
+        // -- A line number naming no compaction at all is a genuine error,
+        // not a third typed outcome: unlike the two cases above, there is no
+        // "fact learned" here to encode, only a request that cannot be
+        // answered.
+        let error = match state.compaction_diff(AgentKind::Codex, &codex_id, 999_999) {
+            Err(error) => error,
+            Ok(_) => panic!("line 999999 names no compaction in the fixture"),
+        };
+        assert!(error.contains("no compaction recorded"));
     }
 }

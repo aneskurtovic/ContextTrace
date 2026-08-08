@@ -11,6 +11,10 @@ import {
 } from "./format";
 import type {
   Agent,
+  CompactionDiff,
+  CompactionDiffItem,
+  CompactionDiffUnavailableReason,
+  CompactionItemDisposition,
   ContextDetail,
   DoctorReport,
   GrowthPoint,
@@ -114,10 +118,14 @@ function GrowthChart({
   points,
   selectedTurn,
   onTurn,
+  selectedCompactionLineNo,
+  onCompaction,
 }: {
   points: GrowthPoint[];
   selectedTurn: number | null;
   onTurn: (turn: number) => void;
+  selectedCompactionLineNo: number | null;
+  onCompaction: (lineNo: number) => void;
 }) {
   const measured = points.filter(
     (point): point is GrowthPoint & { promptTokens: number } =>
@@ -162,17 +170,46 @@ function GrowthChart({
         <path d={area} fill="url(#growth-fill)" />
         <path d={line} className="growth-line" />
         {points
-          .filter((point) => point.compaction)
-          .map((point) => (
-            <line
-              key={`compaction-${point.turn}`}
-              className="compaction-line"
-              x1={x(point.turn)}
-              x2={x(point.turn)}
-              y1={10}
-              y2={height - 10}
-            />
-          ))}
+          .filter((point): point is GrowthPoint & { compaction: NonNullable<GrowthPoint["compaction"]> } =>
+            point.compaction != null,
+          )
+          .map((point) => {
+            const compaction = point.compaction;
+            const isOpen = compaction.lineNo === selectedCompactionLineNo;
+            const reclaimedLabel =
+              compaction.reclaimed != null
+                ? `, reclaiming ${compaction.reclaimed.toLocaleString()} tokens`
+                : "";
+            return (
+              <g key={`compaction-${point.turn}-${compaction.lineNo}`}>
+                <line
+                  className={isOpen ? "compaction-line selected" : "compaction-line"}
+                  x1={x(point.turn)}
+                  x2={x(point.turn)}
+                  y1={10}
+                  y2={height - 10}
+                />
+                <line
+                  className={isOpen ? "compaction-hit selected" : "compaction-hit"}
+                  x1={x(point.turn)}
+                  x2={x(point.turn)}
+                  y1={10}
+                  y2={height - 10}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isOpen}
+                  aria-label={`Inspect compaction at turn ${point.turn}${reclaimedLabel}`}
+                  onClick={() => onCompaction(compaction.lineNo)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onCompaction(compaction.lineNo);
+                    }
+                  }}
+                />
+              </g>
+            );
+          })}
         {measured.map((point) => (
           <circle
             key={point.turn}
@@ -345,6 +382,184 @@ function departureText(report: LifecycleReport): string {
     return `The conversation moved to a different Claude Code branch at turn ${departure.turn}; this was not an eviction.`;
   }
   return `The item disappeared before turn ${departure.turn}, but the log records no cause.`;
+}
+
+/**
+ * "history #N" and "replacement #N -> replacement #N" match `ct compactions`'
+ * own labelling verbatim (see render.rs's `compactions()`), including the
+ * footer note below: the CLI already solved this labelling problem, so the
+ * desktop must not invent a second vocabulary for the same two lists.
+ */
+function compactionPositionLabel(disposition: CompactionItemDisposition): string {
+  switch (disposition.kind) {
+    case "dropped":
+      return `history #${disposition.historyIndex}`;
+    case "preserved":
+      return `history #${disposition.historyIndex} → replacement #${disposition.replacementIndex}`;
+    case "addedByReplacement":
+      return `replacement #${disposition.replacementIndex}`;
+  }
+}
+
+function compactionUnavailableText(reason: CompactionDiffUnavailableReason): string {
+  switch (reason) {
+    case "missingReplacementHistory":
+      return "This compaction's log line carries no replacement history, so there is nothing to diff.";
+    case "oversizedRawLine":
+      return "The raw log line behind this compaction is larger than this build parses, so its replacement history could not be read.";
+    case "unavailableRawLine":
+      return "The log line behind this compaction could not be read from disk.";
+    case "malformedRawLine":
+      return "The log line behind this compaction is not valid JSON.";
+    case "malformedPrecedingItem":
+      return "An item in the history immediately before this compaction could not be parsed, so the two lists cannot be compared.";
+    case "unknownPrecedingHistory":
+      return "An earlier compaction in this session could not be read, so the history this one replaced is not known.";
+  }
+}
+
+function CompactionRow({ item }: { item: CompactionDiffItem }) {
+  return (
+    <div className="doctor-row compaction-row">
+      <div className="doctor-row-copy">
+        <strong>
+          {item.itemType}
+          {item.role ? ` · ${item.role}` : ""}
+        </strong>
+        <span>{compactionPositionLabel(item.disposition)}</span>
+        <small className={`confidence confidence-${item.confidence}`}>{item.confidence}</small>
+      </div>
+      <div className="doctor-row-number">
+        <strong>{formatBytes(item.normalizedJsonBytes)}</strong>
+        <span>{item.textTokens != null ? `${formatTokens(item.textTokens)} tokens` : "opaque / structured"}</span>
+      </div>
+    </div>
+  );
+}
+
+function CompactionGroup({
+  title,
+  note,
+  items,
+}: {
+  title: string;
+  note: string;
+  items: CompactionDiffItem[];
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="doctor-section compaction-group">
+      <div className="doctor-section-title">
+        <strong>{title}</strong>
+        <span>{note}</span>
+      </div>
+      {items.map((item, index) => (
+        <CompactionRow item={item} key={`${title}-${index}-${item.itemType}`} />
+      ))}
+    </div>
+  );
+}
+
+/** Groups items by disposition so the three outcomes -- dropped, preserved,
+ *  added by replacement -- are distinguishable at a glance, per CT-047. */
+function CompactionGroups({ items }: { items: CompactionDiffItem[] }) {
+  const dropped = items.filter((item) => item.disposition.kind === "dropped");
+  const preserved = items.filter((item) => item.disposition.kind === "preserved");
+  const added = items.filter((item) => item.disposition.kind === "addedByReplacement");
+  return (
+    <>
+      <div className="doctor-summary compaction-summary" aria-live="polite">
+        <div>
+          <span>Dropped</span>
+          <strong>{dropped.length}</strong>
+          <small>present only in history</small>
+        </div>
+        <div>
+          <span>Preserved</span>
+          <strong>{preserved.length}</strong>
+          <small>carried into the replacement</small>
+        </div>
+        <div>
+          <span>Added by replacement</span>
+          <strong>{added.length}</strong>
+          <small>no identical predecessor</small>
+        </div>
+      </div>
+      <CompactionGroup
+        title="Dropped"
+        note="Present only in the pre-compaction history"
+        items={dropped}
+      />
+      <CompactionGroup
+        title="Preserved"
+        note="Present in both lists; the arrow shows where it moved to"
+        items={preserved}
+      />
+      <CompactionGroup
+        title="Added by replacement"
+        note="Introduced by the replacement, with no identical predecessor"
+        items={added}
+      />
+      <p className="compaction-note">
+        Sizes are normalized compact item bytes [derived]; text tokens are measured only for
+        wholly textual items. "history #N" indexes the pre-compaction history; "replacement #N"
+        indexes the replacement — the two lists are numbered separately.
+      </p>
+    </>
+  );
+}
+
+function CompactionAutopsy({
+  diff,
+  loading,
+  onClose,
+}: {
+  diff: CompactionDiff | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  if (!diff && !loading) return null;
+  const heading =
+    diff?.status === "available"
+      ? `What turn ${diff.turn ?? "?"}'s compaction replaced`
+      : diff?.status === "unavailable"
+        ? `Compaction at turn ${diff.turn ?? "?"}: evidence unavailable`
+        : "Compaction autopsy unavailable";
+  return (
+    <section
+      className="panel compaction-panel"
+      id="compaction-autopsy"
+      aria-labelledby="compaction-heading"
+      aria-busy={loading}
+    >
+      {loading && !diff ? (
+        <Spinner label="Reading the compaction's replacement history…" />
+      ) : diff ? (
+        <>
+          <div className="panel-heading compaction-heading">
+            <div>
+              <span className="eyebrow">Compaction autopsy</span>
+              <h2 id="compaction-heading">{heading}</h2>
+            </div>
+            <button className="compaction-close" onClick={onClose} aria-label="Close compaction autopsy">×</button>
+          </div>
+          {diff.status === "unsupported" && (
+            <p className="compaction-refusal">
+              This agent does not record a literal replacement history for its compactions, so
+              there is no diff to show. Showing one anyway would misrepresent evidence this tool
+              does not have.
+              <br />
+              <small>{diff.detail}</small>
+            </p>
+          )}
+          {diff.status === "unavailable" && (
+            <p className="compaction-refusal">{compactionUnavailableText(diff.reason)}</p>
+          )}
+          {diff.status === "available" && <CompactionGroups items={diff.items} />}
+        </>
+      ) : null}
+    </section>
+  );
 }
 
 function LifecyclePanel({
@@ -578,11 +793,16 @@ function SessionWorkspace({
   lifecycle,
   lifecycleLoading,
   lifecycleItem,
+  compactionDiff,
+  compactionLoading,
+  compactionLineNo,
   demoData,
   onContributor,
   onCloseLifecycle,
   onRunDoctor,
   onTurn,
+  onCompaction,
+  onCloseCompaction,
 }: {
   detail: SessionDetail;
   context: ContextDetail | null;
@@ -592,11 +812,16 @@ function SessionWorkspace({
   lifecycle: LifecycleReport | null;
   lifecycleLoading: boolean;
   lifecycleItem: string | null;
+  compactionDiff: CompactionDiff | null;
+  compactionLoading: boolean;
+  compactionLineNo: number | null;
   demoData: boolean;
   onContributor: (item: string) => void;
   onCloseLifecycle: () => void;
   onRunDoctor: () => void;
   onTurn: (turn: number) => void;
+  onCompaction: (lineNo: number) => void;
+  onCloseCompaction: () => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
   const measuredTurns = growth.filter((point) => point.promptTokens != null);
@@ -689,6 +914,8 @@ function SessionWorkspace({
           points={growth}
           selectedTurn={context?.turn ?? detail.peakTurn}
           onTurn={onTurn}
+          selectedCompactionLineNo={compactionLineNo}
+          onCompaction={onCompaction}
         />
         {measuredTurns.length > 0 && (
           <div className="turn-control">
@@ -711,6 +938,12 @@ function SessionWorkspace({
           </div>
         )}
       </section>
+
+      <CompactionAutopsy
+        diff={compactionDiff}
+        loading={compactionLoading}
+        onClose={onCloseCompaction}
+      />
 
       {contextLoading && !context ? (
         <Spinner label="Reconstructing context…" />
@@ -769,12 +1002,16 @@ export default function App() {
   const [lifecycle, setLifecycle] = useState<LifecycleReport | null>(null);
   const [lifecycleItem, setLifecycleItem] = useState<string | null>(null);
   const [loadingLifecycle, setLoadingLifecycle] = useState(false);
+  const [compactionDiff, setCompactionDiff] = useState<CompactionDiff | null>(null);
+  const [compactionLineNo, setCompactionLineNo] = useState<number | null>(null);
+  const [loadingCompaction, setLoadingCompaction] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
   const lifecycleRequest = useRef(0);
+  const compactionRequest = useRef(0);
   const catalogRequest = useRef(0);
 
   const refreshSessions = useCallback(
@@ -871,32 +1108,40 @@ export default function App() {
       turnRequest.current += 1;
       doctorRequest.current += 1;
       lifecycleRequest.current += 1;
+      compactionRequest.current += 1;
       setDetail(null);
       setDetailFor(null);
       setContext(null);
       setDoctor(null);
       setLifecycle(null);
       setLifecycleItem(null);
+      setCompactionDiff(null);
+      setCompactionLineNo(null);
       setLoadingDetail(false);
       setLoadingContext(false);
       setLoadingDoctor(false);
       setLoadingLifecycle(false);
+      setLoadingCompaction(false);
       return;
     }
     const request = ++sessionRequest.current;
     turnRequest.current += 1;
     doctorRequest.current += 1;
     lifecycleRequest.current += 1;
+    compactionRequest.current += 1;
     setDetail(null);
     setDetailFor(null);
     setContext(null);
     setDoctor(null);
     setLifecycle(null);
     setLifecycleItem(null);
+    setCompactionDiff(null);
+    setCompactionLineNo(null);
     setLoadingDetail(true);
     setLoadingContext(false);
     setLoadingDoctor(false);
     setLoadingLifecycle(false);
+    setLoadingCompaction(false);
     setError(null);
     Promise.all([
       api.inspectSession(selected.agent, selected.id),
@@ -1000,6 +1245,36 @@ export default function App() {
     setLifecycle(null);
     setLifecycleItem(null);
     setLoadingLifecycle(false);
+  }, []);
+
+  const inspectCompaction = useCallback(
+    async (lineNo: number) => {
+      if (!selected) return;
+      const request = ++compactionRequest.current;
+      const session = selected;
+      setCompactionLineNo(lineNo);
+      setCompactionDiff(null);
+      setLoadingCompaction(true);
+      setError(null);
+      try {
+        const diff = await api.getCompactionDiff(session.agent, session.id, lineNo);
+        if (request === compactionRequest.current && sameSession(session, selected)) {
+          setCompactionDiff(diff);
+        }
+      } catch (loadError) {
+        if (request === compactionRequest.current) setError(errorMessage(loadError));
+      } finally {
+        if (request === compactionRequest.current) setLoadingCompaction(false);
+      }
+    },
+    [selected],
+  );
+
+  const closeCompaction = useCallback(() => {
+    compactionRequest.current += 1;
+    setCompactionDiff(null);
+    setCompactionLineNo(null);
+    setLoadingCompaction(false);
   }, []);
 
   const visibleDetail = sameSession(detailFor, selected) ? detail : null;
@@ -1169,11 +1444,16 @@ export default function App() {
             lifecycle={lifecycle}
             lifecycleLoading={loadingLifecycle}
             lifecycleItem={lifecycleItem}
+            compactionDiff={compactionDiff}
+            compactionLoading={loadingCompaction}
+            compactionLineNo={compactionLineNo}
             demoData={demoData}
             onContributor={inspectContributor}
             onCloseLifecycle={closeLifecycle}
             onRunDoctor={runDoctor}
             onTurn={selectTurn}
+            onCompaction={inspectCompaction}
+            onCloseCompaction={closeCompaction}
           />
         ) : (
           <div className="workspace-centered empty-workspace">

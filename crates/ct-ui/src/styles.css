@@ -702,6 +702,34 @@ h2 {
   stroke-width: 1;
   stroke-dasharray: 3 4;
   opacity: .8;
+  transition: stroke-width .12s, opacity .12s;
+}
+
+.compaction-line.selected {
+  stroke-width: 2;
+  opacity: 1;
+}
+
+/* The visible dashed line above is a hairline and too thin to click or tap
+   reliably; this invisible sibling is the actual hit target and interactive
+   element (role="button", keyboard-operable), widened well past the visible
+   stroke. `pointer-events: stroke` keeps hit-testing to the line itself
+   rather than its (here, empty) fill, so it does not need `visiblePainted`
+   to work despite a transparent stroke. */
+.compaction-hit {
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.compaction-hit:hover,
+.compaction-hit.selected {
+  stroke: rgba(241, 167, 89, .16);
+}
+
+.compaction-hit:focus-visible {
+  stroke: rgba(241, 167, 89, .28);
 }
 
 .chart-axis {
@@ -1109,6 +1137,88 @@ h2 {
 
 .doctor-warning {
   color: var(--orange);
+}
+
+/* The compaction autopsy panel reuses `.doctor-summary`/`.doctor-section`/
+   `.doctor-row` for its three disposition groups (dropped / preserved /
+   added by replacement) rather than duplicating that layout under a new
+   name -- only the panel chrome and the disposition-specific bits below are
+   new. */
+.compaction-panel {
+  margin-top: 12px;
+  padding: 18px 20px 20px;
+  border-color: rgba(241, 167, 89, .3);
+}
+
+.compaction-panel > .loading {
+  min-height: 92px;
+}
+
+.compaction-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #2b374a;
+  border-radius: 6px;
+  background: #111925;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.compaction-close:hover {
+  color: #dce5f2;
+}
+
+.compaction-refusal {
+  margin-top: 15px;
+  padding: 12px 13px;
+  border-left: 2px solid var(--orange);
+  background: rgba(241, 167, 89, .06);
+  color: #a9b7ca;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.compaction-refusal small {
+  display: block;
+  margin-top: 6px;
+  color: var(--dim);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+}
+
+.compaction-summary {
+  margin-top: 15px;
+}
+
+.compaction-note {
+  margin-top: 15px;
+  color: var(--dim);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+/* `.doctor-row-copy small` and `.doctor-row-copy span` both set `color`, and
+   as element+class selectors they outrank a bare `.confidence-*` class --
+   without this, every confidence badge inside a compaction row would render
+   in the row's muted text color instead of its own tint. */
+.doctor-row-copy .confidence {
+  display: inline-block;
+  margin-top: 4px;
+}
+
+.doctor-row-copy .confidence.confidence-observed {
+  color: #67c895;
+}
+
+.doctor-row-copy .confidence.confidence-derived {
+  color: #74a5ff;
+}
+
+.doctor-row-copy .confidence.confidence-estimated {
+  color: #dba065;
 }
 
 .composition-panel,

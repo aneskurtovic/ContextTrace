@@ -4,8 +4,15 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-import { getContext, getLifecycle, runDoctor, searchSessions } from "./api";
-import { demoDoctor, demoSessions } from "./demo";
+import {
+  getCompactionDiff,
+  getContext,
+  getLifecycle,
+  inspectSession,
+  runDoctor,
+  searchSessions,
+} from "./api";
+import { demoCompactionDiff, demoDetail, demoDoctor, demoSessions } from "./demo";
 
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -271,6 +278,149 @@ describe("desktop IPC response validation", () => {
       id: "session-1",
       agent: "codex",
       item: "codex:42",
+    });
+  });
+
+  it("holds the demo session detail to the same contract as the real backend", async () => {
+    // Nothing else in this suite exercises `inspect_session`, so nothing
+    // would notice `demo.ts`'s `lineNo` field on a growth point's compaction
+    // drifting away from what the backend actually returns -- exactly the
+    // half-wiring CT-047 warns two prior attempts already shipped.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const detail = demoDetail(demoSessions[0].id);
+    invoke.mockResolvedValue(detail);
+
+    const resolved = await inspectSession("codex", demoSessions[0].id);
+    const compaction = resolved.growth.find((point) => point.compaction)?.compaction;
+    expect(compaction?.lineNo).toEqual(expect.any(Number));
+  });
+
+  it("validates and forwards an available compaction diff, camelCase all the way into each disposition", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      status: "available",
+      turn: 17,
+      lineNo: 4821,
+      items: [
+        {
+          itemType: "message",
+          role: "user",
+          disposition: { kind: "dropped", historyIndex: 0 },
+          normalizedJsonBytes: 812,
+          textTokens: 210,
+          confidence: "derived",
+        },
+        {
+          itemType: "message",
+          role: "user",
+          disposition: { kind: "preserved", historyIndex: 4, replacementIndex: 0 },
+          normalizedJsonBytes: 1180,
+          textTokens: null,
+          confidence: "derived",
+        },
+      ],
+    });
+
+    await expect(getCompactionDiff("codex", "session-1", 4821)).resolves.toMatchObject({
+      status: "available",
+      lineNo: 4821,
+    });
+    expect(invoke).toHaveBeenCalledWith("get_compaction_diff", {
+      id: "session-1",
+      agent: "codex",
+      lineNo: 4821,
+    });
+  });
+
+  it("rejects a preserved item missing its replacement index", async () => {
+    // The Rust `CompactionItemDisposition::Preserved` variant makes a
+    // `historyIndex` without a paired `replacementIndex` unrepresentable;
+    // the frontend validator has to reject it too, mirroring the
+    // ThreadRole pairing check above.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      status: "available",
+      turn: 17,
+      lineNo: 4821,
+      items: [
+        {
+          itemType: "message",
+          role: "user",
+          disposition: { kind: "preserved", historyIndex: 4 },
+          normalizedJsonBytes: 1180,
+          textTokens: null,
+          confidence: "derived",
+        },
+      ],
+    });
+
+    await expect(getCompactionDiff("codex", "session-1", 4821)).rejects.toThrow(
+      "invalid response from compaction autopsy",
+    );
+  });
+
+  it("validates and forwards the unavailable-evidence reason for one compaction", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      status: "unavailable",
+      turn: 9,
+      lineNo: 120,
+      reason: "malformedRawLine",
+    });
+
+    await expect(getCompactionDiff("codex", "session-1", 120)).resolves.toEqual({
+      status: "unavailable",
+      turn: 9,
+      lineNo: 120,
+      reason: "malformedRawLine",
+    });
+  });
+
+  it("rejects an unavailable reason outside the known set", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      status: "unavailable",
+      turn: 9,
+      lineNo: 120,
+      reason: "somethingNew",
+    });
+
+    await expect(getCompactionDiff("codex", "session-1", 120)).rejects.toThrow(
+      "invalid response from compaction autopsy",
+    );
+  });
+
+  it("validates and forwards the agent-level refusal for an unsupported agent", async () => {
+    // Claude Code never records a literal replacement history, so this is
+    // the ordinary answer for the whole agent, not an edge case -- it must
+    // reach the panel as a typed, explained outcome, not a generic IPC
+    // error.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      status: "unsupported",
+      detail: "compaction item diff for claude-code: this agent does not record a literal replacement history",
+    });
+
+    await expect(getCompactionDiff("claude-code", "session-1", 4821)).resolves.toMatchObject({
+      status: "unsupported",
+    });
+  });
+
+  it("holds the demo compaction diff to the same contract as the real backend, for both agents", async () => {
+    // Every other compaction-diff test above stubs `__TAURI_INTERNALS__` and
+    // only exercises the IPC branch, so nothing else would notice
+    // `demoCompactionDiff` drifting away from the contract the backend is
+    // held to.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+
+    invoke.mockResolvedValue(demoCompactionDiff("codex", 4821));
+    await expect(getCompactionDiff("codex", "session-1", 4821)).resolves.toMatchObject({
+      status: "available",
+    });
+
+    invoke.mockResolvedValue(demoCompactionDiff("claude-code", 4821));
+    await expect(getCompactionDiff("claude-code", "session-1", 4821)).resolves.toMatchObject({
+      status: "unsupported",
     });
   });
 });

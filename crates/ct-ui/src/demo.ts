@@ -1,4 +1,6 @@
 import type {
+  Agent,
+  CompactionDiff,
   ContextDetail,
   DoctorReport,
   GrowthPoint,
@@ -8,6 +10,11 @@ import type {
   StartupSummary,
   ThreadRole,
 } from "./types";
+
+/** The log line the demo session's one compaction marker sits on. Arbitrary
+ *  but fixed, so `demoCompactionDiff` below can be looked up by the same
+ *  identity a real session would use. */
+const DEMO_COMPACTION_LINE_NO = 4821;
 
 const now = Date.now();
 const ago = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
@@ -102,7 +109,7 @@ const growth: GrowthPoint[] = growthValues.map((promptTokens, index) => ({
   promptTokens,
   compaction:
     index === 16
-      ? { turn: 17, reclaimed: 61_200 }
+      ? { turn: 17, reclaimed: 61_200, lineNo: DEMO_COMPACTION_LINE_NO }
       : null,
 }));
 
@@ -239,5 +246,79 @@ export function demoLifecycle(item: string): LifecycleReport {
     lastScannedTurn: 32,
     recordedFirstSeen: 8,
     firstSeenDisagrees: true,
+  };
+}
+
+/**
+ * Demonstrates all three shapes of `CompactionDiff` a real session can
+ * return, split by agent -- Codex records replacement history and Claude
+ * Code never does, so the refusal is not a fabricated edge case but the
+ * ordinary answer for one whole agent. Shaped to match the committed Codex
+ * fixture's one compaction (4 dropped, 1 preserved, 1 replacement-only; see
+ * BACKLOG.md CT-047) so a developer running `npm run dev` sees the same mix
+ * the acceptance run checks against real data.
+ */
+export function demoCompactionDiff(agent: Agent, lineNo: number): CompactionDiff {
+  if (agent === "claude-code") {
+    return {
+      status: "unsupported",
+      detail:
+        "compaction item diff for claude-code: this agent does not record a literal replacement history",
+    };
+  }
+  return {
+    status: "available",
+    turn: 17,
+    lineNo,
+    items: [
+      {
+        itemType: "message",
+        role: "user",
+        disposition: { kind: "dropped", historyIndex: 0 },
+        normalizedJsonBytes: 812,
+        textTokens: 210,
+        confidence: "derived",
+      },
+      {
+        itemType: "function_call",
+        role: null,
+        disposition: { kind: "dropped", historyIndex: 1 },
+        normalizedJsonBytes: 640,
+        textTokens: 140,
+        confidence: "derived",
+      },
+      {
+        itemType: "function_call_output",
+        role: null,
+        disposition: { kind: "dropped", historyIndex: 2 },
+        normalizedJsonBytes: 15_420,
+        textTokens: null,
+        confidence: "derived",
+      },
+      {
+        itemType: "reasoning",
+        role: null,
+        disposition: { kind: "dropped", historyIndex: 3 },
+        normalizedJsonBytes: 3_960,
+        textTokens: 940,
+        confidence: "derived",
+      },
+      {
+        itemType: "message",
+        role: "user",
+        disposition: { kind: "preserved", historyIndex: 4, replacementIndex: 0 },
+        normalizedJsonBytes: 1_180,
+        textTokens: 260,
+        confidence: "derived",
+      },
+      {
+        itemType: "message",
+        role: "assistant",
+        disposition: { kind: "addedByReplacement", replacementIndex: 1 },
+        normalizedJsonBytes: 4_320,
+        textTokens: null,
+        confidence: "derived",
+      },
+    ],
   };
 }

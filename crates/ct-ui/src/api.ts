@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Agent,
+  CompactionDiff,
+  CompactionDiffUnavailableReason,
+  CompactionItemDisposition,
   ContextDetail,
   DoctorReport,
   LifecycleReport,
@@ -11,6 +14,7 @@ import type {
   ThreadRole,
 } from "./types";
 import {
+  demoCompactionDiff,
   demoContext,
   demoDetail,
   demoDoctor,
@@ -148,7 +152,8 @@ function asDetail(value: unknown): SessionDetail {
         (point.compaction === null ||
           (isRecord(point.compaction) &&
             isNumberOrNull(point.compaction.turn) &&
-            isNumberOrNull(point.compaction.reclaimed))),
+            isNumberOrNull(point.compaction.reclaimed) &&
+            typeof point.compaction.lineNo === "number")),
     )
   ) {
     throw malformed("session inspection");
@@ -298,6 +303,73 @@ function asLifecycle(value: unknown): LifecycleReport {
   return value as unknown as LifecycleReport;
 }
 
+const compactionUnavailableReasons = new Set<CompactionDiffUnavailableReason>([
+  "missingReplacementHistory",
+  "oversizedRawLine",
+  "unavailableRawLine",
+  "malformedRawLine",
+  "malformedPrecedingItem",
+  "unknownPrecedingHistory",
+]);
+
+/**
+ * `historyIndex`/`replacementIndex` must be present exactly where the `kind`
+ * says they are. Mirrors `isThreadRole`: checking the pairing, not each
+ * field independently, is what keeps this validator as strict as the Rust
+ * `CompactionItemDisposition` it stands in for -- a payload with a stray
+ * `replacementIndex` on a `dropped` item is not a shape the backend can
+ * produce, and this must reject it rather than silently accept it.
+ */
+function isCompactionDisposition(value: unknown): value is CompactionItemDisposition {
+  return (
+    isRecord(value) &&
+    ((value.kind === "dropped" && typeof value.historyIndex === "number") ||
+      (value.kind === "preserved" &&
+        typeof value.historyIndex === "number" &&
+        typeof value.replacementIndex === "number") ||
+      (value.kind === "addedByReplacement" && typeof value.replacementIndex === "number"))
+  );
+}
+
+function isCompactionDiffItem(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.itemType === "string" &&
+    isStringOrNull(value.role) &&
+    isCompactionDisposition(value.disposition) &&
+    typeof value.normalizedJsonBytes === "number" &&
+    isNumberOrNull(value.textTokens) &&
+    isConfidence(value.confidence)
+  );
+}
+
+function asCompactionDiff(value: unknown): CompactionDiff {
+  if (isRecord(value) && value.status === "unsupported" && typeof value.detail === "string") {
+    return value as unknown as CompactionDiff;
+  }
+  if (
+    isRecord(value) &&
+    value.status === "unavailable" &&
+    isNumberOrNull(value.turn) &&
+    typeof value.lineNo === "number" &&
+    typeof value.reason === "string" &&
+    compactionUnavailableReasons.has(value.reason as CompactionDiffUnavailableReason)
+  ) {
+    return value as unknown as CompactionDiff;
+  }
+  if (
+    isRecord(value) &&
+    value.status === "available" &&
+    isNumberOrNull(value.turn) &&
+    typeof value.lineNo === "number" &&
+    Array.isArray(value.items) &&
+    value.items.every(isCompactionDiffItem)
+  ) {
+    return value as unknown as CompactionDiff;
+  }
+  throw malformed("compaction autopsy");
+}
+
 export function getStartup(): Promise<StartupSummary> {
   if (!inTauri()) return Promise.resolve(demoStartup);
   return invoke<unknown>("get_startup").then(asStartup);
@@ -368,4 +440,19 @@ export function runDoctor(agent: Agent, id: string, turn?: number): Promise<Doct
 export function getLifecycle(agent: Agent, id: string, item: string): Promise<LifecycleReport> {
   if (!inTauri()) return Promise.resolve(demoLifecycle(item));
   return invoke<unknown>("get_lifecycle", { id, agent, item }).then(asLifecycle);
+}
+
+/**
+ * The structural autopsy of one compaction, looked up by the log line its
+ * chart marker carries (see `CompactionSummary.lineNo`) rather than its
+ * turn, because a turn number is not guaranteed unique across compactions in
+ * the same session.
+ */
+export function getCompactionDiff(
+  agent: Agent,
+  id: string,
+  lineNo: number,
+): Promise<CompactionDiff> {
+  if (!inTauri()) return Promise.resolve(demoCompactionDiff(agent, lineNo));
+  return invoke<unknown>("get_compaction_diff", { id, agent, lineNo }).then(asCompactionDiff);
 }

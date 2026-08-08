@@ -46,6 +46,10 @@ export interface SessionPage {
 export interface CompactionSummary {
   turn: number | null;
   reclaimed: number | null;
+  /** The log line this compaction was recorded on -- the identity a
+   *  compaction autopsy is looked up by, because a turn number is not
+   *  guaranteed unique across compactions in the same session. */
+  lineNo: number;
 }
 
 export interface GrowthPoint {
@@ -187,3 +191,78 @@ export interface LifecycleReport {
   recordedFirstSeen: number | null;
   firstSeenDisagrees: boolean;
 }
+
+/**
+ * Where one item in a Codex compaction's replacement history sits, mirroring
+ * `ct_domain::CompactionItemDisposition`.
+ *
+ * A discriminated union rather than a flattened
+ * `{ kind, historyIndex: number | null, replacementIndex: number | null }`,
+ * for the same reason as `ThreadRole` above: the Rust type names each index
+ * on the variant that has it, so a preserved item's two positions (where it
+ * was, where it moved to) cannot be pulled apart, and a dropped item cannot
+ * carry a phantom `replacementIndex` no call site can ever read. The looser
+ * shape would force a `?? 0` fallback at every render call site that could
+ * never actually fire.
+ */
+export type CompactionItemDisposition =
+  | { kind: "dropped"; historyIndex: number }
+  | { kind: "preserved"; historyIndex: number; replacementIndex: number }
+  | { kind: "addedByReplacement"; replacementIndex: number };
+
+/** One item participating in a compaction's replacement, mirroring
+ *  `ct_domain::CompactionDiffItem`. */
+export interface CompactionDiffItem {
+  /** Codex Responses API item type, e.g. `message` or `function_call_output`. */
+  itemType: string;
+  /** Present only on message items. */
+  role: string | null;
+  disposition: CompactionItemDisposition;
+  /** Size after serializing the parsed JSON item into a normalized compact
+   *  representation -- derived, not a token estimate or the original wire
+   *  size. */
+  normalizedJsonBytes: number;
+  /** A tokenizer measurement only when the complete model-visible item was
+   *  plain text. `null` for opaque blobs and structured outputs -- never
+   *  coerced to zero, which would misrepresent "not measured" as "measured
+   *  as empty". */
+  textTokens: number | null;
+  confidence: Confidence;
+}
+
+/** Why one specific compaction's structural diff could not be produced, even
+ *  though this agent generally records replacement history. Mirrors
+ *  `ct_domain::CompactionDiffUnavailable`. */
+export type CompactionDiffUnavailableReason =
+  | "missingReplacementHistory"
+  | "oversizedRawLine"
+  | "unavailableRawLine"
+  | "malformedRawLine"
+  | "malformedPrecedingItem"
+  | "unknownPrecedingHistory";
+
+/**
+ * The outcome of asking for one compaction's structural diff.
+ *
+ * Three cases, not a `{ items: [], error: string | null }` shape: `available`
+ * mirrors `ct_domain::CompactionDiff::Available`; `unavailable` mirrors
+ * `CompactionDiff::Unavailable` -- one specific compaction's evidence could
+ * not be read on an agent that generally supports this; `unsupported` is a
+ * fact `CompactionDiff` cannot express at all -- the agent (Claude Code)
+ * never records a literal replacement history for any of its compactions,
+ * which fails at the adapter itself before any single compaction is
+ * considered. Collapsing that distinction into one error string would make
+ * "this specific compaction's raw line is corrupted" and "this agent never
+ * had this evidence to begin with" look like the same failure, which they
+ * are not -- and only the panel that keeps them apart can tell a Claude Code
+ * user the evidence does not exist rather than that the feature is broken.
+ */
+export type CompactionDiff =
+  | { status: "available"; turn: number | null; lineNo: number; items: CompactionDiffItem[] }
+  | {
+      status: "unavailable";
+      turn: number | null;
+      lineNo: number;
+      reason: CompactionDiffUnavailableReason;
+    }
+  | { status: "unsupported"; detail: string };

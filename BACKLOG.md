@@ -37,17 +37,6 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-047 · Add a desktop compaction autopsy
-`status: next` · `tier: A` · `size: S` · `source: desktop product strategy`
-
-**Why:** Codex records literal replacement history, so ContextTrace can show
-exactly what a compaction discarded—evidence Codex itself does not turn into an
-inspectable view. The diff engine already exists; the prompt-growth chart
-already exposes the natural entry point.
-**Done when:** selecting a Codex compaction marker lists dropped, preserved and
-replacement-only items with sizes and confidence; unsupported agents explain
-the evidence limit without fabricating a diff.
-
 ### CT-048 · Compare two turns in the desktop app
 `status: next` · `tier: A` · `size: M` · `source: desktop product strategy`
 
@@ -150,6 +139,51 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-047 · Add a desktop compaction autopsy
+`status: done` · `tier: A` · `size: S` · `source: desktop product strategy`
+
+**Why:** Codex records literal replacement history, so ContextTrace can show
+exactly what a compaction discarded—evidence Codex itself does not turn into an
+inspectable view. The diff engine already exists; the prompt-growth chart
+already exposes the natural entry point.
+**Done when:** selecting a Codex compaction marker lists dropped, preserved and
+replacement-only items with sizes and confidence; unsupported agents explain
+the evidence limit without fabricating a diff.
+
+**Accepted on 2026-08-08.** The compaction markers the growth chart already drew
+are now the affordance: clicking or keying one opens an autopsy listing what
+that compaction dropped, what it preserved and what the replacement introduced,
+each with size and confidence. A preserved item shows **both** of its positions
+— `history #4 -> replacement #0` — which is the fact CT-060 added and the one a
+user cannot get anywhere else, and a footer states which list each number
+indexes rather than leaving the reader to infer it.
+
+**The refusal is the half that was worth the care.** Two different negatives are
+kept as separate typed facts instead of one error string: a specific Codex
+compaction whose evidence could not be read, and Claude Code, which never
+records a literal replacement history at all. The second is caught as a
+success-typed `Unsupported` variant rather than forwarded as a generic error, so
+the panel explains the evidence limit — *"showing one anyway would misrepresent
+evidence this tool does not have"* — instead of rendering an empty table that
+reads as a clean bill of health.
+
+Two things this was verified against rather than assumed. The panel was driven
+in a real browser at 1440x900, both paths: a compaction rendering 4 dropped, 1
+preserved and 1 added, and a Claude Code session rendering the refusal with zero
+item rows. And the real corpus was swept for scale — 32 of 100 local Codex
+sessions hold at least one compaction, the richest dropping 140, 540, 363 and
+197 items across four events with **zero** preserved, which is why an empty
+group renders as nothing at all rather than as a heading with nothing under it.
+The committed fixture's 4/1/1 would never have shown that.
+
+A serde trap is recorded at the type: `#[serde(rename_all = "camelCase")]` on an
+enum renames only the variant tag, not each struct-variant's own fields, so it
+is repeated per variant and a test asserts both that `historyIndex` exists and
+that no `history_index` survives. The TypeScript mirror is a discriminated union
+following the `ThreadRole` precedent, so a preserved item without its
+replacement index cannot be written, and the validator rejects one that arrives
+over IPC anyway.
 
 ### CT-069 · Codex subagent threads collapse onto their parent's id
 `status: done` · `tier: A` · `size: M` · `source: CT-055`
