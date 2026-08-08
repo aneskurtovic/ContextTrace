@@ -58,6 +58,34 @@ normalises categories, tools, residuals and measurement comparability.
 the largest category/tool/residual deltas with incompatible measurements
 clearly bounded.
 
+### CT-072 · Show the context the agent never logged, and when the harness changed
+`status: next` · `tier: A` · `size: M` · `source: desktop product strategy`
+
+**Why:** the unlogged remainder is this project's signature measurement — the
+system prompt and tool schemas the agent never wrote down, recovered by fitting
+each session's own characters-per-token ratio — and it is reachable only from
+the CLI. The desktop reports a residual figure inside a single turn's
+composition and stops there, so the one view that makes the measurement legible
+is the one the app does not have.
+
+The chart is the smaller half. `residual_steps` already detects *step changes*
+in that remainder, and a step means something the agent did not log has changed
+size: a tool was registered, an MCP server connected, a skill loaded. That is an
+inference about the harness drawn from arithmetic on the transcript, and nothing
+else in either agent's own tooling surfaces it.
+
+**Done when:** a session shows its unlogged remainder across turns with the
+fitted ratio and its spread stated beside it; step changes are marked and
+readable as harness events rather than as noise; every figure carries its
+confidence, and a session whose ratio cannot be fitted says so instead of
+drawing a line through nothing.
+
+**Not fabricating the fit is the whole risk.** Roughly one Claude Code session
+in seven reconstructs to more content than the prompt held, so the constant
+comes out negative and the fit is refused — `docs/methodology.md` says so and
+says the cause is not established. The panel must render that refusal as the
+answer, not fall back to a plausible-looking curve.
+
 ### CT-043 · Ship an installable 0.1.0
 `status: next` · `tier: A` · `size: L` · `source: MVP review`
 
