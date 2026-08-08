@@ -113,6 +113,14 @@ const WINDOWS_ARCHIVE_DIR: &str = "ContextTrace-archive";
 /// deleting the only remaining copies of sessions whose logs are already gone --
 /// the exact loss this whole feature exists to prevent, caused by a routine
 /// dependency bump. A sibling directory cannot be reached by that mistake.
+///
+/// **Only the Windows branch is flat, and deliberately so.** Windows puts a
+/// per-user install *and* per-user data under the same `%LOCALAPPDATA%` root, so
+/// `<app>/archive` collides there; XDG keeps them apart, and
+/// `~/.local/share/contexttrace/archive` is a data directory no uninstaller
+/// owns. The rule is "never nest inside an install directory", not "never
+/// nest" -- so it changes the layout on exactly the platform where the two
+/// would otherwise be the same place.
 fn default_root() -> PathBuf {
     if let Some(dir) = std::env::var_os("CONTEXTTRACE_ARCHIVE") {
         return PathBuf::from(dir);
@@ -798,8 +806,11 @@ mod tests {
     /// sessions whose logs are already gone. Pinned so a tidier-looking default
     /// cannot reintroduce the nesting quietly.
     #[test]
-    fn the_archive_directory_never_nests_inside_the_desktop_install_directory() {
-        // Tauri's `productName`, which is the install directory's name.
+    fn the_windows_archive_directory_never_nests_inside_the_install_directory() {
+        // Tauri's `productName`, which is the install directory's name. Scoped
+        // to Windows on purpose: it is the platform that puts a per-user
+        // install and per-user data under one root, so it is the only one where
+        // the conventional `<app>/archive` layout would collide.
         const DESKTOP_INSTALL_DIR: &str = "ContextTrace";
 
         assert_ne!(WINDOWS_ARCHIVE_DIR, DESKTOP_INSTALL_DIR);
