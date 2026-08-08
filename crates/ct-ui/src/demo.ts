@@ -9,6 +9,7 @@ import type {
   SessionSummary,
   StartupSummary,
   ThreadRole,
+  TurnDiff,
 } from "./types";
 
 /** The log line the demo session's one compaction marker sits on. Arbitrary
@@ -162,7 +163,10 @@ export function demoContext(turn = 32): ContextDetail {
       label,
       tokens: sized(tokens),
       share: sized(tokens) / total,
-      itemCount,
+      // Item counts grow with the turn, like the tokens do. Holding them fixed
+      // made every turn-to-turn comparison report "0 items" changed while the
+      // token columns moved, which is not a shape a real session can produce.
+      itemCount: Math.max(1, Math.round(itemCount * scale)),
       confidence,
     })),
     contributors: [
@@ -320,5 +324,90 @@ export function demoCompactionDiff(agent: Agent, lineNo: number): CompactionDiff
         confidence: "derived",
       },
     ],
+  };
+}
+
+/**
+ * A comparison of two turns of the demonstration session.
+ *
+ * Derived from the same category table and growth series `demoContext` uses,
+ * so the deltas here agree with what the composition panel shows for those two
+ * turns rather than being a second, independently invented set of numbers.
+ *
+ * Comparability is `identical` because both sides come from one session, and a
+ * session is calibrated once — which is what the real backend reports on this
+ * path too. Fabricating a `skewed` or `incomparable` case here would put a
+ * state on screen that the app cannot actually produce.
+ */
+export function demoTurnDiff(leftTurn: number, rightTurn: number): TurnDiff {
+  const left = demoContext(leftTurn);
+  const right = demoContext(rightTurn);
+  const byCategory = (detail: ContextDetail, label: string) =>
+    detail.categories.find((category) => category.label === label);
+
+  const labels = [...new Set(left.categories.concat(right.categories).map((c) => c.label))];
+  const categories = labels
+    .map((label) => {
+      const l = byCategory(left, label);
+      const r = byCategory(right, label);
+      const leftTokens = l?.tokens ?? 0;
+      const rightTokens = r?.tokens ?? 0;
+      return {
+        category: label,
+        left: leftTokens,
+        right: rightTokens,
+        delta: rightTokens - leftTokens,
+        leftItems: l?.itemCount ?? 0,
+        rightItems: r?.itemCount ?? 0,
+        itemDelta: (r?.itemCount ?? 0) - (l?.itemCount ?? 0),
+        // One instrument on both sides, so nothing but content can move a row.
+        instrumentBound: 0,
+        meaningful: rightTokens !== leftTokens,
+      };
+    })
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  const side = (detail: ContextDetail) => ({
+    turn: detail.turn,
+    totalTokens: detail.totalTokens,
+    items: detail.categories.reduce((sum, category) => sum + category.itemCount, 0),
+    residual: detail.residualTokens,
+    confidence: "derived" as const,
+  });
+
+  return {
+    left: side(left),
+    right: side(right),
+    comparability: { kind: "identical", estimator: "o200k_base" },
+    promptDelta: right.totalTokens - left.totalTokens,
+    totalsAreObserved: true,
+    categories,
+    tools: [
+      ["shell_command", 11, 18_420],
+      ["read_file", 5, 7_260],
+    ].map(([tool, calls, tokens]) => {
+      // Derived from each side's own turn rather than fixed, so a comparison
+      // never claims a later turn made fewer calls than an earlier one.
+      const at = (detail: ContextDetail) => {
+        const share = detail.totalTokens / 121_760;
+        return {
+          calls: Math.max(1, Math.round((calls as number) * share)),
+          tokens: Math.round((tokens as number) * share),
+        };
+      };
+      const l = at(left);
+      const r = at(right);
+      return {
+        tool: String(tool),
+        leftCalls: l.calls,
+        rightCalls: r.calls,
+        leftTokens: l.tokens,
+        rightTokens: r.tokens,
+        callDelta: r.calls - l.calls,
+        tokenDelta: r.tokens - l.tokens,
+        instrumentBound: 0,
+        meaningful: r.tokens !== l.tokens,
+      };
+    }),
   };
 }

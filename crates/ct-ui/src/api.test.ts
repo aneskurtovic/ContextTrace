@@ -9,10 +9,17 @@ import {
   getContext,
   getLifecycle,
   inspectSession,
+  getTurnDiff,
   runDoctor,
   searchSessions,
 } from "./api";
-import { demoCompactionDiff, demoDetail, demoDoctor, demoSessions } from "./demo";
+import {
+  demoCompactionDiff,
+  demoDetail,
+  demoDoctor,
+  demoSessions,
+  demoTurnDiff,
+} from "./demo";
 
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -140,6 +147,62 @@ describe("desktop IPC response validation", () => {
 
     await expect(searchSessions()).resolves.toMatchObject({ total: demoSessions.length });
     expect(demoSessions.some((session) => session.threadRole.kind === "subagent")).toBe(true);
+  });
+
+  it("validates each comparability arm on its own terms", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const base = demoTurnDiff(4, 12);
+
+    for (const comparability of [
+      { kind: "identical", estimator: "o200k_base" },
+      { kind: "skewed", left: "chars/2.4", right: "chars/3.1", skew: 0.27 },
+      { kind: "incomparable", left: "o200k_base", right: "chars/2.4", reason: "mixed" },
+    ]) {
+      invoke.mockResolvedValue({ ...base, comparability });
+      await expect(getTurnDiff("codex", "s", 4, 12)).resolves.toMatchObject({
+        comparability,
+      });
+    }
+  });
+
+  it("rejects an incomparable pair that smuggles in a skew", async () => {
+    // The one combination worth a test of its own: `incomparable` means no
+    // scale relates the two sides, and a skew of 0 is the *strongest*
+    // comparability claim there is. A shape that allowed both would let the
+    // absence of a bound arrive looking like a perfect one.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({
+      ...demoTurnDiff(4, 12),
+      comparability: { kind: "incomparable", skew: 0 },
+    });
+
+    await expect(getTurnDiff("codex", "s", 4, 12)).rejects.toThrow(
+      "invalid response from the turn comparison",
+    );
+  });
+
+  it("rejects a category row missing the bound that qualifies its delta", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const base = demoTurnDiff(4, 12);
+    const [first, ...rest] = base.categories;
+    const { instrumentBound: _dropped, ...withoutBound } = first;
+    invoke.mockResolvedValue({ ...base, categories: [withoutBound, ...rest] });
+
+    await expect(getTurnDiff("codex", "s", 4, 12)).rejects.toThrow(
+      "invalid response from the turn comparison",
+    );
+  });
+
+  it("holds the demo turn diff to the same contract as the real backend", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue(demoTurnDiff(4, 12));
+
+    const diff = await getTurnDiff("codex", "s", 4, 12);
+    expect(diff.left.turn).toBe(4);
+    expect(diff.right.turn).toBe(12);
+    // Sorted by magnitude, like the engine sorts them.
+    const magnitudes = diff.categories.map((row) => Math.abs(row.delta));
+    expect([...magnitudes].sort((a, b) => b - a)).toEqual(magnitudes);
   });
 
   it("rejects malformed paged session responses", async () => {

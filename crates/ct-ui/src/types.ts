@@ -36,6 +36,68 @@ export interface SessionSummary {
   threadRole: ThreadRole;
 }
 
+/**
+ * Whether two turns' token figures may be subtracted, and how far.
+ *
+ * A discriminated union because these are not degrees of one claim:
+ * `identical` means the subtraction is exact, `skewed` means exact to within
+ * a stated bound, and `incomparable` means no bound exists at all. That third
+ * case is emphatically not "skew of zero" — zero is the *strongest* claim
+ * available, so a `skew: number | null` shape would let a missing bound fall
+ * back to asserting perfect comparability.
+ */
+export type Comparability =
+  | { kind: "identical"; estimator: string }
+  | { kind: "skewed"; left: string; right: string; skew: number }
+  | { kind: "incomparable"; left: string; right: string; reason: string };
+
+export interface TurnSide {
+  turn: number;
+  totalTokens: number;
+  items: number;
+  residual: number;
+  confidence: Confidence;
+}
+
+export interface CategoryDelta {
+  category: string;
+  left: number;
+  right: number;
+  delta: number;
+  leftItems: number;
+  rightItems: number;
+  itemDelta: number;
+  /** `null` when no bound can be stated; `meaningful` is then false and
+   *  `delta` is arithmetic with no claim attached. */
+  instrumentBound: number | null;
+  meaningful: boolean;
+}
+
+export interface ToolDelta {
+  tool: string;
+  leftCalls: number;
+  rightCalls: number;
+  leftTokens: number;
+  rightTokens: number;
+  callDelta: number;
+  tokenDelta: number;
+  instrumentBound: number | null;
+  meaningful: boolean;
+}
+
+export interface TurnDiff {
+  left: TurnSide;
+  right: TurnSide;
+  comparability: Comparability;
+  /** Read from both sides' own usage records, so it is free of the instrument
+   *  question the rest of this type manages — but only when
+   *  `totalsAreObserved`. */
+  promptDelta: number;
+  totalsAreObserved: boolean;
+  categories: CategoryDelta[];
+  tools: ToolDelta[];
+}
+
 export interface SessionPage {
   sessions: SessionSummary[];
   total: number;

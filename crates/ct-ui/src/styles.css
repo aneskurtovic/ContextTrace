@@ -1615,3 +1615,59 @@ h2 {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* Turn comparison (CT-048). Reuses the doctor panel's row scaffolding so the
+   two analysis panels read as one family rather than two dialects. */
+.pin-turn {
+  background: var(--panel-hover);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.pin-turn:hover {
+  color: inherit;
+}
+
+.pin-turn.pinned {
+  border-color: rgba(79, 140, 255, .5);
+  color: var(--blue);
+}
+
+.diff-instrument {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+
+/* A skew is a caveat on every row beneath it, and an incomparable pair
+   withdraws the token deltas entirely. Neither should read like body text. */
+.diff-instrument-warn {
+  border-left: 2px solid var(--orange);
+  padding-left: 10px;
+}
+
+.diff-instrument-refusal {
+  border-left: 2px solid var(--blue);
+  padding-left: 10px;
+}
+
+.diff-empty {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* A delta the instruments could have produced by themselves is shown, not
+   hidden -- withholding it would be its own kind of claim -- but it must not
+   carry the same weight as one that survives the bound. */
+.doctor-row-value.muted {
+  color: var(--muted);
+  opacity: .65;
+}

@@ -37,16 +37,6 @@ decision to build it, and re-litigating it later is waste.
 
 ## Next
 
-### CT-048 · Compare two turns in the desktop app
-`status: next` · `tier: A` · `size: M` · `source: desktop product strategy`
-
-**Why:** a single snapshot says what is wrong; a comparison says what changed
-when the agent's behaviour changed. The application diff use case already
-normalises categories, tools, residuals and measurement comparability.
-**Done when:** a user can pin a baseline turn, choose a comparison turn and see
-the largest category/tool/residual deltas with incompatible measurements
-clearly bounded.
-
 ### CT-072 · Show the context the agent never logged, and when the harness changed
 `status: next` · `tier: A` · `size: M` · `source: desktop product strategy`
 
@@ -205,6 +195,48 @@ domain type depends on it.
 ---
 
 ## Done
+
+### CT-048 · Compare two turns in the desktop app
+`status: done` · `tier: A` · `size: M` · `source: desktop product strategy`
+
+**Why:** a single snapshot says what is wrong; a comparison says what changed
+when the agent's behaviour changed. The application diff use case already
+normalises categories, tools, residuals and measurement comparability.
+**Done when:** a user can pin a baseline turn, choose a comparison turn and see
+the largest category/tool/residual deltas with incompatible measurements
+clearly bounded.
+
+**Accepted on 2026-08-08.** Pinning a turn turns the timeline into a
+comparison: the pinned turn is the baseline, whatever the slider or the chart
+selects is the other side, and the panel recomputes as either end moves rather
+than going stale until something is clicked again. Categories and tools are
+ordered by magnitude, each row carrying its item or call delta beside its token
+delta.
+
+**`Comparability` reaches the screen intact, and that is the point of the
+entry.** A delta the instruments alone could have produced is shown but muted
+and titled, rather than hidden — withholding it would be its own claim — while a
+delta larger than the bound reads at full weight. The TypeScript mirror is a
+discriminated union, because the flattened `{ kind, skew: number | null }` shape
+would let a missing bound fall back to `0`, and zero skew is not "unknown" but
+the *strongest* comparability claim available. A test asserts the validator
+rejects an `incomparable` payload carrying a skew, which is the one combination
+that would launder an absence into a certainty.
+
+**One honest limit, recorded rather than papered over.** Both sides come from
+one session and a session is calibrated once, so this path always reports
+`Identical` and the `Skewed` and `Incomparable` arms are unreachable from the
+desktop today. They are still modelled, validated and tested at the boundary, so
+a cross-session comparison lands without reopening the type — and the Rust test
+asserts `identical` explicitly, so the day two separately calibrated loads start
+feeding this view, it fails rather than quietly subtracting across scales.
+
+Driven in a browser at 1440x900 rather than inferred from unit tests, which is
+how two defects in the *demonstration* data were caught: item counts did not
+vary with the turn, so every row reported "0 items" changed while its tokens
+moved, and the tool rows were fixed constants that showed more calls at the
+earlier turn than the later one. Both are fabricated figures behind a banner
+that says so, and both were still wrong in a way a real session cannot be.
 
 ### CT-047 · Add a desktop compaction autopsy
 `status: done` · `tier: A` · `size: S` · `source: desktop product strategy`

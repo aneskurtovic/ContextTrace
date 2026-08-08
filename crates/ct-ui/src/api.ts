@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Agent,
+  CategoryDelta,
+  Comparability,
   CompactionDiff,
   CompactionDiffUnavailableReason,
   CompactionItemDisposition,
@@ -12,6 +14,9 @@ import type {
   SessionSummary,
   StartupSummary,
   ThreadRole,
+  ToolDelta,
+  TurnDiff,
+  TurnSide,
 } from "./types";
 import {
   demoCompactionDiff,
@@ -21,6 +26,7 @@ import {
   demoLifecycle,
   demoSessions,
   demoStartup,
+  demoTurnDiff,
 } from "./demo";
 
 const inTauri = () =>
@@ -455,4 +461,96 @@ export function getCompactionDiff(
 ): Promise<CompactionDiff> {
   if (!inTauri()) return Promise.resolve(demoCompactionDiff(agent, lineNo));
   return invoke<unknown>("get_compaction_diff", { id, agent, lineNo }).then(asCompactionDiff);
+}
+
+function isComparability(value: unknown): value is Comparability {
+  if (!isRecord(value)) return false;
+  // Each arm names the fields that arm alone carries. A shared shape with
+  // nullable members would accept `{kind:"incomparable", skew:0}` -- the one
+  // combination that turns "no bound exists" into "the bound is perfect".
+  if (value.kind === "identical") return typeof value.estimator === "string";
+  if (value.kind === "skewed") {
+    return (
+      typeof value.left === "string" &&
+      typeof value.right === "string" &&
+      typeof value.skew === "number"
+    );
+  }
+  if (value.kind === "incomparable") {
+    return (
+      typeof value.left === "string" &&
+      typeof value.right === "string" &&
+      typeof value.reason === "string"
+    );
+  }
+  return false;
+}
+
+function isTurnSide(value: unknown): value is TurnSide {
+  return (
+    isRecord(value) &&
+    typeof value.turn === "number" &&
+    typeof value.totalTokens === "number" &&
+    typeof value.items === "number" &&
+    typeof value.residual === "number" &&
+    typeof value.confidence === "string"
+  );
+}
+
+function isCategoryDelta(value: unknown): value is CategoryDelta {
+  return (
+    isRecord(value) &&
+    typeof value.category === "string" &&
+    typeof value.left === "number" &&
+    typeof value.right === "number" &&
+    typeof value.delta === "number" &&
+    typeof value.leftItems === "number" &&
+    typeof value.rightItems === "number" &&
+    typeof value.itemDelta === "number" &&
+    isNumberOrNull(value.instrumentBound) &&
+    typeof value.meaningful === "boolean"
+  );
+}
+
+function isToolDelta(value: unknown): value is ToolDelta {
+  return (
+    isRecord(value) &&
+    typeof value.tool === "string" &&
+    typeof value.leftCalls === "number" &&
+    typeof value.rightCalls === "number" &&
+    typeof value.leftTokens === "number" &&
+    typeof value.rightTokens === "number" &&
+    typeof value.callDelta === "number" &&
+    typeof value.tokenDelta === "number" &&
+    isNumberOrNull(value.instrumentBound) &&
+    typeof value.meaningful === "boolean"
+  );
+}
+
+function asTurnDiff(value: unknown): TurnDiff {
+  if (
+    !isRecord(value) ||
+    !isTurnSide(value.left) ||
+    !isTurnSide(value.right) ||
+    !isComparability(value.comparability) ||
+    typeof value.promptDelta !== "number" ||
+    typeof value.totalsAreObserved !== "boolean" ||
+    !Array.isArray(value.categories) ||
+    !value.categories.every(isCategoryDelta) ||
+    !Array.isArray(value.tools) ||
+    !value.tools.every(isToolDelta)
+  ) {
+    throw malformed("the turn comparison");
+  }
+  return value as unknown as TurnDiff;
+}
+
+export function getTurnDiff(
+  agent: Agent,
+  id: string,
+  leftTurn: number,
+  rightTurn: number,
+): Promise<TurnDiff> {
+  if (!inTauri()) return Promise.resolve(demoTurnDiff(leftTurn, rightTurn));
+  return invoke<unknown>("get_turn_diff", { id, agent, leftTurn, rightTurn }).then(asTurnDiff);
 }

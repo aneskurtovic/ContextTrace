@@ -1,6 +1,9 @@
-use ct_application::{timeline, AppError, ContextTrace, Departure, LifecycleSweep, SessionFilter};
+use ct_application::{
+    timeline, AppError, Comparability, ContextTrace, Departure, LifecycleSweep, SessionDiff,
+    SessionFilter,
+};
 use ct_domain::model::context::unmeasured_content_items;
-use ct_domain::ports::PortError;
+use ct_domain::ports::{PortError, TokenEstimator};
 use ct_domain::{
     AgentKind, CategoryBreakdown, CompactionDiff, CompactionDiffItem, CompactionDiffUnavailable,
     CompactionItemDisposition, Confidence, ContextItemId, ContextSource, MessageRole,
@@ -598,6 +601,59 @@ impl AppState {
             .ok_or_else(|| format!("no compaction recorded at line {line_no} in this session"))?;
         Ok(CompactionDiffSummary::from(diff))
     }
+
+    /// Compare two turns of one session.
+    ///
+    /// Both sides are sized by the same instrument, because both come from one
+    /// session and a session is calibrated once. `Comparability` is therefore
+    /// always `Identical` on this path, and it is still carried across the
+    /// boundary rather than assumed away: the frontend renders what the
+    /// comparison reports about itself, so the day a cross-session comparison
+    /// arrives it will state a skew or refuse a token delta without any of this
+    /// having to be revisited. Asserting `Identical` here instead would have to
+    /// be un-asserted there, and silently wrongly in between.
+    ///
+    /// Loading once also matters for cost: `cached_session` fits the session's
+    /// character-per-token ratio by sweeping every turn, and comparing two turns
+    /// of one session must not pay for that twice.
+    fn turn_diff(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        left_turn: u32,
+        right_turn: u32,
+    ) -> Result<TurnDiffSummary, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let left = TurnNumber::new(left_turn).map_err(|error| error.to_string())?;
+        let right = TurnNumber::new(right_turn).map_err(|error| error.to_string())?;
+
+        let fitted = cached.chars_per_token.map(ct_runtime::heuristic_estimator);
+        let estimator: &dyn TokenEstimator = match fitted.as_ref() {
+            Some(estimator) => estimator,
+            None => self.app.binding_estimator(cached.binding),
+        };
+        let snapshot = |turn| {
+            self.app
+                .snapshot_with(&cached.session, cached.binding, turn, estimator)
+                .map_err(|error| error.to_string())
+        };
+        let left_snapshot = snapshot(left)?;
+        let right_snapshot = snapshot(right)?;
+
+        let instrument =
+            ct_application::Instrument::new(estimator.name(), estimator.chars_per_token());
+        let diff = ct_application::compare(
+            ct_application::Side {
+                snapshot: &left_snapshot,
+                instrument: instrument.clone(),
+            },
+            ct_application::Side {
+                snapshot: &right_snapshot,
+                instrument,
+            },
+        );
+        Ok(TurnDiffSummary::from(diff))
+    }
 }
 
 #[derive(Serialize)]
@@ -617,6 +673,171 @@ pub struct StartupSummary {
 /// A session's place in its thread group, for the desktop's session list.
 ///
 /// Mirrors [`ThreadRole`] rather than flattening it into two nullable fields:
+/// Mirrors [`Comparability`], which decides whether the token deltas beside it
+/// may be read as findings at all.
+///
+/// A sum type on both sides of the boundary, for the reason the domain gives:
+/// these are not degrees of one claim. `identical` says the subtraction is
+/// exact, `skewed` says it is exact to within a stated bound, and
+/// `incomparable` says no bound exists — and the third is not "skew zero", it
+/// is the absence of a scale relating the two sides. Flattening this to a
+/// nullable number would make the strongest claim available (`0`) the value a
+/// missing one falls back to.
+///
+/// `rename_all` is repeated per variant deliberately: on an enum it renames
+/// only the variant tag, never each struct-variant's own fields.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ComparabilitySummary {
+    #[serde(rename_all = "camelCase")]
+    Identical { estimator: String },
+    #[serde(rename_all = "camelCase")]
+    Skewed {
+        left: String,
+        right: String,
+        skew: f32,
+    },
+    #[serde(rename_all = "camelCase")]
+    Incomparable {
+        left: String,
+        right: String,
+        reason: String,
+    },
+}
+
+impl From<Comparability> for ComparabilitySummary {
+    fn from(value: Comparability) -> Self {
+        match value {
+            Comparability::Identical { estimator } => Self::Identical { estimator },
+            Comparability::Skewed { left, right, skew } => Self::Skewed { left, right, skew },
+            Comparability::Incomparable {
+                left,
+                right,
+                reason,
+            } => Self::Incomparable {
+                left,
+                right,
+                reason,
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnSideSummary {
+    turn: u32,
+    total_tokens: u32,
+    items: usize,
+    residual: u32,
+    confidence: Confidence,
+}
+
+/// One category's figures on both sides.
+///
+/// `instrument_bound` is `None` when no bound can be stated, and `meaningful`
+/// is then false: the delta is arithmetic with no claim attached. Both travel,
+/// so the frontend never has to re-derive the judgement from the number.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryDeltaSummary {
+    category: String,
+    left: u32,
+    right: u32,
+    delta: i64,
+    left_items: usize,
+    right_items: usize,
+    /// Change in item count. A count, so neither instrument can distort it --
+    /// which makes it the row's honest fallback when `meaningful` is false.
+    item_delta: i64,
+    instrument_bound: Option<u32>,
+    meaningful: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDeltaSummary {
+    tool: String,
+    left_calls: usize,
+    right_calls: usize,
+    left_tokens: u32,
+    right_tokens: u32,
+    call_delta: i64,
+    token_delta: i64,
+    instrument_bound: Option<u32>,
+    meaningful: bool,
+}
+
+/// The comparison, as the desktop reads it.
+///
+/// `prompt_delta` is carried separately from every category row because it is
+/// the one figure free of the instrument question: both sides are read out of
+/// the sessions' own usage records. `totals_are_observed` says whether that
+/// held, so a view can lead with the number that needs no caveat only when it
+/// has one.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnDiffSummary {
+    left: TurnSideSummary,
+    right: TurnSideSummary,
+    comparability: ComparabilitySummary,
+    prompt_delta: i64,
+    totals_are_observed: bool,
+    categories: Vec<CategoryDeltaSummary>,
+    tools: Vec<ToolDeltaSummary>,
+}
+
+impl From<SessionDiff> for TurnDiffSummary {
+    fn from(diff: SessionDiff) -> Self {
+        let prompt_delta = diff.prompt_delta();
+        let totals_are_observed = diff.totals_are_observed();
+        let side = |summary: &ct_application::SideSummary| TurnSideSummary {
+            turn: summary.turn,
+            total_tokens: summary.total.tokens(),
+            items: summary.items,
+            residual: summary.residual,
+            confidence: summary.total.confidence(),
+        };
+        Self {
+            left: side(&diff.left),
+            right: side(&diff.right),
+            prompt_delta,
+            totals_are_observed,
+            categories: diff
+                .categories
+                .iter()
+                .map(|row| CategoryDeltaSummary {
+                    category: row.category.label().to_string(),
+                    left: row.left,
+                    right: row.right,
+                    delta: row.delta,
+                    left_items: row.left_items,
+                    right_items: row.right_items,
+                    item_delta: row.item_delta(),
+                    instrument_bound: row.instrument_bound,
+                    meaningful: row.is_meaningful(),
+                })
+                .collect(),
+            tools: diff
+                .tools
+                .iter()
+                .map(|row| ToolDeltaSummary {
+                    tool: row.tool.clone(),
+                    left_calls: row.left_calls,
+                    right_calls: row.right_calls,
+                    left_tokens: row.left_tokens,
+                    right_tokens: row.right_tokens,
+                    call_delta: row.call_delta(),
+                    token_delta: row.token_delta(),
+                    instrument_bound: row.instrument_bound,
+                    meaningful: row.tokens_are_meaningful(),
+                })
+                .collect(),
+            comparability: ComparabilitySummary::from(diff.comparability),
+        }
+    }
+}
+
 /// `kind` is `"subagent"` if and only if `parent` is present, because the
 /// domain type makes the other combination unrepresentable and this DTO must
 /// not reopen that door on the way to JSON.
@@ -1124,6 +1345,17 @@ pub fn get_compaction_diff(
     state: tauri::State<'_, AppState>,
 ) -> Result<CompactionDiffSummary, String> {
     state.compaction_diff(parse_agent(&agent)?, &id, line_no)
+}
+
+#[tauri::command]
+pub fn get_turn_diff(
+    id: String,
+    agent: String,
+    left_turn: u32,
+    right_turn: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<TurnDiffSummary, String> {
+    state.turn_diff(parse_agent(&agent)?, &id, left_turn, right_turn)
 }
 
 fn format_source(source: &ContextSource) -> String {
@@ -1784,6 +2016,78 @@ mod tests {
             error,
             "turn 999 is out of range; this session has 2 turn(s)"
         );
+    }
+
+    /// Two turns of one session, which is the only comparison the desktop can
+    /// currently ask for and therefore the only `Comparability` arm it can
+    /// reach. The other two are still modelled and validated at the boundary,
+    /// so a cross-session comparison lands without reopening the type -- and
+    /// so this test fails loudly if the desktop ever starts building its two
+    /// sides from separately calibrated loads without saying so.
+    #[test]
+    fn a_turn_diff_reports_one_instrument_and_camelcases_every_field() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let codex_id = session_id(&sessions, "codex");
+
+        let detail = state
+            .inspect_session(AgentKind::Codex, &codex_id)
+            .expect("codex fixture inspects");
+        let turns: Vec<u32> = detail
+            .growth
+            .iter()
+            .filter(|point| point.prompt_tokens.is_some())
+            .map(|point| point.turn)
+            .collect();
+        assert!(
+            turns.len() >= 2,
+            "the comparison needs two measured turns; the fixture has {}",
+            turns.len()
+        );
+
+        let diff = state
+            .turn_diff(
+                AgentKind::Codex,
+                &codex_id,
+                turns[0],
+                turns[turns.len() - 1],
+            )
+            .expect("two turns of one session compare");
+        let json = serde_json::to_value(&diff).expect("serialises");
+
+        // Both sides come from one session, so one instrument sized them. This
+        // is the assertion that would fail first if the desktop ever started
+        // building its two sides from separately calibrated loads.
+        assert_eq!(json["comparability"]["kind"], "identical");
+        assert!(json["comparability"]["estimator"].is_string());
+
+        assert_eq!(json["left"]["turn"], turns[0]);
+        assert_eq!(json["right"]["turn"], turns[turns.len() - 1]);
+        assert!(json["promptDelta"].is_i64());
+        assert!(json["totalsAreObserved"].is_boolean());
+        assert!(json.get("prompt_delta").is_none());
+        assert!(json.get("totals_are_observed").is_none());
+
+        // `rename_all` on an enum renames only the variant tag, so a struct
+        // variant's own fields need their own attribute. Assert the absence as
+        // well as the presence: a surviving snake_case key means the frontend
+        // validator would reject a payload the backend thinks is correct.
+        for row in json["categories"].as_array().expect("categories array") {
+            assert!(row["leftItems"].is_number(), "leftItems missing: {row}");
+            assert!(row["itemDelta"].is_i64(), "itemDelta missing: {row}");
+            assert!(row["meaningful"].is_boolean());
+            assert!(
+                row.get("left_items").is_none(),
+                "snake_case survived: {row}"
+            );
+            assert!(row.get("instrument_bound").is_none());
+        }
+        for row in json["tools"].as_array().expect("tools array") {
+            assert!(row["leftCalls"].is_number());
+            assert!(row["tokenDelta"].is_i64());
+            assert!(row.get("left_calls").is_none());
+        }
     }
 
     /// The three acceptance shapes CT-047 names: a Codex compaction with a

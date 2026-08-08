@@ -11,6 +11,7 @@ import {
 } from "./format";
 import type {
   Agent,
+  Comparability,
   CompactionDiff,
   CompactionDiffItem,
   CompactionDiffUnavailableReason,
@@ -22,6 +23,7 @@ import type {
   SessionDetail,
   SessionSummary,
   StartupSummary,
+  TurnDiff,
 } from "./types";
 
 type AgentFilter = "all" | Agent;
@@ -107,6 +109,175 @@ function SessionListItem({
       </span>
       <span className="session-activity">{formatActivity(session.lastActivity)}</span>
     </button>
+  );
+}
+
+function signed(value: number): string {
+  return `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toLocaleString()}`;
+}
+
+/**
+ * What the instruments alone permit, said before any delta is read.
+ *
+ * Each arm states a different thing, because `Comparability` does: an exact
+ * subtraction, one bounded by a stated skew, or one that cannot be performed.
+ * The third case deliberately does not fall back to showing token deltas
+ * anyway — counts still mean something when scales do not, so those are what
+ * it points the reader at.
+ */
+function ComparabilityNote({ comparability }: { comparability: Comparability }) {
+  if (comparability.kind === "identical") {
+    return (
+      <p className="diff-instrument">
+        <strong>{comparability.estimator}</strong> sized both turns — one session, one
+        instrument, so every delta below is content.
+      </p>
+    );
+  }
+  if (comparability.kind === "skewed") {
+    return (
+      <p className="diff-instrument diff-instrument-warn">
+        <strong>{comparability.left}</strong> vs <strong>{comparability.right}</strong> —{" "}
+        {(comparability.skew * 100).toFixed(1)}% apart. The two sides are reported on
+        differently graduated scales; each row states how much of its delta that alone
+        could explain.
+      </p>
+    );
+  }
+  return (
+    <p className="diff-instrument diff-instrument-refusal">
+      <strong>{comparability.left}</strong> vs <strong>{comparability.right}</strong>. No
+      token delta is reported: {comparability.reason}. The item and call counts are
+      unaffected, and they are the comparison.
+    </p>
+  );
+}
+
+function TurnComparison({
+  diff,
+  loading,
+  pinnedTurn,
+  comparisonTurn,
+}: {
+  diff: TurnDiff | null;
+  loading: boolean;
+  pinnedTurn: number | null;
+  comparisonTurn: number | null;
+}) {
+  if (pinnedTurn == null) return null;
+  if (loading && !diff) return <Spinner label="Comparing turns…" />;
+  if (pinnedTurn === comparisonTurn) {
+    return (
+      <section className="panel diff-panel" aria-labelledby="diff-heading">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">Turn comparison</span>
+            <h2 id="diff-heading">Baseline pinned at turn {pinnedTurn}</h2>
+          </div>
+        </div>
+        <p className="diff-empty">
+          Scrub the slider or pick a point on the chart to choose a turn to compare this
+          one against.
+        </p>
+      </section>
+    );
+  }
+  if (!diff) return null;
+
+  const tokensComparable = diff.comparability.kind !== "incomparable";
+  return (
+    <section className="panel diff-panel" aria-labelledby="diff-heading">
+      <div className="panel-heading">
+        <div>
+          <span className="eyebrow">Turn comparison</span>
+          <h2 id="diff-heading">
+            Turn {diff.left.turn} → turn {diff.right.turn}
+          </h2>
+        </div>
+        {diff.totalsAreObserved && (
+          <span className="panel-total">
+            {signed(diff.promptDelta)} tokens reported
+          </span>
+        )}
+      </div>
+
+      <ComparabilityNote comparability={diff.comparability} />
+
+      <div className="doctor-section">
+        <div className="doctor-section-title">
+          <strong>Categories</strong>
+          <span>largest change first</span>
+        </div>
+        {diff.categories.length === 0 ? (
+          <p className="diff-empty">No category appears on either side.</p>
+        ) : (
+          diff.categories.map((row) => (
+            <div className="doctor-row" key={row.category}>
+              <div className="doctor-row-copy">
+                <span className="doctor-row-label">{row.category}</span>
+                <small>
+                  {row.left.toLocaleString()} → {row.right.toLocaleString()} ·{" "}
+                  {signed(row.itemDelta)} items
+                  {row.instrumentBound != null && row.instrumentBound > 0 && (
+                    <> · ±{row.instrumentBound.toLocaleString()} from instruments alone</>
+                  )}
+                </small>
+              </div>
+              <span
+                className={
+                  tokensComparable && row.meaningful
+                    ? "doctor-row-value"
+                    : "doctor-row-value muted"
+                }
+                title={
+                  tokensComparable
+                    ? row.meaningful
+                      ? "Larger than the instruments could explain"
+                      : "Within what the instruments alone could produce"
+                    : "No scale relates the two sides, so this delta is not reported"
+                }
+              >
+                {tokensComparable ? signed(row.delta) : "—"}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+
+      {diff.tools.length > 0 && (
+        <div className="doctor-section">
+          <div className="doctor-section-title">
+            <strong>Tools</strong>
+            <span>calls are counts, so no instrument distorts them</span>
+          </div>
+          {diff.tools.map((row) => (
+            <div className="doctor-row" key={row.tool}>
+              <div className="doctor-row-copy">
+                <span className="doctor-row-label">{row.tool}</span>
+                <small>
+                  {row.leftCalls} → {row.rightCalls} calls · {signed(row.callDelta)}
+                </small>
+              </div>
+              <span
+                className={
+                  tokensComparable && row.meaningful
+                    ? "doctor-row-value"
+                    : "doctor-row-value muted"
+                }
+              >
+                {tokensComparable ? signed(row.tokenDelta) : "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="compaction-note">
+        {diff.totalsAreObserved
+          ? "The headline change is read from both turns' own usage records, so it carries no instrument caveat. Category and tool rows are reconstructed and do."
+          : "At least one side's total was not reported by the agent, so the headline change is withheld; the rows below are reconstructed."}
+      </p>
+    </section>
   );
 }
 
@@ -796,6 +967,10 @@ function SessionWorkspace({
   compactionDiff,
   compactionLoading,
   compactionLineNo,
+  turnDiff,
+  turnDiffLoading,
+  pinnedTurn,
+  onTogglePin,
   demoData,
   onContributor,
   onCloseLifecycle,
@@ -815,6 +990,10 @@ function SessionWorkspace({
   compactionDiff: CompactionDiff | null;
   compactionLoading: boolean;
   compactionLineNo: number | null;
+  turnDiff: TurnDiff | null;
+  turnDiffLoading: boolean;
+  pinnedTurn: number | null;
+  onTogglePin: () => void;
   demoData: boolean;
   onContributor: (item: string) => void;
   onCloseLifecycle: () => void;
@@ -935,9 +1114,29 @@ function SessionWorkspace({
                 {context ? `${context.totalTokens.toLocaleString()} tokens` : "Loading context"}
               </output>
             </span>
+            <button
+              type="button"
+              className={pinnedTurn == null ? "pin-turn" : "pin-turn pinned"}
+              onClick={onTogglePin}
+              aria-pressed={pinnedTurn != null}
+              aria-label={
+                pinnedTurn == null
+                  ? "Pin this turn as the comparison baseline"
+                  : `Unpin turn ${pinnedTurn}, the comparison baseline`
+              }
+            >
+              {pinnedTurn == null ? "Pin as baseline" : `Baseline: turn ${pinnedTurn} ✕`}
+            </button>
           </div>
         )}
       </section>
+
+      <TurnComparison
+        diff={turnDiff}
+        loading={turnDiffLoading}
+        pinnedTurn={pinnedTurn}
+        comparisonTurn={context?.turn ?? null}
+      />
 
       <CompactionAutopsy
         diff={compactionDiff}
@@ -1005,6 +1204,9 @@ export default function App() {
   const [compactionDiff, setCompactionDiff] = useState<CompactionDiff | null>(null);
   const [compactionLineNo, setCompactionLineNo] = useState<number | null>(null);
   const [loadingCompaction, setLoadingCompaction] = useState(false);
+  const [pinnedTurn, setPinnedTurn] = useState<number | null>(null);
+  const [turnDiff, setTurnDiff] = useState<TurnDiff | null>(null);
+  const [loadingTurnDiff, setLoadingTurnDiff] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
   const sessionRequest = useRef(0);
@@ -1012,6 +1214,7 @@ export default function App() {
   const doctorRequest = useRef(0);
   const lifecycleRequest = useRef(0);
   const compactionRequest = useRef(0);
+  const turnDiffRequest = useRef(0);
   const catalogRequest = useRef(0);
 
   const refreshSessions = useCallback(
@@ -1277,6 +1480,45 @@ export default function App() {
     setLoadingCompaction(false);
   }, []);
 
+  // Recomputed whenever either end moves, so scrubbing the slider with a turn
+  // pinned reads as a live comparison rather than as a stale one the user has
+  // to remember to refresh.
+  const comparisonTurn = context?.turn ?? null;
+  useEffect(() => {
+    if (!selected || pinnedTurn == null || comparisonTurn == null) {
+      setTurnDiff(null);
+      return;
+    }
+    if (pinnedTurn === comparisonTurn) {
+      // Comparing a turn with itself is a valid request with a useless answer;
+      // saying so beats rendering a table of zeroes.
+      setTurnDiff(null);
+      return;
+    }
+    const request = ++turnDiffRequest.current;
+    const session = selected;
+    let cancelled = false;
+    setLoadingTurnDiff(true);
+    api
+      .getTurnDiff(session.agent, session.id, pinnedTurn, comparisonTurn)
+      .then((diff) => {
+        if (!cancelled && request === turnDiffRequest.current) setTurnDiff(diff);
+      })
+      .catch((loadError) => {
+        if (!cancelled && request === turnDiffRequest.current) setError(errorMessage(loadError));
+      })
+      .finally(() => {
+        if (!cancelled && request === turnDiffRequest.current) setLoadingTurnDiff(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, pinnedTurn, comparisonTurn]);
+
+  const togglePin = useCallback(() => {
+    setPinnedTurn((current) => (current == null ? (comparisonTurn ?? null) : null));
+  }, [comparisonTurn]);
+
   const visibleDetail = sameSession(detailFor, selected) ? detail : null;
 
   return (
@@ -1447,6 +1689,10 @@ export default function App() {
             compactionDiff={compactionDiff}
             compactionLoading={loadingCompaction}
             compactionLineNo={compactionLineNo}
+            turnDiff={turnDiff}
+            turnDiffLoading={loadingTurnDiff}
+            pinnedTurn={pinnedTurn}
+            onTogglePin={togglePin}
             demoData={demoData}
             onContributor={inspectContributor}
             onCloseLifecycle={closeLifecycle}
