@@ -330,6 +330,7 @@ redact by default applies to it unchanged.
 | [Architecture](docs/architecture.md) | Crate layout, the invariants the type system enforces, fixtures and testing |
 | [MVP status](docs/MVP-STATUS.md) | What's implemented, what's gated, and the release plan |
 | [Release procedure](docs/RELEASING.md) | How Windows release candidates are built, checked and optionally signed |
+| [Continuous integration](docs/CI.md) | What runs on Linux, what needs real Windows, and what a green pipeline still does not prove |
 
 ## Contributing
 
@@ -337,20 +338,39 @@ redact by default applies to it unchanged.
 is an unscheduled pool — nothing in it is planned until it is pulled into
 BACKLOG.md with a `CT-nnn` id.
 
-These are the gates CI enforces:
+These are the gates [CI](docs/CI.md) enforces. Most of them run on Linux, and
+need no Windows to reproduce:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
-cargo build --workspace --release
+cargo clippy --workspace --exclude ct-ui --all-targets -- -D warnings
+cargo test --workspace --exclude ct-ui --all-targets
+cargo +1.88.0 check --workspace --exclude ct-ui --all-targets
 
 cd crates/ct-ui
 npm ci
 npm test
 npm run build
-npm run tauri build -- --no-bundle
 ```
+
+The rest run only on Windows, because `ct-ui` links a real WebView2
+application and the smokes assert on Windows path handling and on the bytes
+the archive writes:
+
+```powershell
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+cargo build --release -p ct-cli
+cd crates/ct-ui; npm ci; npm run tauri build -- --no-bundle; cd ../..
+
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-cli.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-secrets.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-archive.ps1
+```
+
+The smokes arrange their own fixtures under isolated `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR` and `CONTEXTTRACE_ARCHIVE` roots, so running them cannot
+read or write your real sessions and archive.
 
 `npm run dev` by itself opens a browser preview backed by synthetic sessions;
 `npm run tauri dev` runs the native app against the real read-only local

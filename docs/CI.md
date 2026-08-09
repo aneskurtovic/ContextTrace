@@ -68,8 +68,8 @@ compile.
 
 ## 2. What this migration changed on purpose
 
-Two reductions and one addition, all deliberate. None of them is a silent
-consequence of moving hosts.
+One real reduction, one step that turned out to be redundant, and one addition.
+None of them is a silent consequence of moving hosts.
 
 **The MSRV lane moved to Linux and narrowed.** GitHub ran a full
 `stable` + `1.88.0` matrix of the whole workspace on Windows. The 1.88 lane is
@@ -78,12 +78,15 @@ regression is almost always a language or std-API regression, which any target
 catches; running it on Linux costs no time on the single Windows agent. **What
 this no longer catches: an MSRV regression reachable only through `ct-ui`.**
 
-**`cargo build --workspace --release` is no longer run as its own gate.** The
-Windows workflow still builds `ct-cli` in release — the smokes need the real
-binary — and the desktop step builds `ct-ui` through Tauri. What is no longer
-covered is a release-profile-only failure in a crate neither of those reaches.
-With `lto = "thin"` and `codegen-units = 1`, that build was the most expensive
-step in the pipeline and the least likely to fail alone.
+**`cargo build --workspace --release` is no longer run as its own step.** This
+one costs no coverage, which is worth showing rather than asserting. There are
+six workspace members. `cargo build --release -p ct-cli` compiles five of them —
+`ct-domain`, `ct-adapters`, `ct-application`, `ct-runtime`, `ct-cli`, as its own
+build log shows — because `ct-cli` is the composition root and depends on all
+four. The desktop step compiles the sixth, `ct-ui`, through Tauri. Every member
+is still built under the release profile, in the same pipeline. With
+`lto = "thin"` and `codegen-units = 1`, dropping the duplicate removed the most
+expensive step in the pipeline.
 
 **The smoke assertions became scripts, and got stricter.** See §4.
 
@@ -133,6 +136,14 @@ Three reasons they are files:
    project has measured**. Each script is therefore launched as its own
    `powershell -File` process, which has exactly one exit code. A check of this
    kind reporting a false green is worse than having no check.
+
+   Be precise about what that buys: it removes the dependency on the wrapper
+   handling *terminating errors*, and leaves the dependency on it honouring a
+   child's *exit code* — a far more ordinary thing for a shell wrapper to get
+   right, but still unmeasured here. Closing it needs the agent, and is the
+   first thing to do once one connects: add a step that runs a script which
+   throws, confirm the pipeline goes **red**, remove the step. Until that has
+   been done, "the smokes passed" means the smokes did not report a failure.
 2. **PowerShell inside YAML has already broken this repository.** Commit
    `4ff69ee` repaired a workflow whose `.\target\release\ct.exe` had been written
    through a heredoc that read `\t` and `\r` as control characters, in five

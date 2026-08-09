@@ -154,14 +154,17 @@ these can be honestly closed from here, and the item stays `next` because of
 them — not because anything above is outstanding.
 
 ### CT-077 · Move CI to the self-hosted Woodpecker instance
-`status: next` · `tier: A` · `size: M` · `source: infrastructure`
+`status: next` · `tier: A` · `size: M` · `source: infrastructure, CT-062`
 
 **Why:** all four CI jobs ran on GitHub's `windows-latest`, and three of them
 had no reason to. A self-hosted instance already exists at `ci.aneskurtovic.com`
 with a Linux agent, and this repository is registered on it as id 5.
 
 **Done when:** every gate `.github/workflows/ci.yml` enforced is enforced by
-`.woodpecker/`, on an agent that reports it, and that file is deleted.
+`.woodpecker/`, on an agent that reports it, and that file is deleted — and a
+step that deliberately fails has been shown to turn the pipeline red on that
+agent, so "the smokes passed" is known to mean more than "the smokes did not
+report a failure".
 
 **Landed.** Three workflows: `frontend.yaml` and `rust.yaml` on the shared Linux
 agent, `windows.yaml` on the owner's machine via the `local` backend. All three
@@ -176,6 +179,12 @@ in `Cargo.toml` — `clap` and `chrono` both carry `default-features = false`, f
 their own reasons, and between them removed the last platform-coupled crates.
 There is no `#[cfg(windows)]` in the tree at all. Only `ct-ui` stays
 Windows-only, because it links a real WebView2 application.
+
+**This closes what CT-062 deferred.** That entry corrected the toolchain comment
+to admit only Windows was verified, and explicitly deferred rather than dropped
+adding another host, on the grounds that it "would surface real failures on
+hosts nobody has compiled here". It surfaced none. The comment is now a
+statement about `ct-ui` and macOS rather than about the workspace.
 
 **One security assertion could not fail, and now the check says so.** Measured
 while porting: of the five credential values the smokes assert never survive a

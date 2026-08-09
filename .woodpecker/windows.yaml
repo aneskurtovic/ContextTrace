@@ -22,8 +22,21 @@
 # inside an embedded Windows path does to a CI file: `.\target\release\ct.exe`
 # became `.` TAB `arget` CR `elease\ct.exe`, and the YAML stopped parsing.
 
+# Narrower than the Linux workflows on purpose. A push to a branch with an open
+# PR fires both `push` and `pull_request`, and Woodpecker cancels superseded
+# pipelines within an event type, not across them. On GitHub that cost nothing:
+# two hosted runners, in parallel, free. Here both would land on one machine
+# running WOODPECKER_MAX_WORKFLOWS=1, so the full workspace clippy, the test
+# suite, npm ci, a Tauri build, a release CLI build and three smokes would run
+# twice back to back -- with VoxMux's Windows workflow queued behind all of it,
+# on the owner's actual desktop.
+#
+# So: every PR, and `main` after merge. A push to a topic branch with no PR open
+# is not covered here; open the PR, or trigger this workflow manually.
 when:
-  - event: [push, pull_request, manual]
+  - event: pull_request
+  - event: [push, manual]
+    branch: main
 
 labels:
   platform: windows/amd64
