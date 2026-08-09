@@ -245,6 +245,17 @@ else writes there. Delete that directory to force a cold build.
 **Expect the first Windows run to be slow** and to approach the repository's
 60-minute timeout. Subsequent runs reuse the cache.
 
+Measured on the shared Linux agent, pipeline 5/1, cold — no registry cache, no
+`target/`:
+
+| Workflow | Step | |
+|---|---|---|
+| `frontend` | clone / install / test / build | 3s / 5s / 13s / 1s |
+| `rust` | clone / format / clippy / test / msrv | 2s / 10s / 27s / 44s / 28s |
+
+137 seconds for the pipeline, the two workflows serialised because the agent
+runs one at a time. That is one cold run, not a bound.
+
 ---
 
 ## 6. The Windows agent

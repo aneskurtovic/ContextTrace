@@ -170,6 +170,14 @@ report a failure".
 agent, `windows.yaml` on the owner's machine via the `local` backend. All three
 lint clean under `woodpecker-cli v3.16.0`. See [docs/CI.md](docs/CI.md).
 
+**Green on the real box.** Pipeline 5/1 (push): all nine steps success in 137s
+cold — `frontend` 3/5/13/1s, `rust` 2/10/27/44/28s, the two workflows serialised
+because the agent runs one at a time. Pipeline 5/2 (the PR) reports `frontend`
+pass, `rust` pass, `windows` **pending with no agent**, which reproduces the
+predicted failure mode exactly: a missing Windows agent stalls the pipeline
+yellow rather than failing it red. `windows` is correctly absent from the push
+pipeline on a topic branch, so the narrowed trigger works too.
+
 **The tree was already portable, which nothing had checked.**
 `rust-toolchain.toml` carried a comment saying nothing had ever built this
 workspace off Windows. On `rust:1.97-bookworm` it formatted, linted, tested and
