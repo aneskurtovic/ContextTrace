@@ -153,6 +153,69 @@ signing certificate, which is a purchasing decision rather than a task. None of
 these can be honestly closed from here, and the item stays `next` because of
 them — not because anything above is outstanding.
 
+### CT-077 · Move CI to the self-hosted Woodpecker instance
+`status: next` · `tier: A` · `size: M` · `source: infrastructure`
+
+**Why:** all four CI jobs ran on GitHub's `windows-latest`, and three of them
+had no reason to. A self-hosted instance already exists at `ci.aneskurtovic.com`
+with a Linux agent, and this repository is registered on it as id 5.
+
+**Done when:** every gate `.github/workflows/ci.yml` enforced is enforced by
+`.woodpecker/`, on an agent that reports it, and that file is deleted.
+
+**Landed.** Three workflows: `frontend.yaml` and `rust.yaml` on the shared Linux
+agent, `windows.yaml` on the owner's machine via the `local` backend. All three
+lint clean under `woodpecker-cli v3.16.0`. See [docs/CI.md](docs/CI.md).
+
+**The tree was already portable, which nothing had checked.**
+`rust-toolchain.toml` carried a comment saying nothing had ever built this
+workspace off Windows. On `rust:1.97-bookworm` it formatted, linted, tested and
+passed its 1.88 MSRV check with no change whatsoever; on `node:22` the frontend
+ran all 75 tests and built. That is a consequence of a decision already recorded
+in `Cargo.toml` — `clap` and `chrono` both carry `default-features = false`, for
+their own reasons, and between them removed the last platform-coupled crates.
+There is no `#[cfg(windows)]` in the tree at all. Only `ct-ui` stays
+Windows-only, because it links a real WebView2 application.
+
+**One security assertion could not fail, and now the check says so.** Measured
+while porting: of the five credential values the smokes assert never survive a
+redacted export, four appear in an unredacted one and the private key does not —
+`ct export` omits `function_call_output` payloads, and that key exists only in
+one. `ct secrets` finds it and the archive strips it, but that one export
+assertion would have kept passing with redaction removed entirely. Inherited
+from the GitHub workflow rather than introduced here. Both smokes now take a
+positive control first and fail if it is empty, and the run log prints how many
+credentials were actually reachable.
+
+**The smokes are scripts now, not YAML.** `scripts/ci/*.ps1`, runnable by hand.
+Three reasons: they are the security assertions and a `local`-backend step body
+goes through a generated wrapper whose handling of a mid-script `throw` this
+project has not measured; commit 4ff69ee is the record of what embedded
+PowerShell does to a CI file when a heredoc eats its control characters; and the
+owner should be able to run the bytes CI runs. Verified on Windows — all three
+pass, a `throw` exits 1, and the leak assertion fires when handed a leaking
+export. Two real defects surfaced that way: three-segment `Join-Path` is
+PowerShell 6+ and the step shell is 5.1, and 5.1 makes redirected native stderr
+terminating under `$ErrorActionPreference = 'Stop'`.
+
+**The GitHub version assumed a pristine home directory.** It isolated
+`CODEX_HOME` for the credential fixture but left `CLAUDE_CONFIG_DIR` pointing at
+the real one — harmless on a hosted runner, wrong on the owner's machine, where
+hundreds of real sessions are discovered and can push the fixture off a bounded
+`ct sessions` page. Every script now isolates both homes and the archive root.
+
+**`release.yml` stays on GitHub Actions,** deliberately. It needs
+`contents: write`, `signtool.exe` and three signing secrets; moving it would
+trade a scoped ephemeral token for a long-lived PAT and route certificate
+material through a backend with no container isolation, to save a cost that is
+already zero.
+
+**Blocking the last step:** the Windows agent has never connected —
+`last_contact: 0`. Until it does, `windows.yaml` queues as pending and the
+pipeline stalls yellow rather than failing red. `ci.yml` must therefore stay
+until the agent reports `platform: windows/amd64`, or this repository would have
+no coverage at all for the desktop build, `ct-ui`'s Rust and the CLI smokes.
+
 ---
 
 ## Todo

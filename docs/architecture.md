@@ -100,9 +100,11 @@ model did not need.
 `cargo fmt --check` clean, `clippy` clean at zero warnings, the React
 production bundle and Tauri command bridge build, the release CLI answers
 `ct --help`, and `ct doctor --dir` recognises every event type across the
-current local corpus. The Windows CI workflow enforces these gates on stable
-and Rust 1.88. Work is queued in [BACKLOG.md](../BACKLOG.md), which is the
-authoritative list. [IDEAS.md](../IDEAS.md) is an idea pool and nothing in it
+current local corpus. Three [Woodpecker](CI.md) workflows enforce these gates:
+formatting, lint, tests and the 1.88 MSRV check run on Linux, and a Windows
+agent covers what only Windows proves — the Tauri desktop build, `ct-ui`'s own
+Rust, and the CLI fixture smokes. Work is queued in
+[BACKLOG.md](../BACKLOG.md), which is the authoritative list. [IDEAS.md](../IDEAS.md) is an idea pool and nothing in it
 is scheduled until it is pulled in there with a `CT-nnn` id.
 
 ## Fixtures

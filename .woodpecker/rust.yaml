@@ -1,0 +1,62 @@
+# Rust gates that do not need Windows.
+#
+# Until this file existed, nothing had ever compiled this workspace off Windows
+# -- `rust-toolchain.toml` said so in a comment. It turned out to build, lint,
+# test and pass its MSRV check on Linux unchanged, because the tree contains no
+# `#[cfg(windows)]` at all: the one mention in `ct-adapters/src/archive.rs` is a
+# comment explaining that the archive root is resolved *without* one.
+#
+# So these gates move off the single Windows agent, where they were competing
+# for one machine, and the Windows workflow keeps only what Windows alone can
+# prove. See docs/CI.md.
+#
+# `ct-ui` is excluded from every compiling step here: the Tauri crate needs
+# webkit2gtk/gtk3/libsoup on Linux, and chasing that would buy a second way to
+# build a desktop app that only ships for Windows. `cargo fmt` still covers it,
+# because formatting does not compile.
+
+when:
+  - event: [push, pull_request, manual]
+
+variables:
+  - &rust_image rust:1.97-bookworm
+  - &cargo_env
+    CARGO_TERM_COLOR: always
+    # Incremental output is never reused: the workspace is discarded after the
+    # pipeline. Writing it is pure cost.
+    CARGO_INCREMENTAL: "0"
+
+steps:
+  - name: format
+    image: *rust_image
+    environment: *cargo_env
+    commands:
+      # The official images ship the minimal profile, and `rust-toolchain.toml`
+      # asks for these two components by name.
+      - rustup component add rustfmt
+      # `--all`, with no `--exclude`: this is the one step that sees ct-ui.
+      - cargo fmt --all -- --check
+
+  - name: clippy
+    image: *rust_image
+    environment: *cargo_env
+    commands:
+      - rustup component add clippy
+      - cargo clippy --workspace --exclude ct-ui --all-targets -- -D warnings
+
+  - name: test
+    image: *rust_image
+    environment: *cargo_env
+    commands:
+      # Reuses the target directory clippy just populated, through the workspace
+      # the steps of one workflow share.
+      - cargo test --workspace --exclude ct-ui --all-targets
+
+  - name: msrv
+    image: *rust_image
+    environment: *cargo_env
+    commands:
+      # `rust-toolchain.toml` pins the channel to stable, so name the toolchain
+      # explicitly or this lane silently retests stable and proves nothing.
+      - rustup toolchain install 1.88.0 --profile minimal
+      - cargo +1.88.0 check --workspace --exclude ct-ui --all-targets

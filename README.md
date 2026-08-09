@@ -7,7 +7,7 @@ actually had in its context window, turn by turn — what was in it, where
 each piece came from, how large it was, and how it evolved during the
 session.
 
-[![CI](https://github.com/aneskurtovic/ContextTrace/actions/workflows/ci.yml/badge.svg)](https://github.com/aneskurtovic/ContextTrace/actions/workflows/ci.yml)
+[![status](https://ci.aneskurtovic.com/api/badges/5/status.svg)](https://ci.aneskurtovic.com/repos/5)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > **Status: 0.1 is not released.** The CLI is complete, and the desktop app
