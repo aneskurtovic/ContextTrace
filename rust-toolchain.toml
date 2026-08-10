@@ -2,8 +2,13 @@
 # Use the stable toolchain for the host platform: a host-neutral channel lets
 # rustup select the native target rather than pinning one. The previous
 # Windows-GNU pin stopped linking when the local LLVM-MinGW installation no
-# longer supplied GCC runtime libraries. Only Windows is verified: every job
-# in `.github/workflows/ci.yml` and `release.yml` runs on `windows-latest`,
-# and nothing has built this workspace on macOS or Linux.
+# longer supplied GCC runtime libraries.
+#
+# Linux is now verified for everything except `ct-ui`: `.woodpecker/rust.yaml`
+# formats, lints, tests and MSRV-checks the workspace there on every push. The
+# tree needed no change for that, because it contains no `#[cfg(windows)]`.
+# `ct-ui` is Windows-only in CI by choice, not by limitation -- it links a real
+# WebView2 application through Tauri, and this project ships only for Windows.
+# macOS remains unbuilt and untested. See docs/CI.md.
 channel = "stable"
 components = ["rustfmt", "clippy"]

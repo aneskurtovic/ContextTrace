@@ -1,0 +1,47 @@
+# The React/Vite half of the desktop app.
+#
+# This is the one job that was on `windows-latest` for no reason at all: it runs
+# `tsc`, `vitest` and `vite`, none of which touch a Windows API. Verified on
+# Linux before this file was committed -- 75 tests across 4 files, production
+# bundle built.
+#
+# The Tauri side of the desktop app is a different question and stays on the
+# Windows agent, because it links a real WebView2 application. See windows.yaml.
+
+# Without this stanza Woodpecker may schedule these steps onto the Windows
+# agent, which is the opposite of the point: this file exists precisely because
+# none of `tsc`, `vitest` or `vite` needs Windows. An absent labels stanza is a
+# wildcard, not a default.
+labels:
+  platform: linux/amd64
+  backend: docker
+
+when:
+  - event: [push, pull_request, manual]
+
+variables:
+  # package.json declares `engines.node: >=22.13.0`; the previous workflow
+  # pinned 22 in all three of its jobs.
+  - &node_image node:22-bookworm-slim
+
+steps:
+  - name: install
+    image: *node_image
+    directory: crates/ct-ui
+    commands:
+      # `npm ci`, never `npm install`: the lockfile is the point.
+      - npm ci
+
+  - name: test
+    image: *node_image
+    directory: crates/ct-ui
+    commands:
+      # node_modules survives from the previous step through the shared
+      # workspace, so this does not reinstall.
+      - npm test
+
+  - name: build
+    image: *node_image
+    directory: crates/ct-ui
+    commands:
+      - npm run build

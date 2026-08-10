@@ -1,0 +1,131 @@
+# What only real Windows can prove.
+#
+# Everything that compiles on Linux moved to rust.yaml and frontend.yaml. What
+# is left is the part that would be a lie anywhere else:
+#
+#   - the Tauri desktop app, which links a real WebView2 application;
+#   - clippy and the test suite over the *whole* workspace, ct-ui included;
+#   - the CLI fixture smokes, which assert on Windows path handling and on the
+#     bytes the archive writes under %LOCALAPPDATA% semantics.
+#
+# This workflow needs an agent advertising the labels below. Until one is
+# connected the workflow queues as pending and the pipeline never completes --
+# yellow, not red. A yellow pipeline is not a pass. See docs/CI.md.
+#
+# The `local` backend runs these commands directly on the host: same user, same
+# filesystem, no container. That is why no untrusted fork may trigger this
+# repository, and why the release pipeline -- which handles signing material --
+# deliberately stays on GitHub Actions.
+#
+# There is not one backslash in this file. PowerShell accepts forward slashes in
+# paths, and commit 4ff69ee is the record of what a stray control character
+# inside an embedded Windows path does to a CI file: `.\target\release\ct.exe`
+# became `.` TAB `arget` CR `elease\ct.exe`, and the YAML stopped parsing.
+
+# Narrower than the Linux workflows on purpose. A push to a branch with an open
+# PR fires both `push` and `pull_request`, and Woodpecker cancels superseded
+# pipelines within an event type, not across them. On GitHub that cost nothing:
+# two hosted runners, in parallel, free. Here both would land on one machine
+# running WOODPECKER_MAX_WORKFLOWS=1, so the full workspace clippy, the test
+# suite, npm ci, a Tauri build, a release CLI build and three smokes would run
+# twice back to back on the owner's actual desktop, delaying anything else
+# queued on that machine.
+#
+# So: every PR, and `main` after merge. A push to a topic branch with no PR open
+# is not covered here; open the PR, or trigger this workflow manually.
+when:
+  - event: pull_request
+  - event: [push, manual]
+    branch: main
+
+labels:
+  platform: windows/amd64
+  backend: local
+
+variables:
+  # On the local backend `image` names the shell, not a container.
+  - &shell powershell
+  - &windows_env
+    CARGO_TERM_COLOR: always
+    CARGO_INCREMENTAL: "0"
+    # Woodpecker's local backend discards the workspace after every pipeline, so
+    # an in-workspace target/ means a cold build of a Tauri-sized dependency
+    # graph on every push -- which on a personal machine is the difference
+    # between CI that gets used and CI that gets switched off. This is the
+    # dependency cache `Swatinem/rust-cache` provided on GitHub's runners.
+    #
+    # Incremental compilation stays off, so what carries over is fingerprinted
+    # build output, not incremental state a clean checkout would not reproduce.
+    # The agent runs one workflow at a time, so nothing else writes here.
+    CARGO_TARGET_DIR: C:/woodpecker-cache/contexttrace/target
+    npm_config_cache: C:/woodpecker-cache/contexttrace/npm
+
+steps:
+  - name: clippy
+    image: *shell
+    environment: *windows_env
+    commands:
+      # No --exclude: this is the only lint pass that sees the Tauri crate.
+      - cargo clippy --workspace --all-targets -- -D warnings
+
+  - name: test
+    image: *shell
+    environment: *windows_env
+    commands:
+      - cargo test --workspace --all-targets
+
+  # NO `directory:` in this file. The local backend ignores it -- silently.
+  # pipeline/backend/local/command.go hardcodes `cmd.Dir = state.workspaceDir`
+  # and never reads step.WorkingDir, so a `directory:` here is not a constraint,
+  # a warning, or an error: it simply has no effect, and the step runs at the
+  # workspace root. The Docker backend DOES honour it, which is why the same key
+  # works in frontend.yaml and dropped `npm ci` into the wrong directory here.
+  # Every path below is therefore relative to the repository root.
+  - name: frontend-dependencies
+    image: *shell
+    environment: *windows_env
+    commands:
+      - npm ci --prefix crates/ct-ui
+
+  - name: desktop
+    image: *shell
+    environment: *windows_env
+    commands:
+      # Bundling and signing belong to the release pipeline. This still runs
+      # Tauri's production frontend build and compiles the Windows desktop app.
+      # tauri resolves its config relative to the process directory, so this one
+      # genuinely has to change directory rather than pass a prefix.
+      - Set-Location crates/ct-ui; ./node_modules/.bin/tauri.cmd build --no-bundle
+
+  - name: cli-release
+    image: *shell
+    environment: *windows_env
+    commands:
+      - cargo build --release -p ct-cli
+
+  # Each smoke runs as its own `powershell -File` process on purpose.
+  #
+  # Dot-running the script instead would hand a mid-script `throw` back to the
+  # wrapper Woodpecker generates for a step, and whether that wrapper turns a
+  # terminating error into a failed step is not something this project has
+  # measured. A child process has one exit code and no ambiguity -- which
+  # matters here more than anywhere else in the pipeline, because these are the
+  # assertions that no credential survives a redacted export or reaches the
+  # archive. A check of that kind reporting a false green is worse than no check.
+  - name: smoke-cli
+    image: *shell
+    environment: *windows_env
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-cli.ps1
+
+  - name: smoke-secrets
+    image: *shell
+    environment: *windows_env
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-secrets.ps1
+
+  - name: smoke-archive
+    image: *shell
+    environment: *windows_env
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-archive.ps1
