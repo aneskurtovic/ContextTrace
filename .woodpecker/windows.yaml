@@ -28,8 +28,8 @@
 # two hosted runners, in parallel, free. Here both would land on one machine
 # running WOODPECKER_MAX_WORKFLOWS=1, so the full workspace clippy, the test
 # suite, npm ci, a Tauri build, a release CLI build and three smokes would run
-# twice back to back -- with VoxMux's Windows workflow queued behind all of it,
-# on the owner's actual desktop.
+# twice back to back on the owner's actual desktop, delaying anything else
+# queued on that machine.
 #
 # So: every PR, and `main` after merge. A push to a topic branch with no PR open
 # is not covered here; open the PR, or trigger this workflow manually.

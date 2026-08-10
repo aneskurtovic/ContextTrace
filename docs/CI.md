@@ -265,18 +265,26 @@ Until an agent advertising those labels connects, that workflow **queues as
 pending and the pipeline never completes — yellow, not red.** A yellow pipeline
 is not a pass.
 
-Registration is documented once, in VoxMux's `docs/CI.md` §3, because it is the
-same agent on the same machine. What ContextTrace adds to that machine's
-prerequisites:
+**Registering an agent is server-side setup and belongs to `infra`**, which owns
+the Woodpecker deployment. It is not documented here, because it is not a
+property of this project.
 
-- Node.js 22.13+ and npm (`package.json` declares the floor)
-- the Tauri prerequisites for a Windows desktop build: MSVC build tools and the
-  WebView2 runtime
-- `rustup` with `clippy` and `rustfmt`, and the `1.88.0` toolchain only if you
-  want to reproduce the MSRV lane locally
+What *is* this project's business is what it needs from whatever agent answers
+those labels:
 
-Both repositories share one agent running `WOODPECKER_MAX_WORKFLOWS=1`, so their
-Windows workflows queue behind each other.
+- `rustup` with the MSVC toolchain, `clippy` and `rustfmt`
+- Visual Studio Build Tools — the agent must see MSVC's `link.exe`
+- Node.js 22.13+ and npm; `package.json` declares the floor
+- the WebView2 runtime, for the Tauri desktop build
+- the `1.88.0` toolchain only to reproduce the MSRV lane locally; CI runs that
+  lane on Linux
+
+The agent runs one workflow at a time (`WOODPECKER_MAX_WORKFLOWS=1`), so
+anything else queued on that machine delays this pipeline.
+
+Start the agent from a **Developer PowerShell**, or otherwise ensure MSVC's
+environment variables are present in the agent process — steps inherit the
+agent's own environment, and a plain shell fails at link time.
 
 ### Badge
 
