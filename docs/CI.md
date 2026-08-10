@@ -265,6 +265,14 @@ Until an agent advertising those labels connects, that workflow **queues as
 pending and the pipeline never completes — yellow, not red.** A yellow pipeline
 is not a pass.
 
+**Every workflow here declares its labels, including the Linux ones.** An absent
+`labels:` stanza is a wildcard, not a default: Woodpecker will schedule such a
+workflow onto any agent with capacity. While one agent existed that was
+indistinguishable from correct, and the moment a second registered it became a
+coin flip — a Linux workflow was scheduled onto `windows/amd64` and failed
+there. `image: rust:1.97-bookworm` constrains nothing the scheduler reads,
+because on the `local` backend `image:` names a *shell*, not a container.
+
 **Registering an agent is server-side setup and belongs to `infra`**, which owns
 the Woodpecker deployment. It is not documented here, because it is not a
 property of this project.
@@ -282,9 +290,38 @@ those labels:
 The agent runs one workflow at a time (`WOODPECKER_MAX_WORKFLOWS=1`), so
 anything else queued on that machine delays this pipeline.
 
-Start the agent from a **Developer PowerShell**, or otherwise ensure MSVC's
-environment variables are present in the agent process — steps inherit the
-agent's own environment, and a plain shell fails at link time.
+Steps inherit the agent process's own environment, because the `local` backend
+runs them as its children. What that environment must contain is `infra`'s
+problem; what this section records is what was **measured** on a real agent,
+because each item cost a red pipeline to find.
+
+### What the `local` backend does that the Docker backend does not
+
+Four behaviours, all confirmed against `v3.16.0` source and reproduced here.
+They are documented because every one of them is silent: none produces a
+warning, and two produce a *passing* pipeline that proves nothing.
+
+| Behaviour | Consequence here |
+|---|---|
+| **`directory:` is ignored.** `pipeline/backend/local/command.go` hardcodes `cmd.Dir = state.workspaceDir` and never reads `step.WorkingDir` | `npm ci` ran at the repository root and failed on a `package-lock.json` that is committed and present. The Docker backend *does* honour the key, so the identical line in `frontend.yaml` works. Use `--prefix`, or `Set-Location` in the command |
+| **`HOME`/`USERPROFILE` are redirected** to a throwaway `<workspace>\home` (`local.go` sets both) | rustup resolves its state from those, so each step gets a blank profile. This repository has a `rust-toolchain.toml`, so instead of failing it would silently **re-download an entire toolchain on every pipeline** — visible only as "CI is slow". The agent pins `RUSTUP_HOME`/`CARGO_HOME` |
+| **A PowerShell step's intermediate failures are lost.** POSIX steps get `sh -e -c` and `cmd` steps get an errorlevel check after each command; the PowerShell branch gets neither, and `$ErrorActionPreference = "Stop"` does not cover native exit codes in Windows PowerShell 5.1 | Only the **last** command decides the step. Every step in `windows.yaml` is therefore a single command. If you add a multi-command PowerShell step, end each with `; if ($LASTEXITCODE) { exit $LASTEXITCODE }` |
+| **`CI=woodpecker`**, where hosted CI sets `CI=true` | Tauri's CLI binds `--ci` to that variable and parses it as a strict boolean, so the desktop build failed with `invalid value 'woodpecker' for '--ci'` before it started. `windows.yaml` normalises `CI: "true"` for the whole workflow |
+
+### A Developer PowerShell is not required for this repository
+
+Measured, not assumed: the entire `windows.yaml` step list — including the Tauri
+build, which links a real WebView2 application — passes from a **plain**
+PowerShell. `rustc` and `cc-rs` locate MSVC through the Windows **registry**
+(`find-msvc-tools`), not through the `INCLUDE`/`LIB` variables that
+`vcvarsall.bat` sets.
+
+That is a property of this workspace, not of Windows CI generally: a project
+whose build runs `bindgen` needs `INCLUDE`, because `libclang` has no registry
+fallback for system headers. The shared agent therefore imports the MSVC
+environment anyway. This section records only that **ContextTrace does not
+depend on it** — which is what makes running the agent as a background service,
+where no Developer PowerShell exists, safe for this repository.
 
 ### Badge
 
