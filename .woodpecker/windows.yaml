@@ -46,6 +46,18 @@ variables:
   # On the local backend `image` names the shell, not a container.
   - &shell powershell
   - &windows_env
+    # Woodpecker sets CI=woodpecker; GitHub Actions set CI=true. Tauri's CLI
+    # binds a `--ci` flag to this variable and parses it as a strict boolean, so
+    # `woodpecker` is rejected outright:
+    #
+    #   error: invalid value 'woodpecker' for '--ci'
+    #     [possible values: true, false]
+    #
+    # The message names the flag, not the variable that set it, which makes this
+    # a genuinely confusing migration failure. Any tool with a strict-bool flag
+    # bound to CI has the same problem, so normalise it for the whole workflow
+    # rather than for the one step that happened to trip over it.
+    CI: "true"
     CARGO_TERM_COLOR: always
     CARGO_INCREMENTAL: "0"
     # Woodpecker's local backend discards the workspace after every pipeline, so
