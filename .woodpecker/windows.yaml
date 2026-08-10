@@ -74,21 +74,28 @@ steps:
     commands:
       - cargo test --workspace --all-targets
 
+  # NO `directory:` in this file. The local backend ignores it -- silently.
+  # pipeline/backend/local/command.go hardcodes `cmd.Dir = state.workspaceDir`
+  # and never reads step.WorkingDir, so a `directory:` here is not a constraint,
+  # a warning, or an error: it simply has no effect, and the step runs at the
+  # workspace root. The Docker backend DOES honour it, which is why the same key
+  # works in frontend.yaml and dropped `npm ci` into the wrong directory here.
+  # Every path below is therefore relative to the repository root.
   - name: frontend-dependencies
     image: *shell
     environment: *windows_env
-    directory: crates/ct-ui
     commands:
-      - npm ci
+      - npm ci --prefix crates/ct-ui
 
   - name: desktop
     image: *shell
     environment: *windows_env
-    directory: crates/ct-ui
     commands:
       # Bundling and signing belong to the release pipeline. This still runs
       # Tauri's production frontend build and compiles the Windows desktop app.
-      - ./node_modules/.bin/tauri.cmd build --no-bundle
+      # tauri resolves its config relative to the process directory, so this one
+      # genuinely has to change directory rather than pass a prefix.
+      - Set-Location crates/ct-ui; ./node_modules/.bin/tauri.cmd build --no-bundle
 
   - name: cli-release
     image: *shell

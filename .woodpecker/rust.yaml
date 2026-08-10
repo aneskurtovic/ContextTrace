@@ -15,6 +15,16 @@
 # build a desktop app that only ships for Windows. `cargo fmt` still covers it,
 # because formatting does not compile.
 
+# An ABSENT labels stanza is a wildcard, not a default -- Woodpecker will place
+# the workflow on whichever agent has capacity. That is indistinguishable from
+# correct while only one agent exists, and becomes a coin flip as soon as a
+# second one registers. The `rust:1.97-bookworm` image below does not pin this
+# to Linux either: on the `local` backend `image:` names a shell, not a
+# container. Say what this workflow actually requires.
+labels:
+  platform: linux/amd64
+  backend: docker
+
 when:
   - event: [push, pull_request, manual]
 

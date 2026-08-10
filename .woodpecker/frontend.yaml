@@ -8,6 +8,14 @@
 # The Tauri side of the desktop app is a different question and stays on the
 # Windows agent, because it links a real WebView2 application. See windows.yaml.
 
+# Without this stanza Woodpecker may schedule these steps onto the Windows
+# agent, which is the opposite of the point: this file exists precisely because
+# none of `tsc`, `vitest` or `vite` needs Windows. An absent labels stanza is a
+# wildcard, not a default.
+labels:
+  platform: linux/amd64
+  backend: docker
+
 when:
   - event: [push, pull_request, manual]
 
