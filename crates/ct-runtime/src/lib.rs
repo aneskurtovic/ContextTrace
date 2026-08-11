@@ -6,9 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
+pub use ct_adapters::FileArchiveStore;
 use ct_adapters::{
-    ClaudeCodeAdapter, CodexAdapter, FileArchiveStore, FileRawEventSource, HeuristicEstimator,
-    TiktokenEstimator,
+    ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, TiktokenEstimator,
 };
 use ct_application::{AgentBinding, ContextTrace};
 use ct_domain::ports::TokenEstimator;

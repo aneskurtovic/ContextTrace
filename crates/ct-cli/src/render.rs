@@ -6,8 +6,9 @@ use crate::format::{
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    AppError, Comparability, ContextTrace, Departure, Diagnostics, DriftReport, ExportRedaction,
-    GrowthTimeline, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport, SessionDiff,
+    AppError, Comparability, ContextTrace, CostComparison, CostReport, Departure, Diagnostics,
+    DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift, ItemLifecycle,
+    ResidualPoint, ResolvedSession, SecretScanReport, SessionDiff, SessionFamily,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -98,6 +99,217 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
         "\n{} session(s). Inspect one with: ct inspect <id>",
         list.len()
     );
+}
+
+/// Show the recorded root/subagent structure without inferring edges from
+/// timestamps or filenames. An orphaned branch is printed as such.
+pub fn families(list: &[SessionFamily], json: bool) {
+    if json {
+        print_json(list);
+        return;
+    }
+    if list.is_empty() {
+        println!("No session families found.");
+        return;
+    }
+    for family in list {
+        match &family.root {
+            Some(root) => println!(
+                "Family {}  {} {}",
+                family.root_id,
+                root.agent,
+                root.project.as_deref().unwrap_or("(project unknown)")
+            ),
+            None => println!("Family {}  (root log not present)", family.root_id),
+        }
+        if family.branches.is_empty() {
+            println!("  (no recorded branches)");
+        } else {
+            for branch in &family.branches {
+                println!("  -> {}  {}  {}", branch.id, branch.agent, branch.path);
+            }
+        }
+        println!();
+    }
+}
+
+pub fn cost(report: &CostReport, resolved: &ResolvedSession, json: bool) {
+    if json {
+        print_json(&serde_json::json!({"report": report, "source": session_source_json(resolved)}));
+        return;
+    }
+    println!("Estimated cost for {}", report.session_id);
+    println!(
+        "Pricing   {} ({})",
+        report.pricing_version, report.pricing_source
+    );
+    println!("Warning   {}", report.warning);
+    println!("Source    {}", session_source_label(resolved));
+    println!(
+        "Total     ${:.6} [estimated]",
+        report.total.0 as f64 / 1_000_000.0
+    );
+    println!();
+    for category in &report.categories {
+        println!(
+            "  {:<12} {:>12} tokens  ${:.6} [{}]",
+            category.name,
+            category.tokens.to_string(),
+            category.cost.0 as f64 / 1_000_000.0,
+            category.confidence
+        );
+    }
+    if !report.unpriced.is_empty() {
+        println!("\nUnpriced turns (not treated as free):");
+        for turn in &report.unpriced {
+            println!(
+                "  turn {}  {}  ({})",
+                turn.turn,
+                turn.model.as_deref().unwrap_or("model unknown"),
+                turn.reason
+            );
+        }
+    }
+}
+
+pub fn cost_comparison(report: &CostComparison, resolved: &ResolvedSession, json: bool) {
+    if json {
+        print_json(&serde_json::json!({
+            "comparison": report,
+            "source": session_source_json(resolved)
+        }));
+        return;
+    }
+    println!("Cost what-if for {}", report.baseline.session_id);
+    println!("Source    {}", session_source_label(resolved));
+    println!(
+        "Baseline  ${:.6}",
+        report.baseline.total.0 as f64 / 1_000_000.0
+    );
+    println!(
+        "Scenario  ${:.6}",
+        report.hypothetical.total.0 as f64 / 1_000_000.0
+    );
+    println!(
+        "Savings   ${:.6} [estimated]",
+        report.savings.0 as f64 / 1_000_000.0
+    );
+    println!("\nAssumptions:");
+    for assumption in &report.assumptions {
+        println!("  - {assumption}");
+    }
+}
+
+pub fn fidelity(report: &FidelityTrend, json: bool) {
+    if json {
+        print_json(report);
+        return;
+    }
+    println!("Fidelity trend for {}", report.session_id);
+    println!("  TURN  EVENTS  UNKNOWN  FIDELITY");
+    for point in &report.points {
+        println!(
+            "  {:>4}  {:>6}  {:>7}  {:>7.1}%",
+            point.turn,
+            point.events,
+            point.unrecognised_events,
+            point.fidelity * 100.0
+        );
+    }
+    if report.unassigned_events > 0 {
+        println!(
+            "\nUnassigned events: {} ({} unrecognised)",
+            report.unassigned_events, report.unassigned_unrecognised
+        );
+    }
+    println!(
+        "\n{}",
+        if report.is_clean() {
+            "All assigned events are recognised."
+        } else {
+            "Unknown event shapes are concentrated above; inspect with `ct inspect --raw`."
+        }
+    );
+}
+
+pub fn instructions(report: &InstructionDrift, resolved: &ResolvedSession, json: bool) {
+    if json {
+        print_json(&serde_json::json!({
+            "report": report,
+            "source": session_source_json(resolved)
+        }));
+        return;
+    }
+    println!("Instruction signatures for {}", report.session_id);
+    println!("Source    {}", session_source_label(resolved));
+    println!(
+        "Content   not compared; only recorded mechanism, label and character length are shown"
+    );
+    println!(
+        "Base      {}",
+        if report.base_instructions_observed {
+            "observed"
+        } else {
+            "not observed"
+        }
+    );
+    if report.observations.is_empty() {
+        println!("\nNo instruction injections were recorded.");
+    } else {
+        println!("\n  TURN  MECHANISM                 LABEL                         CHARS");
+        for observation in &report.observations {
+            println!(
+                "  {:>4}  {:<25} {:<29} {:>5}",
+                observation
+                    .turn
+                    .map(|turn| turn.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                observation.mechanism,
+                ellipsize(&observation.label, 29),
+                observation.char_len
+            );
+        }
+    }
+    if report.changes.is_empty() {
+        println!("\nNo observed instruction-signature changes.");
+    } else {
+        println!("\nObserved changes:");
+        for change in &report.changes {
+            println!(
+                "  {}: {} → {} ({} → {} chars)",
+                change.mechanism,
+                ellipsize(&change.from_label, 28),
+                ellipsize(&change.to_label, 28),
+                change.from_char_len,
+                change.to_char_len
+            );
+        }
+    }
+}
+
+fn session_source_label(resolved: &ResolvedSession) -> String {
+    match &resolved.source {
+        ct_application::SessionSource::Live => "live log".into(),
+        ct_application::SessionSource::Archive(entry) => format!(
+            "archive copy taken {} ({}, differs_from_source={})",
+            entry.archived_at.to_rfc3339(),
+            entry.redaction.label(),
+            entry.differs_from_source()
+        ),
+    }
+}
+
+fn session_source_json(resolved: &ResolvedSession) -> serde_json::Value {
+    match &resolved.source {
+        ct_application::SessionSource::Live => serde_json::json!({"kind": "live-log"}),
+        ct_application::SessionSource::Archive(entry) => serde_json::json!({
+            "kind": "archive",
+            "archivedAt": entry.archived_at,
+            "redaction": entry.redaction,
+            "differsFromSource": entry.differs_from_source(),
+            "sourcePath": entry.descriptor.path
+        }),
+    }
 }
 
 pub fn inspect(

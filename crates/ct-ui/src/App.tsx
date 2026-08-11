@@ -888,6 +888,24 @@ function ContextComposition({ context }: { context: ContextDetail }) {
           <p className="empty-inline">No context categories were reported for this turn.</p>
         )}
       </div>
+      {categories.length > 0 && (
+        <div className="context-treemap" aria-label="Context category treemap">
+          {categories.map((category) => (
+            <div
+              className={`context-treemap-cell category-${category.category}`}
+              key={`map-${category.category}`}
+              style={{
+                gridColumn: `span ${Math.max(1, Math.round(category.share * 12))}`,
+                minHeight: `${Math.max(42, Math.round(42 + category.share * 72))}px`,
+              }}
+              title={`${category.label}: ${formatTokens(category.tokens)} tokens (${formatPercent(category.share)})`}
+            >
+              <strong>{category.label}</strong>
+              <span>{formatTokens(category.tokens)} · {formatPercent(category.share)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <p className="callout">
         <span aria-hidden="true">i</span>
         Confidence labels: observed = logged, derived = reconstructed, estimated = modelled.
@@ -1834,6 +1852,12 @@ function SessionWorkspace({
             <span>{shortId(detail.session.id)}</span>
             {detail.session.threadRole.kind === "subagent" && (
               <span>subagent of {shortId(detail.session.threadRole.parent)}</span>
+            )}
+            {detail.source?.kind === "archive" && (
+              <span>
+                archive copy
+                {detail.source.differsFromSource ? " · redacted" : ""}
+              </span>
             )}
           </div>
         </div>

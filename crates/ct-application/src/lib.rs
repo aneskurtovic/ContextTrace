@@ -8,13 +8,19 @@
 //! that does not exist yet.
 
 pub mod archive;
+pub mod cost;
 pub mod diagnostics;
 pub mod diff;
 pub mod export;
+pub mod family;
+pub mod fidelity;
 pub mod growth;
+pub mod instructions;
 pub mod lifecycle;
 pub mod secrets;
 
+use ct_domain::model::archive::ArchiveEntry;
+use ct_domain::ports::ArchiveStore;
 use ct_domain::ports::{AgentAdapter, ExactRecount, PortError, RawEventSource, TokenEstimator};
 use ct_domain::services::ratio::{self, DerivedRatio, TurnSample};
 use ct_domain::services::TokenCalibrator;
@@ -22,17 +28,27 @@ use ct_domain::{
     AgentKind, AgentSession, CompactionDiff, ContextSnapshot, SessionDescriptor, SessionId,
     TokenCount, TurnNumber,
 };
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt;
 
 pub use archive::{default_transform, RedactingTransform, VerbatimTransform};
+pub use cost::{
+    compare as compare_cost, project as project_cost, CostComparison, CostReport, CostScenario,
+    PricingCatalog,
+};
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
 pub use diff::{
     compare, CategoryDelta, Comparability, Instrument, SessionDiff, Side, SideSummary, ToolDelta,
 };
 pub use export::{ExportRecord, SCHEMA_VERSION};
+pub use family::{families, SessionFamily};
+pub use fidelity::{trend as fidelity_trend, FidelityPoint, FidelityTrend};
 pub use growth::{timeline, Bucket, CompactionAt, GrowthPoint, GrowthTimeline, Jump};
+pub use instructions::{
+    inspect as instruction_drift, InstructionChange, InstructionDrift, InstructionObservation,
+};
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use secrets::{ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport};
 
@@ -114,9 +130,17 @@ pub struct SessionFilter {
 }
 
 /// A session plus the index of the binding that can read it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[allow(clippy::large_enum_variant)]
+pub enum SessionSource {
+    Live,
+    Archive(ArchiveEntry),
+}
+
 pub struct ResolvedSession {
     pub descriptor: SessionDescriptor,
     pub binding: usize,
+    pub source: SessionSource,
 }
 
 /// The application service. One instance wires every supported agent.
@@ -160,6 +184,46 @@ impl ContextTrace {
             out.truncate(limit);
         }
         out
+    }
+
+    /// List live sessions and add archived copies whose live logs are gone.
+    /// A live descriptor wins on the `(agent, id)` identity, so the archive
+    /// cannot make an older copy shadow an authoritative current log.
+    pub fn list_sessions_with_archive(
+        &self,
+        filter: &SessionFilter,
+        store: &dyn ArchiveStore,
+    ) -> Result<Vec<SessionDescriptor>, AppError> {
+        let mut out = self.list_sessions(filter);
+        let live: std::collections::BTreeSet<(AgentKind, String)> = out
+            .iter()
+            .map(|descriptor| (descriptor.agent, descriptor.id.to_string()))
+            .collect();
+
+        for entry in store.entries()? {
+            let key = (entry.agent(), entry.id().to_string());
+            if live.contains(&key)
+                || filter
+                    .agent
+                    .is_some_and(|wanted| wanted != entry.descriptor.agent)
+                || !matches_filter(&entry.descriptor, filter)
+            {
+                continue;
+            }
+            let Some(path) = store.path(entry.agent(), entry.id().as_str())? else {
+                continue;
+            };
+            let mut descriptor = entry.descriptor;
+            descriptor.path = path;
+            descriptor.size_bytes = entry.archived_bytes;
+            out.push(descriptor);
+        }
+
+        out.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+        if let Some(limit) = filter.limit {
+            out.truncate(limit);
+        }
+        Ok(out)
     }
 
     /// Find one session by id or unambiguous id prefix.
@@ -209,12 +273,14 @@ impl ContextTrace {
                     return Ok(ResolvedSession {
                         descriptor,
                         binding: index,
+                        source: SessionSource::Live,
                     });
                 }
                 if descriptor.id.matches_prefix(id_or_prefix) {
                     matches.push(ResolvedSession {
                         descriptor,
                         binding: index,
+                        source: SessionSource::Live,
                     });
                 }
             }
@@ -234,9 +300,116 @@ impl ContextTrace {
         }
     }
 
+    /// Resolve a live session first, then fall back to the archive only when
+    /// no live log answers.  An ambiguous or otherwise broken live lookup is
+    /// never hidden by an archived copy: the live corpus remains authoritative
+    /// whenever it is present.
+    pub fn resolve_with_archive(
+        &self,
+        id_or_prefix: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<ResolvedSession, AppError> {
+        match self.resolve(id_or_prefix) {
+            Ok(resolved) => Ok(resolved),
+            Err(AppError::SessionNotFound(_)) => self.resolve_archived(None, id_or_prefix, store),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Agent-scoped counterpart used by the desktop, where a catalog row
+    /// carries both halves of a session's identity.
+    pub fn resolve_in_agent_with_archive(
+        &self,
+        agent: AgentKind,
+        id_or_prefix: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<ResolvedSession, AppError> {
+        match self.resolve_in_agent(agent, id_or_prefix) {
+            Ok(resolved) => Ok(resolved),
+            Err(AppError::SessionNotFound(_)) => {
+                self.resolve_archived(Some(agent), id_or_prefix, store)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn resolve_archived(
+        &self,
+        agent: Option<AgentKind>,
+        id_or_prefix: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<ResolvedSession, AppError> {
+        let entries = store.entries()?;
+        let mut matches = Vec::new();
+        for entry in entries {
+            if agent.is_some_and(|wanted| entry.agent() != wanted) {
+                continue;
+            }
+            if entry.id().as_str() == id_or_prefix {
+                return self.archived_resolution(entry, store);
+            }
+            if entry.id().matches_prefix(id_or_prefix) {
+                matches.push(entry);
+            }
+        }
+
+        match matches.len() {
+            0 => Err(AppError::SessionNotFound(id_or_prefix.to_string())),
+            1 => self.archived_resolution(matches.remove(0), store),
+            _ => Err(AppError::AmbiguousSession {
+                prefix: id_or_prefix.to_string(),
+                matches: matches.iter().take(5).map(|e| e.id().to_string()).collect(),
+            }),
+        }
+    }
+
+    fn archived_resolution(
+        &self,
+        entry: ArchiveEntry,
+        store: &dyn ArchiveStore,
+    ) -> Result<ResolvedSession, AppError> {
+        let path = store
+            .path(entry.agent(), entry.id().as_str())?
+            .ok_or_else(|| {
+                AppError::Port(PortError::NotFound(format!(
+                    "archived {} session {} record",
+                    entry.agent(),
+                    entry.id()
+                )))
+            })?;
+        let binding = self
+            .bindings
+            .iter()
+            .position(|binding| binding.adapter.agent() == entry.agent())
+            .ok_or_else(|| {
+                AppError::Port(PortError::Unsupported(format!(
+                    "reading archived sessions for {}",
+                    entry.agent()
+                )))
+            })?;
+        let mut descriptor = entry.descriptor.clone();
+        descriptor.path = path;
+        descriptor.size_bytes = entry.archived_bytes;
+        Ok(ResolvedSession {
+            descriptor,
+            binding,
+            source: SessionSource::Archive(entry),
+        })
+    }
+
     /// Resolve and fully parse a session.
     pub fn load(&self, id_or_prefix: &str) -> Result<(AgentSession, ResolvedSession), AppError> {
         self.parse(self.resolve(id_or_prefix)?)
+    }
+
+    /// Load from the live corpus, or from the archive when the live log is
+    /// gone.  The returned resolution records which source answered.
+    pub fn load_with_archive(
+        &self,
+        id_or_prefix: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        self.parse(self.resolve_with_archive(id_or_prefix, store)?)
     }
 
     /// Resolve and fully parse a session known to belong to one agent.
@@ -246,6 +419,15 @@ impl ContextTrace {
         id_or_prefix: &str,
     ) -> Result<(AgentSession, ResolvedSession), AppError> {
         self.parse(self.resolve_in_agent(agent, id_or_prefix)?)
+    }
+
+    pub fn load_in_agent_with_archive(
+        &self,
+        agent: AgentKind,
+        id_or_prefix: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        self.parse(self.resolve_in_agent_with_archive(agent, id_or_prefix, store)?)
     }
 
     /// Resolve and parse a session for analyses that compare or compress item
@@ -261,6 +443,14 @@ impl ContextTrace {
         self.parse_with_content_analysis(self.resolve(id_or_prefix)?)
     }
 
+    pub fn load_with_content_analysis_and_archive(
+        &self,
+        id_or_prefix: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        self.parse_with_content_analysis(self.resolve_with_archive(id_or_prefix, store)?)
+    }
+
     /// The content-analysis load, scoped to one agent.
     pub fn load_with_content_analysis_in_agent(
         &self,
@@ -268,6 +458,19 @@ impl ContextTrace {
         id_or_prefix: &str,
     ) -> Result<(AgentSession, ResolvedSession), AppError> {
         self.parse_with_content_analysis(self.resolve_in_agent(agent, id_or_prefix)?)
+    }
+
+    pub fn load_with_content_analysis_in_agent_with_archive(
+        &self,
+        agent: AgentKind,
+        id_or_prefix: &str,
+        store: &dyn ArchiveStore,
+    ) -> Result<(AgentSession, ResolvedSession), AppError> {
+        self.parse_with_content_analysis(self.resolve_in_agent_with_archive(
+            agent,
+            id_or_prefix,
+            store,
+        )?)
     }
 
     fn parse(

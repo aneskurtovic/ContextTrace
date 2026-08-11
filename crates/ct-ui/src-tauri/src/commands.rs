@@ -1,7 +1,7 @@
 use ct_application::{
     residual_steps, timeline, AppError, Comparability, ContextTrace, Departure, ExportRedaction,
-    LifecycleSweep, ResidualPoint, SessionDiff, SessionFilter, RESIDUAL_STEP_THRESHOLD,
-    STEP_ATTRIBUTION_WINDOW,
+    LifecycleSweep, ResidualPoint, SessionDiff, SessionFilter, SessionSource,
+    RESIDUAL_STEP_THRESHOLD, STEP_ATTRIBUTION_WINDOW,
 };
 use ct_domain::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use ct_domain::model::context::unmeasured_content_items;
@@ -115,6 +115,10 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> BoundedCache<K, V> {
 pub struct AppState {
     app: ContextTrace,
     warnings: Vec<String>,
+    /// Production owns the shared archive; fixture/test construction leaves
+    /// this disabled so a developer's real archive cannot contaminate tests or
+    /// synthetic catalogs.
+    archive: Option<ct_runtime::FileArchiveStore>,
     sessions: Mutex<BoundedCache<SessionKey, Arc<CachedSession>>>,
     lifecycles: Mutex<BoundedCache<SessionKey, Arc<LifecycleSweep>>>,
 }
@@ -123,6 +127,7 @@ struct CachedSession {
     session: ct_domain::AgentSession,
     descriptor: SessionDescriptor,
     binding: usize,
+    source: SessionSource,
     /// The full derived ratio, not just its chars-per-token figure.
     ///
     /// `derive_ratio` reconstructs every turn of the session through a
@@ -147,13 +152,27 @@ impl CachedSession {
 impl AppState {
     pub fn new() -> Self {
         let runtime = ct_runtime::build();
-        Self::from_parts(runtime.app, runtime.warnings)
+        Self::from_parts_with_archive(
+            runtime.app,
+            runtime.warnings,
+            Some(ct_runtime::archive_store()),
+        )
     }
 
+    #[cfg(test)]
     fn from_parts(app: ContextTrace, warnings: Vec<String>) -> Self {
+        Self::from_parts_with_archive(app, warnings, None)
+    }
+
+    fn from_parts_with_archive(
+        app: ContextTrace,
+        warnings: Vec<String>,
+        archive: Option<ct_runtime::FileArchiveStore>,
+    ) -> Self {
         Self {
             app,
             warnings,
+            archive,
             sessions: Mutex::new(BoundedCache::new(SESSION_CACHE_CAPACITY)),
             lifecycles: Mutex::new(BoundedCache::new(LIFECYCLE_CACHE_CAPACITY)),
         }
@@ -203,18 +222,22 @@ impl AppState {
             return Ok(existing);
         }
 
-        let (session, resolved) = if analyzed {
-            self.app.load_with_content_analysis_in_agent(agent, id)
-        } else {
-            self.app.load_in_agent(agent, id)
-        }
-        .map_err(|error| error.to_string())?;
+        let loaded = match (&self.archive, analyzed) {
+            (Some(archive), true) => self
+                .app
+                .load_with_content_analysis_in_agent_with_archive(agent, id, archive),
+            (Some(archive), false) => self.app.load_in_agent_with_archive(agent, id, archive),
+            (None, true) => self.app.load_with_content_analysis_in_agent(agent, id),
+            (None, false) => self.app.load_in_agent(agent, id),
+        };
+        let (session, resolved) = loaded.map_err(|error| error.to_string())?;
         debug_assert_eq!(resolved.descriptor.agent, agent);
         let (_, ratio) = ct_runtime::calibrate_session(&self.app, &session, resolved.binding);
         let cached = Arc::new(CachedSession {
             session,
             descriptor: resolved.descriptor,
             binding: resolved.binding,
+            source: resolved.source,
             ratio,
             content_analyzed: analyzed,
         });
@@ -298,9 +321,14 @@ impl AppState {
         let query = query
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let mut sessions: Vec<SessionSummary> = self
-            .app
-            .list_sessions(&filter)
+        let descriptors = match &self.archive {
+            Some(archive) => self
+                .app
+                .list_sessions_with_archive(&filter, archive)
+                .map_err(|error| error.to_string())?,
+            None => self.app.list_sessions(&filter),
+        };
+        let mut sessions: Vec<SessionSummary> = descriptors
             .into_iter()
             .filter(|descriptor| session_matches_query(descriptor, query.as_deref()))
             .map(SessionSummary::from)
@@ -360,6 +388,7 @@ impl AppState {
                     }),
                 })
                 .collect(),
+            source: Some(SessionSourceSummary::from(&cached.source)),
         })
     }
 
@@ -1471,6 +1500,35 @@ pub struct SessionDetail {
     unrecognised_events: u32,
     unplaced_compactions: usize,
     growth: Vec<GrowthPointSummary>,
+    source: Option<SessionSourceSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionSourceSummary {
+    kind: &'static str,
+    archived_at: Option<String>,
+    redaction: Option<String>,
+    differs_from_source: Option<bool>,
+}
+
+impl From<&SessionSource> for SessionSourceSummary {
+    fn from(value: &SessionSource) -> Self {
+        match value {
+            SessionSource::Live => Self {
+                kind: "live-log",
+                archived_at: None,
+                redaction: None,
+                differs_from_source: None,
+            },
+            SessionSource::Archive(entry) => Self {
+                kind: "archive",
+                archived_at: Some(entry.archived_at.to_rfc3339()),
+                redaction: Some(entry.redaction.label().to_string()),
+                differs_from_source: Some(entry.differs_from_source()),
+            },
+        }
+    }
 }
 
 #[derive(Serialize)]

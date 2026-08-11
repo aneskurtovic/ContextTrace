@@ -6,6 +6,7 @@
 //! a new module in `ct-adapters`.
 
 mod format;
+mod mcp;
 mod render;
 
 use clap::{Parser, Subcommand};
@@ -34,6 +35,51 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run a read-only MCP server over stdin/stdout.
+    Mcp,
+
+    /// Group sessions into recorded root/subagent families.
+    Families {
+        /// Only this agent: claude-code or codex
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Estimate request cost from a bundled local pricing table.
+    Cost {
+        /// Session id, or an unambiguous prefix
+        id: String,
+        /// Hypothetical fresh-input cap per turn
+        #[arg(long)]
+        cap_input: Option<u32>,
+        /// Hypothetical output cap per turn
+        #[arg(long)]
+        cap_output: Option<u32>,
+        /// Price every turn as this model instead of its recorded model
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show parse fidelity per turn and the unassigned-event remainder.
+    Fidelity {
+        /// Session id, or an unambiguous prefix
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show observed instruction-artifact signatures and changes.
+    Instructions {
+        /// Session id, or an unambiguous prefix
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// List discovered sessions across all supported agents
     Sessions {
         /// Only this agent: claude-code or codex
@@ -458,45 +504,105 @@ fn build() -> ContextTrace {
 
 fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let app = build();
+    let archive_store = ct_runtime::archive_store();
 
     match cli.command {
-        Command::Roots => render::roots(&app, &ct_runtime::archive_store().root()),
+        Command::Mcp => mcp::serve(&app, &archive_store)?,
+
+        Command::Families { agent, json } => {
+            let parsed_agent = agent
+                .as_deref()
+                .map(|value| {
+                    AgentKind::parse(value)
+                        .ok_or_else(|| format!("unknown agent '{value}'; use claude-code or codex"))
+                })
+                .transpose()?;
+            let filter = SessionFilter {
+                agent: parsed_agent,
+                project: None,
+                since: None,
+                limit: None,
+            };
+            let sessions = app.list_sessions_with_archive(&filter, &archive_store)?;
+            render::families(&ct_application::families(&sessions), json);
+        }
+
+        Command::Cost {
+            id,
+            cap_input,
+            cap_output,
+            model,
+            json,
+        } => {
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
+            let scenario = ct_application::CostScenario {
+                model_override: model,
+                cap_input_tokens: cap_input,
+                cap_output_tokens: cap_output,
+            };
+            if scenario == ct_application::CostScenario::default() {
+                render::cost(&ct_application::project_cost(&session), &resolved, json);
+            } else {
+                render::cost_comparison(
+                    &ct_application::compare_cost(&session, &scenario),
+                    &resolved,
+                    json,
+                );
+            }
+        }
+
+        Command::Fidelity { id, json } => {
+            let (session, _) = app.load_with_archive(&id, &archive_store)?;
+            render::fidelity(&ct_application::fidelity_trend(&session), json);
+        }
+
+        Command::Instructions { id, json } => {
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
+            render::instructions(
+                &ct_application::instruction_drift(&session),
+                &resolved,
+                json,
+            );
+        }
+
+        Command::Roots => render::roots(&app, &archive_store.root()),
 
         Command::Archive {
             id,
             verify,
             raw,
             json,
-        } => {
-            let store = ct_runtime::archive_store();
-            match (id, verify) {
-                (None, _) => {
-                    if raw {
-                        return Err("--raw applies to archiving one session, not to listing"
-                            .to_string()
-                            .into());
-                    }
-                    render::archive_entries(&app.archived_sessions(&store)?, &store.root(), json);
+        } => match (id, verify) {
+            (None, _) => {
+                if raw {
+                    return Err("--raw applies to archiving one session, not to listing"
+                        .to_string()
+                        .into());
                 }
-                (Some(id), true) => {
-                    if raw {
-                        return Err("--raw applies to archiving a session, not to verifying one"
-                            .to_string()
-                            .into());
-                    }
-                    render::archive_integrity(&id, &app.verify_archived(&id, &store)?);
-                }
-                (Some(id), false) => {
-                    let mode = if raw {
-                        RedactionMode::Raw
-                    } else {
-                        RedactionMode::Redacted
-                    };
-                    let entry = app.archive_session(&id, &store, mode)?;
-                    render::archived(&entry, &store.root(), json);
-                }
+                render::archive_entries(
+                    &app.archived_sessions(&archive_store)?,
+                    &archive_store.root(),
+                    json,
+                );
             }
-        }
+            (Some(id), true) => {
+                if raw {
+                    return Err("--raw applies to archiving a session, not to verifying one"
+                        .to_string()
+                        .into());
+                }
+                render::archive_integrity(&id, &app.verify_archived(&id, &archive_store)?);
+            }
+            (Some(id), false) => {
+                let mode = if raw {
+                    RedactionMode::Raw
+                } else {
+                    RedactionMode::Redacted
+                };
+                let entry = app.archive_session(&id, &archive_store, mode)?;
+                render::archived(&entry, &archive_store.root(), json);
+            }
+        },
 
         Command::Sessions {
             agent,
@@ -520,7 +626,10 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                     .transpose()?,
                 limit: Some(limit),
             };
-            render::sessions(&app.list_sessions(&filter), json);
+            render::sessions(
+                &app.list_sessions_with_archive(&filter, &archive_store)?,
+                json,
+            );
         }
 
         Command::Inspect {
@@ -529,12 +638,12 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             limit,
             json,
         } => {
-            let (session, resolved) = app.load(&id)?;
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             render::inspect(&session, &resolved, limit, raw, json)?;
         }
 
         Command::Compactions { id, json } => {
-            let (session, resolved) = app.load(&id)?;
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             let raw = FileRawEventSource::for_session(&resolved.descriptor.path);
             let report = app.compaction_diffs(&session, resolved.binding, &raw)?;
             render::compactions(&report, json);
@@ -550,9 +659,9 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         } => {
             let filter = filter.build()?;
             let (session, resolved) = if no_content_analysis {
-                app.load(&id)?
+                app.load_with_archive(&id, &archive_store)?
             } else {
-                app.load_with_content_analysis(&id)?
+                app.load_with_content_analysis_and_archive(&id, &archive_store)?
             };
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
@@ -576,7 +685,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             json,
         } => {
             let filter = filter.build()?;
-            let (session, resolved) = app.load(&id)?;
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             let turn = pick_turn(&app, &session, turn)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let (snapshot, recount) =
@@ -591,7 +700,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         }
 
         Command::Trace { id, item, json } => {
-            let (session, resolved) = app.load(&id)?;
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             let sweep = app.sweep_lifecycles(&session, resolved.binding);
 
             let record = match sweep.resolve(&item) {
@@ -640,13 +749,13 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             width,
             json,
         } => {
-            let (session, _) = app.load(&id)?;
+            let (session, _) = app.load_with_archive(&id, &archive_store)?;
             let timeline = ct_application::timeline(&session).range(from, to);
             render::growth(&timeline, &session, width, json);
         }
 
         Command::Residual { id, from, to, json } => {
-            let (session, resolved) = app.load(&id)?;
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             let calibrated = session_estimator(&app, &session, resolved.binding);
             let Some(ratio) = calibrated.ratio else {
                 return Err(format!(
@@ -680,7 +789,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             redact_secrets,
         } => {
             let ExportFormat::Ndjson = format;
-            let (session, resolved) = app.load(&id)?;
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             // The same estimator the terminal views use. Without this the
             // export would size Claude Code items with the flat default while
             // `ct context` used the session's own fitted ratio, and one turn's
@@ -699,7 +808,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         }
 
         Command::Secrets { id } => {
-            let (session, resolved) = app.load(&id)?;
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             let raw = FileRawEventSource::for_session(&resolved.descriptor.path);
             let report = app.scan_secrets(&session, &raw);
             render::secrets(&session, &report);
@@ -708,12 +817,13 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         Command::Diff { left, right, json } => {
             let (left_spec, right_spec) = parse_sides(&left, right.as_deref())?;
 
-            let (left_session, left_resolved) = app.load(&left_spec.id)?;
+            let (left_session, left_resolved) =
+                app.load_with_archive(&left_spec.id, &archive_store)?;
             // Comparing two turns of one session is the commonest form, and
             // loading it twice would mean parsing the file and re-fitting its
             // ratio twice -- a sweep of every turn, seconds on a long session.
             let right_loaded = (right_spec.id != left_spec.id)
-                .then(|| app.load(&right_spec.id))
+                .then(|| app.load_with_archive(&right_spec.id, &archive_store))
                 .transpose()?
                 .filter(|(_, r)| r.descriptor.id != left_resolved.descriptor.id);
             let (right_session, right_resolved) = match &right_loaded {
@@ -773,7 +883,7 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 }
             }
             (Some(id), None) => {
-                let (session, resolved) = app.load(&id)?;
+                let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
                 render::doctor(&app.diagnose(&session), &session, &resolved, json);
             }
         },

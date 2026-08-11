@@ -147,6 +147,12 @@ export interface GrowthPoint {
 
 export interface SessionDetail {
   session: SessionSummary;
+  source?: {
+    kind: "live-log" | "archive";
+    archivedAt: string | null;
+    redaction: string | null;
+    differsFromSource: boolean | null;
+  };
   model: string | null;
   agentVersion: string | null;
   gitBranch: string | null;

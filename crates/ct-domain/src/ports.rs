@@ -291,6 +291,11 @@ pub trait ArchiveStore: Send + Sync {
     /// One session's entry, or `None` if this archive does not hold it.
     fn entry(&self, agent: AgentKind, id: &str) -> PortResult<Option<ArchiveEntry>>;
 
+    /// The path of the stored record file, when the manifest entry and copy
+    /// both exist.  The application layer uses this to hand an archived copy
+    /// to the ordinary agent adapter; the store remains record-blind.
+    fn path(&self, agent: AgentKind, id: &str) -> PortResult<Option<String>>;
+
     /// Re-digest a stored copy and its source, and report what that found.
     ///
     /// Returns [`PortError::NotFound`] only when the archive does not hold the

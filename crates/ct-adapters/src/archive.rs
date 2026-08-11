@@ -394,6 +394,15 @@ impl ArchiveStore for FileArchiveStore {
             .find(|e| e.agent() == agent && e.id().as_str() == id))
     }
 
+    fn path(&self, agent: AgentKind, id: &str) -> PortResult<Option<String>> {
+        let path = self.session_path(agent, id)?;
+        match fs::metadata(&path) {
+            Ok(_) => Ok(Some(path.display().to_string())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(PortError::Io(format!("{}: {error}", path.display()))),
+        }
+    }
+
     fn verify(&self, agent: AgentKind, id: &str) -> PortResult<ArchiveIntegrity> {
         let entry = self
             .entry(agent, id)?
@@ -677,6 +686,24 @@ mod tests {
                 archive_matches_digest: true
             }
         );
+
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn path_returns_the_archived_copy_even_after_the_source_is_gone() {
+        let scratch = scratch_root("path-after-source-gone");
+        let source = write_source(&scratch, "source.jsonl", b"{\"a\":1}\n");
+        let store = FileArchiveStore::at(scratch.join("archive"));
+        store.ingest(&descriptor("s1", &source), &Identity).unwrap();
+
+        fs::remove_file(&source).unwrap();
+
+        let path = store
+            .path(AgentKind::Codex, "s1")
+            .unwrap()
+            .expect("the archive copy remains addressable");
+        assert_eq!(fs::read(path).unwrap(), b"{\"a\":1}\n");
 
         let _ = fs::remove_dir_all(&scratch);
     }

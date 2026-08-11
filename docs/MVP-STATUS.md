@@ -36,7 +36,7 @@ certificate procurement is deferred until the production-release decision.
 | Automated tests | 392 Rust tests plus 75 frontend tests |
 | Static verification | `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass |
 | Build | `cargo build --workspace --release` passes on Rust 1.97.1, Windows/MSVC |
-| Binary smoke | `ct 0.1.0` starts and exposes all fourteen documented commands |
+| Binary smoke | `ct 0.1.0` starts and exposes all eighteen documented commands |
 | Desktop slice | Tauri v2 command bridge compiles; React type-check, 75 tests and production bundle pass; 29 Rust tests cover fixture-backed IPC, caching, errors, Context Doctor, lifecycle tracing, a 501-session search/page contract, the archive DTOs, a streamed NDJSON export and a two-session diff |
 | Desktop performance | Largest local Codex session (94.6 MiB), on the content-analysis path the doctor view and `ct context` run: 1.26–1.28 s warm over three runs, 1.71 s on a single cold observation, 0.1 ms cached. Two high-turn Claude sessions, plain load: 0.79–1.07 s cold and 0.4–0.5 ms cached. Warm and cold are separate measurements and neither substitutes for the other |
 | Format-drift sweep | 816 sessions (717 Claude Code, 99 Codex), 148,970 events, every type recognised, 5.88 seconds |
@@ -78,20 +78,17 @@ evidence that one is required for the core workflow.
 
 ## Recommended order
 
-1. **CT-047 — compaction autopsy.** Connect Codex compaction markers to the
-   existing exact replacement-history diff.
-2. **CT-048 — turn comparison.** Let users pin a baseline and reuse the
-   existing measurement-aware diff engine in the desktop app.
-3. **CT-043 — validate and ship 0.1.0.** Exercise the downloaded installer,
+1. **CT-043 — validate and ship 0.1.0.** Exercise the downloaded installer,
    upgrade, portable CLI and checksums on a clean Windows host, then soak the
    unsigned private candidate. Before a
    production release, decide on and provision the certificate/timestamp
    service; the workflow will sign and verify both executables.
 
-These three product items are intentionally ahead of release validation: they
-reuse proven local analysis and differentiate the desktop product without new
-format inference. Cost projection (CT-026), family trees and persistent SQLite
-come after this sequence. Exact Codex compaction diffs (CT-027) are implemented.
+The next product queue after release validation is CT-081 (local pricing and
+forecasting), CT-082 (recorded instruction bodies versus files on disk), and
+CT-083 (temporal context ghosting). Cost projection, family trees, fidelity
+trends, instruction signatures and the category treemap are implemented.
+Exact Codex compaction diffs (CT-027) are implemented.
 
 ## Main risks
 

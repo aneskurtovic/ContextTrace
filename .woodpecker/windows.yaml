@@ -8,9 +8,9 @@
 #   - the CLI fixture smokes, which assert on Windows path handling and on the
 #     bytes the archive writes under %LOCALAPPDATA% semantics.
 #
-# This workflow needs an agent advertising the labels below. Until one is
-# connected the workflow queues as pending and the pipeline never completes --
-# yellow, not red. A yellow pipeline is not a pass. See docs/CI.md.
+# This workflow needs the Windows agent advertising the labels below. The
+# explicit scheduler tag is part of the safety boundary: this job links Tauri,
+# exercises MSVC/WebView2 and runs local-host archive smokes.
 #
 # The `local` backend runs these commands directly on the host: same user, same
 # filesystem, no container. That is why no untrusted fork may trigger this

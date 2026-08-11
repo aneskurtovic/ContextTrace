@@ -261,9 +261,9 @@ runs one at a time. That is one cold run, not a bound.
 ## 6. The Windows agent
 
 `windows.yaml` carries `labels: {platform: windows/amd64, backend: local}`.
-Until an agent advertising those labels connects, that workflow **queues as
-pending and the pipeline never completes — yellow, not red.** A yellow pipeline
-is not a pass.
+The Windows agent advertising those labels is now connected. The workflow is
+therefore constrained to the real Windows host rather than being a wildcard
+job that could land on a Linux agent.
 
 **Every workflow here declares its labels, including the Linux ones.** An absent
 `labels:` stanza is a wildcard, not a default: Woodpecker will schedule such a

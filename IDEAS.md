@@ -80,11 +80,11 @@ This document serves as a "living backlog" of features and conceptual improvemen
   → *Expanded:* Keyboard‑driven scrubbing (`j`/`k`, space, `shift+arrows`) and a *"diff mode"* that highlights only what changed between the current and previous frame. Essential for long sessions.  
   → **New:** *Bookmarks* – mark interesting turns for quick navigation.
 
-- **Token Treemap:** (Future Tauri UI) Replace force‑directed graphs with a strict treemap. Area strictly equals token count. Blocks are colored by source (Repo, Tool, Conversation). The eye naturally gravitates toward the giant red square representing a bloated tool output.  
+- **Token Treemap:** (Future Tauri UI) Replace force‑directed graphs with a strict treemap. Area strictly equals token count. Blocks are colored by source (Repo, Tool, Conversation). The eye naturally gravitates toward the giant red square representing a bloated tool output. `[→ CT-080]`
   → *Expanded:* Support drill‑down (click a category → expand into individual items) and a *"stable layout"* option that keeps the same spatial arrangement across turns so the eye can track growth/shrinkage.  
   → **New:** *Aggregated treemap* – show the average context composition over a range of turns to spot structural patterns.
 
-- **Ghost Context (Overlaying Turns):** Select two turns and see a *"Ghost"* view. Turn A’s context is shown in red, Turn B’s in green. Easily see what was *"forgotten"* or *"evicted"* by the agent's compaction logic.  
+- **Ghost Context (Overlaying Turns):** Select two turns and see a *"Ghost"* view. Turn A’s context is shown in red, Turn B’s in green. Easily see what was *"forgotten"* or *"evicted"* by the agent's compaction logic. `[→ CT-083]`
   → *Expanded:* Three‑way ghost (before compaction / after compaction / final) and a *persistence score* for each item (how many turns it survived).  
   → **New:** *Ghost diff* – show a unified diff of the actual text contents of the context, not just token counts, to see what textual information was lost.
 
@@ -102,7 +102,7 @@ This document serves as a "living backlog" of features and conceptual improvemen
   → *Expanded:* Rank waste by *"tokens × (1 − compression ratio)"* and surface the top offenders with a one‑line recommendation (*"Consider adding node_modules to the agent's ignore list"* or *"This build log was injected 7 times"*).  
   → **New:** *Waste over time* – show a plot of wasted tokens per turn to identify when bloat was introduced.
 
-- **Instruction Drift Detection (Read-Only):** Instead of modifying `CLAUDE.md` (which violates the read‑only principle), ContextTrace diffs the `CLAUDE.md` currently on disk against the one embedded in the session log. Alert: *"The rules you have now are 400 tokens larger than what the agent saw during this session."*  
+- **Instruction Drift Detection (Read-Only):** Instead of modifying `CLAUDE.md` (which violates the read‑only principle), ContextTrace diffs the `CLAUDE.md` currently on disk against the one embedded in the session log. Alert: *"The rules you have now are 400 tokens larger than what the agent saw during this session."* `[→ CT-079]` `[→ CT-082]`
   → *Expanded:* Show a unified diff of the instruction files and highlight sections that were added/removed. Also detect when the agent was using a stale system prompt that no longer matches the repo's current `CLAUDE.md` / `AGENTS.md`.  
   → **New:** *Drift impact analysis* – correlate instruction drift with changes in agent behaviour (e.g., tool selection, verbosity) to quantify the effect.
 
@@ -114,7 +114,7 @@ This document serves as a "living backlog" of features and conceptual improvemen
   → *Expanded:* Ship a curated set of high‑precision patterns (OpenAI, Anthropic, AWS, GitHub, etc.) and allow users to add custom patterns via a local config file. Never upload the matches — only report *"secret of type X found at turn Y, item Z"*.  
   → **New:** *Secret leak timeline* – show when each secret was first introduced and how many turns it remained in context.
 
-- **Cost Projection:** Calculate the *"Real‑World Cost"* of a session based on hardcoded provider pricing tables (OpenAI/Anthropic). Break it down by category: *"Tool outputs cost you $2.40; Conversation history cost $0.80."*  `[→ CT-026]`
+- **Cost Projection:** Calculate the *"Real‑World Cost"* of a session based on hardcoded provider pricing tables (OpenAI/Anthropic). Break it down by category: *"Tool outputs cost you $2.40; Conversation history cost $0.80."*  `[→ CT-026]` `[→ CT-081]`
   → *Expanded:* Support user‑supplied pricing overrides and multi‑model sessions. Also project *"what‑if"* costs: *"If tool outputs had been truncated at 4k tokens, this session would have cost $1.10 instead of $3.20."*  
   → **New:** *Cost forecasting* – given a partially completed session, estimate the total cost based on current trends.
 
@@ -126,7 +126,7 @@ This document serves as a "living backlog" of features and conceptual improvemen
 
 - **Adapter Fidelity Score:** When parsing a session, report what percentage of the raw JSONL bytes were successfully mapped to domain entities vs. skipped as unknowns. A score of 100% means perfect reconstruction; 85% means something new was added to the agent.  `[→ CT-010]`
   → *Expanded:* Break the score down by event type and emit a *"fidelity report"* that can be tracked in CI. A sudden drop should open a GitHub issue automatically (optional, local webhook).  
-  → **New:** *Fidelity over time* – store fidelity scores per session and show a trend graph to detect gradual format rot.
+  → **New:** *Fidelity over time* – store fidelity scores per session and show a trend graph to detect gradual format rot. `[→ CT-078]`
 
 - **Raw vs. Reconciled View:** A toggle in the UI/CLI to switch between the *"Domain View"* (clean `ContextSnapshot` aggregate) and the *"Raw ACL View"* (the literal JSONL lines that contributed to it). Essential for debugging the tool itself.  
   → *Expanded:* In CLI form, `ct inspect <id> --raw` should pretty‑print the original JSONL lines that were used to build each domain entity, with line numbers from the source file.  

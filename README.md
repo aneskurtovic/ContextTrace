@@ -226,6 +226,11 @@ filters: --source <kind[:text]>  --category <name>
 | `ct roots` | Which local directories are read, and the one that is written |
 | `ct archive <id>` | Keep a copy of a session so it outlives its log |
 | `ct sessions` | Which sessions exist, filtered by agent, project, date or count |
+| `ct families` | Group recorded root and subagent sessions into families |
+| `ct cost <id>` | Estimate category costs, or compare a model/token-cap what-if |
+| `ct fidelity <id>` | Show parse fidelity per turn and unassigned events |
+| `ct instructions <id>` | Show observed instruction signatures and drift |
+| `ct mcp` | Serve read-only session queries over local stdio JSON-RPC |
 | `ct inspect <id>` | The raw session structure and events, for debugging |
 | `ct compactions <id>` | [What a Codex compaction dropped, kept or replaced](docs/guide.md#exact-codex-compaction-diffs-without-printing-prompt-content) |
 | `ct context <id>` | What filled a turn's context window, by category and confidence |
@@ -242,11 +247,12 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-Next up: reading a session back out of the archive, so a copy still answers
-once its log is gone — and says it was the one answering (CT-075); a read-only
-MCP surface, so the agent that lost the context can ask what it had (CT-073);
-an installable 0.1.0 — clean-machine install/upgrade validation and a
+Next up: an installable 0.1.0 — clean-machine install/upgrade validation and a
 release-candidate soak (CT-043).
+
+The next product slice is fidelity trends and observed instruction-drift
+signatures, followed by richer desktop context visualisation. Cost what-ifs
+and session families are already available in the CLI.
 
 Deliberately deferred: a persistent SQLite index, until measured
 performance requires one; crates.io publication; Windows code signing,

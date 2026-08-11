@@ -655,6 +655,15 @@ mod tests {
                 .cloned())
         }
 
+        fn path(&self, agent: AgentKind, id: &str) -> PortResult<Option<String>> {
+            Ok(self
+                .entries
+                .lock()
+                .unwrap()
+                .get(&(agent, id.to_string()))
+                .map(|entry| entry.descriptor.path.clone()))
+        }
+
         fn verify(&self, agent: AgentKind, id: &str) -> PortResult<ArchiveIntegrity> {
             if self
                 .entries
@@ -796,6 +805,41 @@ mod tests {
             .archive_session("nope", &store, RedactionMode::Redacted)
             .expect_err("no such session");
         assert!(matches!(err, AppError::SessionNotFound(id) if id == "nope"));
+    }
+
+    #[test]
+    fn archive_resolution_answers_when_the_live_session_is_gone() {
+        let app = app_with(vec![descriptor("still-live", AgentKind::Codex)]);
+        let store = FakeArchiveStore::default();
+        store.seed(FakeArchiveStore::seeded_entry(
+            "gone",
+            AgentKind::Codex,
+            DateTime::UNIX_EPOCH,
+        ));
+
+        let resolved = app
+            .resolve_with_archive("gone", &store)
+            .expect("the archive supplies the missing session");
+        assert!(matches!(resolved.source, crate::SessionSource::Archive(_)));
+        assert_eq!(resolved.descriptor.id.as_str(), "gone");
+        assert_eq!(resolved.descriptor.size_bytes, 10);
+    }
+
+    #[test]
+    fn a_live_session_remains_authoritative_over_its_archive_copy() {
+        let app = app_with(vec![descriptor("same", AgentKind::Codex)]);
+        let store = FakeArchiveStore::default();
+        store.seed(FakeArchiveStore::seeded_entry(
+            "same",
+            AgentKind::Codex,
+            DateTime::UNIX_EPOCH,
+        ));
+
+        let resolved = app
+            .resolve_with_archive("same", &store)
+            .expect("the live session answers first");
+        assert!(matches!(resolved.source, crate::SessionSource::Live));
+        assert_eq!(resolved.descriptor.path, "fake-path/same.jsonl");
     }
 
     /// Two agents holding one id, in binding order.

@@ -1309,6 +1309,60 @@ h2 {
   font-size: 9px;
 }
 
+.context-treemap {
+  display: grid;
+  grid-auto-flow: dense;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 15px;
+}
+
+.context-treemap-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 6px;
+  background: rgba(76, 142, 220, .18);
+  color: #e4ebf4;
+}
+
+.context-treemap-cell strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-treemap-cell span {
+  color: rgba(239, 245, 252, .72);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+}
+
+.context-treemap-cell.category-tool-outputs,
+.context-treemap-cell.category-tool-calls {
+  background: rgba(74, 197, 214, .22);
+}
+
+.context-treemap-cell.category-reasoning,
+.context-treemap-cell.category-assistant-messages {
+  background: rgba(220, 101, 177, .22);
+}
+
+.context-treemap-cell.category-file-contents,
+.context-treemap-cell.category-repository-instructions {
+  background: rgba(80, 184, 128, .22);
+}
+
+.context-treemap-cell.category-unattributed,
+.context-treemap-cell.category-system-instructions {
+  background: rgba(241, 167, 89, .22);
+}
+
 .callout {
   display: flex;
   gap: 9px;

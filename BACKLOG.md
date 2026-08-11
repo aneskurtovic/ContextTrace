@@ -38,7 +38,7 @@ decision to build it, and re-litigating it later is waste.
 ## Next
 
 ### CT-073 · Let an agent read the context it just lost
-`status: next` · `tier: A` · `size: L` · `source: product decision`
+`status: done` · `tier: A` · `size: L` · `source: product decision`
 
 **Why:** compaction does not delete anything — `replacement_history` and every
 pre-compaction event stay in the append-only log, which is the only reason the
@@ -69,9 +69,14 @@ default, and the decision to return raw content must be explicit and recorded.
 An MCP surface that laundered `[REDACTED:github-token]` back into a live
 credential would be strictly worse than the compaction it exists to undo.
 
+**2026-08-11 — completed.** `ct mcp` is a stdio JSON-RPC server over the
+existing read-only queries. Results preserve confidence and source metadata;
+recovery is redacted by default and raw recovery requires an explicit flag.
+The protocol adds no network-capable dependency, and refusals remain errors.
+
 ### CT-075 · Answer from the archive only where the log is gone
 
-`status: next` · `tier: B` · `size: M` · `source: CT-074`
+`status: done` · `tier: B` · `size: M` · `source: CT-074`
 
 **Why:** CT-074 built the write path. Nothing reads from an archive yet, so a
 copy taken today survives its log but cannot be opened after the log is deleted
@@ -90,6 +95,11 @@ redacted copy in particular will not reproduce a token count taken from the log,
 so a view that presented one as the other would be laundering a transformation
 this project exists to make visible. `ArchiveEntry::differs_from_source` already
 carries the flag that keeps that stated rather than discovered.
+
+**2026-08-11 — completed.** All application read paths now resolve live logs
+first and fall back to archive copies only when the live log is absent. The
+CLI, MCP surface and desktop identify archive provenance, including archive
+time, redaction mode and whether the copy differs from its source.
 
 ### CT-043 · Ship an installable 0.1.0
 `status: next` · `tier: A` · `size: L` · `source: MVP review`
@@ -143,7 +153,7 @@ tag that disagrees with `tauri.conf.json` and refuses mixed workspace versions
 before building anything; assets are the per-user installer, the CLI zip and a
 SHA-256 manifest over both; the release is created as a draft; signing is gated
 behind complete configuration; `ct --version` reports `ct 0.1.0` and the binary
-exposes fourteen commands.
+exposes eighteen commands.
 
 **Still requires a human at a machine this session did not have.** A clean
 Windows host that has never had ContextTrace installed; install, upgrade and
@@ -154,7 +164,7 @@ these can be honestly closed from here, and the item stays `next` because of
 them — not because anything above is outstanding.
 
 ### CT-077 · Move CI to the self-hosted Woodpecker instance
-`status: next` · `tier: A` · `size: M` · `source: infrastructure, CT-062`
+`status: done` · `tier: A` · `size: M` · `source: infrastructure, CT-062`
 
 **Why:** all four CI jobs ran on GitHub's `windows-latest`, and three of them
 had no reason to. A self-hosted instance already exists at `ci.aneskurtovic.com`
@@ -170,13 +180,14 @@ report a failure".
 agent, `windows.yaml` on the owner's machine via the `local` backend. All three
 lint clean under `woodpecker-cli v3.16.0`. See [docs/CI.md](docs/CI.md).
 
-**Green on the real box.** Pipeline 5/1 (push): all nine steps success in 137s
+**Historical blocker, resolved 2026-08-11.** Pipeline 5/1 (push): all nine steps success in 137s
 cold — `frontend` 3/5/13/1s, `rust` 2/10/27/44/28s, the two workflows serialised
-because the agent runs one at a time. Pipeline 5/2 (the PR) reports `frontend`
-pass, `rust` pass, `windows` **pending with no agent**, which reproduces the
-predicted failure mode exactly: a missing Windows agent stalls the pipeline
-yellow rather than failing it red. `windows` is correctly absent from the push
-pipeline on a topic branch, so the narrowed trigger works too.
+because the agent runs one at a time. Pipeline 5/2 (the PR) previously reported
+`windows` **pending with no agent**, reproducing the predicted failure mode.
+The Windows agent is now connected and `windows.yaml` keeps explicit
+`platform: windows/amd64` and `backend: local` labels so the scheduler cannot
+place it on the Linux worker. `windows` remains absent from push pipelines on
+topic branches, so the narrowed trigger still works.
 
 **The tree was already portable, which nothing had checked.**
 `rust-toolchain.toml` carried a comment saying nothing had ever built this
@@ -227,26 +238,40 @@ trade a scoped ephemeral token for a long-lived PAT and route certificate
 material through a backend with no container isolation, to save a cost that is
 already zero.
 
-**Blocking the last step:** the Windows agent has never connected —
-`last_contact: 0`. Until it does, `windows.yaml` queues as pending and the
-pipeline stalls yellow rather than failing red. `ci.yml` must therefore stay
-until the agent reports `platform: windows/amd64`, or this repository would have
-no coverage at all for the desktop build, `ct-ui`'s Rust and the CLI smokes.
+**Historical blocker, resolved 2026-08-11:** the Windows agent had never
+connected (`last_contact: 0`), so `windows.yaml` queued as pending and the
+pipeline stalled yellow rather than failing red. That coverage gap is closed;
+the agent now reports the required Windows label.
+
+**2026-08-11 — completed.** The Windows agent is now available. The
+Windows-specific workflow remains explicitly tagged with
+`platform: windows/amd64` and `backend: local`, so it cannot be scheduled on a
+Linux agent; the Linux workflows keep their own explicit platform labels.
 
 ---
 
 ## Todo
 
 ### CT-026 · Cost projection
-`status: todo` · `tier: B` · `size: S` · `source: IDEAS.md §4`
+`status: done` · `tier: B` · `size: S` · `source: IDEAS.md §4`
 **Done when:** per-category cost is derived from a local pricing table, clearly
 marked as an estimate that depends on a table which will go stale.
 
+**2026-08-11 — completed.** `ct cost` now reports input, cache-read,
+cache-write and output categories from a versioned bundled table. Unknown
+models remain explicitly unpriced, reasoning is not double-counted as a second
+billable category, and both text and JSON output disclose the stale-table
+estimate limitation.
+
 ### CT-028 · Session family trees
-`status: todo` · `tier: C` · `size: M` · `source: IDEAS.md §9`
+`status: done` · `tier: C` · `size: M` · `source: IDEAS.md §9`
 **Why:** the DAG already parsed for reconstruction contains every abandoned
 branch; showing them is nearly free and no other tool does it.
 **Done when:** branches are enumerated and each is separately inspectable.
+
+**2026-08-11 — completed.** `ct families` groups the existing root/subagent
+identities deterministically, includes root-only families, and keeps a branch
+whose parent log is absent as an explicit orphan rather than dropping it.
 
 ### CT-029 · `ct-index` SQLite cache
 `status: todo` · `tier: C` · `size: L` · `source: plan`
@@ -265,6 +290,63 @@ index is needed — but the warm figure is the repeatable one and the cold figur
 is the one a first-run user meets, and neither is quotable as the other.
 **Done when:** derived metadata is cached, disposable and rebuildable, and no
 domain type depends on it.
+
+### CT-078 · Show fidelity as a per-turn trend
+`status: done` · `tier: A` · `size: S` · `source: IDEAS.md §5`
+
+**Done when:** a session can show where unrecognised event shapes appear over
+time without assigning unplaced events to a made-up turn.
+
+**2026-08-11 — completed.** `ct fidelity` and the matching MCP tool report
+per-turn event counts, unknown counts and fidelity, with unassigned records
+kept in a separate bucket.
+
+### CT-079 · Detect observed instruction-signature drift
+`status: done` · `tier: A` · `size: M` · `source: IDEAS.md §4`
+
+**Done when:** instruction artifacts can be compared using only facts recorded
+by the harness, without claiming that unavailable instruction bodies were
+compared.
+
+**2026-08-11 — completed.** `ct instructions` and MCP expose mechanism,
+label and character-length signatures, report changes, and disclose that
+content comparison is not performed.
+
+### CT-080 · Add a token treemap to the desktop
+`status: done` · `tier: C` · `size: M` · `source: IDEAS.md §3`
+
+**Done when:** the desktop shows category area in proportion to the observed
+token share while retaining the existing category labels and confidence.
+
+**2026-08-11 — completed.** The context panel now includes an accessible,
+proportional category treemap alongside the exact bar breakdown.
+
+### CT-081 · Make cost what-ifs user-configurable
+`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+
+**Why:** the first cost pass supports model substitution and per-turn input or
+output caps, but teams will need local pricing overrides and a forecast for a
+partially completed session before treating it as an operating tool.
+**Done when:** a local override file and an explicit forecast horizon can be
+used without changing the bundled table or presenting assumptions as observed.
+
+### CT-082 · Compare recorded instructions with files on disk
+`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+
+**Why:** signature drift finds changes inside the session. A safe next step is
+to compare an observed instruction-file artifact with the current file while
+keeping missing, changed and unreadable files distinct.
+**Done when:** the report refuses when the recorded body is unavailable and
+otherwise states the exact file, digest and comparison basis.
+
+### CT-083 · Add temporal ghost views for context changes
+`status: todo` · `tier: C` · `size: L` · `source: IDEAS.md §3`
+
+**Why:** the treemap answers one turn well; a ghost overlay should make the
+items gained, retained and removed between two turns visible without implying
+that token deltas are text diffs.
+**Done when:** two selected turns can be overlaid with explicit item identity,
+confidence and a refusal for incomparable content.
 
 
 ---
