@@ -7,15 +7,14 @@ actually had in its context window, turn by turn — what was in it, where
 each piece came from, how large it was, and how it evolved during the
 session.
 
-[![status](https://ci.aneskurtovic.com/api/badges/5/status.svg)](https://ci.aneskurtovic.com/repos/5)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > **Status: 0.1 is not released.** The CLI is complete, and the desktop app
 > runs the same discovery-to-diagnosis workflow through a native Windows UI.
-> On 2026-08-01, `ct doctor --dir` parsed **816 local sessions** (717 Claude
-> Code, 99 Codex) and recognised all **148,970 events** in 5.88 seconds. See
-> [MVP status](docs/MVP-STATUS.md) for the evidence, gates and distance to a
-> public release.
+> The current build has been exercised against a broad local corpus and
+> recognises all event shapes covered by the committed fixtures. See [MVP
+> status](docs/MVP-STATUS.md) for the evidence, gates and distance to a public
+> release.
 
 ![ContextTrace desktop app — session overview with prompt growth, context composition and largest contributors](docs/images/desktop.png)
 
@@ -147,33 +146,32 @@ SmartScreen to warn about the unsigned installer. See
 
 ## Quickstart
 
-Real output from this machine: `ct roots` re-captured on 2026-08-08, when it
-gained the archive directory, and the rest on 2026-08-01. Your own
-`sessions`/`context` output will show your own local sessions instead.
+The following is illustrative output. Your own `sessions`/`context` output
+will show your local sessions and paths instead.
 
 ```
 > ct roots
 ContextTrace reads these local directories (read-only):
 
   claude-code
-    C:\Users\anesk\.claude\projects
+    C:\Users\you\.claude\projects
   codex
-    C:\Users\anesk\.codex\sessions
-    C:\Users\anesk\.codex\archived_sessions
+    C:\Users\you\.codex\sessions
+    C:\Users\you\.codex\archived_sessions
 
 Nothing is written to them.
 
 It writes to one directory, and only when you archive or export a session:
 
-  C:\Users\anesk\AppData\Local\ContextTrace-archive
+  C:\Users\you\AppData\Local\ContextTrace-archive
 
 Nothing leaves this machine either way.
 
 > ct sessions --limit 10
 ID          AGENT         LAST ACTIVITY            SIZE  PROJECT
-agent-a6    claude-code   2026-08-01 19:43       1.0 MB  C:\Users\anesk\source\repos\ContextTrace
-03b48276    claude-code   2026-08-01 19:43       3.2 MB  C:\Users\anesk\source\repos\ContextTrace
-agent-ae    claude-code   2026-08-01 19:42     405.0 KB  C:\Users\anesk\source\repos\ContextTrace
+agent-a6    claude-code   2026-08-01 19:43       1.0 MB  C:\work\ContextTrace
+03b48276    claude-code   2026-08-01 19:43       3.2 MB  C:\work\ContextTrace
+agent-ae    claude-code   2026-08-01 19:42     405.0 KB  C:\work\ContextTrace
 ... 7 more of the 10 shown, same columns ...
 
 10 session(s). Inspect one with: ct inspect <id>
@@ -228,8 +226,10 @@ filters: --source <kind[:text]>  --category <name>
 | `ct sessions` | Which sessions exist, filtered by agent, project, date or count |
 | `ct families` | Group recorded root and subagent sessions into families |
 | `ct cost <id>` | Estimate category costs, or compare a model/token-cap what-if |
+| `ct ghost <id> <from> <to>` | Show context items gained, retained and removed between turns |
 | `ct fidelity <id>` | Show parse fidelity per turn and unassigned events |
 | `ct instructions <id>` | Show observed instruction signatures and drift |
+| `ct instruction-files <id>` | Compare recorded instruction bodies with current files on disk |
 | `ct mcp` | Serve read-only session queries over local stdio JSON-RPC |
 | `ct inspect <id>` | The raw session structure and events, for debugging |
 | `ct compactions <id>` | [What a Codex compaction dropped, kept or replaced](docs/guide.md#exact-codex-compaction-diffs-without-printing-prompt-content) |
@@ -250,15 +250,42 @@ Run `ct <command> --help` for the full option surface.
 Next up: an installable 0.1.0 — clean-machine install/upgrade validation and a
 release-candidate soak (CT-043).
 
-The next product slice is fidelity trends and observed instruction-drift
-signatures, followed by richer desktop context visualisation. Cost what-ifs
-and session families are already available in the CLI.
+Configurable local pricing/forecasting, instruction-file comparisons and
+temporal ghost views are available in the CLI, MCP surface and desktop app.
 
 Deliberately deferred: a persistent SQLite index, until measured
 performance requires one; crates.io publication; Windows code signing,
 until the production-release decision.
 
 No dates, no promises. [BACKLOG.md](BACKLOG.md) is the authoritative list.
+
+### Local pricing overrides
+
+`ct cost <id> --pricing pricing.json --forecast-turns 20` reads a local JSON
+override without changing the bundled table. Rates are integer microdollars per
+million tokens so the file remains exact and reviewable:
+
+```json
+{
+  "version": "contract-2026-08",
+  "source": "local provider agreement",
+  "rates": [
+    {
+      "model_prefix": "claude-sonnet-4",
+      "rate": {
+        "input_per_million": 3000000,
+        "cache_read_per_million": 300000,
+        "cache_write_per_million": 3750000,
+        "output_per_million": 15000000
+      }
+    }
+  ]
+}
+```
+
+The forecast uses the average priced turn as an estimate for the explicit
+additional-turn horizon; future model choice, cache state and agent behaviour
+are not observed.
 
 ## How to read the numbers
 

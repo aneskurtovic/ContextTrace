@@ -14,6 +14,7 @@ pub mod diff;
 pub mod export;
 pub mod family;
 pub mod fidelity;
+pub mod ghost;
 pub mod growth;
 pub mod instructions;
 pub mod lifecycle;
@@ -34,8 +35,9 @@ use std::fmt;
 
 pub use archive::{default_transform, RedactingTransform, VerbatimTransform};
 pub use cost::{
-    compare as compare_cost, project as project_cost, CostComparison, CostReport, CostScenario,
-    PricingCatalog,
+    compare as compare_cost, project as project_cost, project_scenario as project_cost_scenario,
+    project_with as project_cost_with, CostComparison, CostForecast, CostReport, CostScenario,
+    PricingCatalog, PricingOverrideRate, PricingOverrides,
 };
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
@@ -45,9 +47,14 @@ pub use diff::{
 pub use export::{ExportRecord, SCHEMA_VERSION};
 pub use family::{families, SessionFamily};
 pub use fidelity::{trend as fidelity_trend, FidelityPoint, FidelityTrend};
+pub use ghost::{
+    compare_turns as temporal_ghost, GhostItem, TemporalGhost, TemporalGhostAvailable,
+};
 pub use growth::{timeline, Bucket, CompactionAt, GrowthPoint, GrowthTimeline, Jump};
 pub use instructions::{
-    inspect as instruction_drift, InstructionChange, InstructionDrift, InstructionObservation,
+    compare_files as compare_instruction_files, inspect as instruction_drift, InstructionChange,
+    InstructionDrift, InstructionFileComparison, InstructionFileReport, InstructionFileStatus,
+    InstructionObservation,
 };
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
 pub use secrets::{ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport};
@@ -1162,13 +1169,13 @@ mod tests {
 
     #[test]
     fn a_path_prefix_survives_the_separator_and_case_a_user_will_type() {
-        let path = r"C:\Users\anesk\.codex\sessions\2026\07\rollout.jsonl";
-        assert!(path_matches(path, Some("c:/users/anesk/.codex")));
+        let path = r"C:\Users\tester\.codex\sessions\2026\07\rollout.jsonl";
+        assert!(path_matches(path, Some("c:/users/tester/.codex")));
         assert!(path_matches(
             path,
-            Some(r"C:\Users\anesk\.codex\sessions\2026")
+            Some(r"C:\Users\tester\.codex\sessions\2026")
         ));
-        assert!(!path_matches(path, Some(r"C:\Users\anesk\.claude")));
+        assert!(!path_matches(path, Some(r"C:\Users\tester\.claude")));
     }
 
     #[test]

@@ -7,8 +7,9 @@ use crate::format::{
 use ct_adapters::FileRawEventSource;
 use ct_application::{
     AppError, Comparability, ContextTrace, CostComparison, CostReport, Departure, Diagnostics,
-    DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift, ItemLifecycle,
-    ResidualPoint, ResolvedSession, SecretScanReport, SessionDiff, SessionFamily,
+    DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift,
+    InstructionFileReport, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport,
+    SessionDiff, SessionFamily, TemporalGhost,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -170,6 +171,17 @@ pub fn cost(report: &CostReport, resolved: &ResolvedSession, json: bool) {
             );
         }
     }
+    if let Some(forecast) = &report.forecast {
+        println!(
+            "\nForecast (+{} turns)  ${:.6} additional  ${:.6} projected total",
+            forecast.additional_turns,
+            forecast.projected_additional.0 as f64 / 1_000_000.0,
+            forecast.projected_total.0 as f64 / 1_000_000.0
+        );
+        for assumption in &forecast.assumptions {
+            println!("  - {assumption}");
+        }
+    }
 }
 
 pub fn cost_comparison(report: &CostComparison, resolved: &ResolvedSession, json: bool) {
@@ -283,6 +295,92 @@ pub fn instructions(report: &InstructionDrift, resolved: &ResolvedSession, json:
                 change.from_char_len,
                 change.to_char_len
             );
+        }
+    }
+}
+
+pub fn instruction_files(report: &InstructionFileReport, json: bool) {
+    if json {
+        print_json(report);
+        return;
+    }
+    println!("Instruction files for {}", report.session_id);
+    println!(
+        "Root      {}",
+        report.project_root.as_deref().unwrap_or("not recorded")
+    );
+    if report.comparisons.is_empty() {
+        println!("No repository instruction files were recorded.");
+        return;
+    }
+    for comparison in &report.comparisons {
+        println!(
+            "\n{:?}  {} (line {}, turn {})",
+            comparison.status,
+            comparison.path,
+            comparison.line,
+            comparison
+                .turn
+                .map(|turn| turn.to_string())
+                .unwrap_or_else(|| "-".into())
+        );
+        println!("  {}", comparison.detail.as_deref().unwrap_or("no detail"));
+        println!("  basis: {}", comparison.comparison_basis);
+        if let Some(digest) = &comparison.recorded_digest {
+            println!("  recorded: {digest}");
+        }
+        if let Some(digest) = &comparison.current_digest {
+            println!("  current:  {digest}");
+        }
+    }
+    println!("\n{} comparison(s) need attention.", report.refusal_count);
+}
+
+pub fn ghost(report: &TemporalGhost, json: bool) {
+    if json {
+        print_json(report);
+        return;
+    }
+    match report {
+        TemporalGhost::Unavailable {
+            left_turn,
+            right_turn,
+            reason,
+        } => println!("Ghost refused for turns {left_turn} → {right_turn}: {reason}"),
+        TemporalGhost::Available(report) => {
+            println!(
+                "Context ghost: turn {} → {}",
+                report.left_turn, report.right_turn
+            );
+            println!("Comparability: {:?}", report.comparability);
+            for (heading, items) in [
+                ("Gained", &report.gained),
+                ("Retained", &report.retained),
+                ("Removed", &report.removed),
+            ] {
+                println!("\n{heading} ({})", items.len());
+                for item in items.iter().take(30) {
+                    println!(
+                        "  {:<34} {:>8} → {:>8}  {} [{}]",
+                        ellipsize(&item.label, 34),
+                        item.left_tokens
+                            .map(|tokens| tokens.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        item.right_tokens
+                            .map(|tokens| tokens.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        item.category.label(),
+                        item.confidence
+                    );
+                }
+                if items.len() > 30 {
+                    println!("  ... and {} more", items.len() - 30);
+                }
+            }
+            println!("\nAssumptions:");
+            for assumption in &report.assumptions {
+                println!("  - {assumption}");
+            }
         }
     }
 }

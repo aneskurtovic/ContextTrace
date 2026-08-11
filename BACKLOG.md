@@ -130,7 +130,7 @@ a clean Windows host, downloaded-artifact/CLI checks and candidate soak remain.
 
 **2026-08-08 — install/removal review, prompted by CT-074.** Reviewing the
 install and removal path against the new archive found a release blocker and
-fixed it. `ct archive` defaulted to `%LOCALAPPDATA%\ContextTracerchive`, which
+fixed it. `ct archive` defaulted to `%LOCALAPPDATA%\ContextTrace\archive`, which
 is *inside* the desktop app's install directory: Tauri's NSIS bundler installs
 per-user to `%LOCALAPPDATA%\<productName>`. It survived removal only by
 accident — the generated uninstaller ends in `RMDir "$INSTDIR"`, which spares a
@@ -167,8 +167,8 @@ them — not because anything above is outstanding.
 `status: done` · `tier: A` · `size: M` · `source: infrastructure, CT-062`
 
 **Why:** all four CI jobs ran on GitHub's `windows-latest`, and three of them
-had no reason to. A self-hosted instance already exists at `ci.aneskurtovic.com`
-with a Linux agent, and this repository is registered on it as id 5.
+had no reason to. A self-hosted Woodpecker controller already exists with a
+Linux agent, and this repository is registered on it.
 
 **Done when:** every gate `.github/workflows/ci.yml` enforced is enforced by
 `.woodpecker/`, on an agent that reports it, and that file is deleted — and a
@@ -321,37 +321,42 @@ token share while retaining the existing category labels and confidence.
 **2026-08-11 — completed.** The context panel now includes an accessible,
 proportional category treemap alongside the exact bar breakdown.
 
-### CT-081 · Make cost what-ifs user-configurable
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
-
-**Why:** the first cost pass supports model substitution and per-turn input or
-output caps, but teams will need local pricing overrides and a forecast for a
-partially completed session before treating it as an operating tool.
-**Done when:** a local override file and an explicit forecast horizon can be
-used without changing the bundled table or presenting assumptions as observed.
-
-### CT-082 · Compare recorded instructions with files on disk
-`status: todo` · `tier: B` · `size: M` · `source: IDEAS.md §4`
-
-**Why:** signature drift finds changes inside the session. A safe next step is
-to compare an observed instruction-file artifact with the current file while
-keeping missing, changed and unreadable files distinct.
-**Done when:** the report refuses when the recorded body is unavailable and
-otherwise states the exact file, digest and comparison basis.
-
-### CT-083 · Add temporal ghost views for context changes
-`status: todo` · `tier: C` · `size: L` · `source: IDEAS.md §3`
-
-**Why:** the treemap answers one turn well; a ghost overlay should make the
-items gained, retained and removed between two turns visible without implying
-that token deltas are text diffs.
-**Done when:** two selected turns can be overlaid with explicit item identity,
-confidence and a refusal for incomparable content.
-
-
 ---
 
 ## Done
+
+### CT-081 · Make cost what-ifs user-configurable
+`status: done` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+
+**Done when:** a local override file and an explicit forecast horizon can be
+used without changing the bundled table or presenting assumptions as observed.
+
+**2026-08-11 — completed.** `ct cost --pricing <file> --forecast-turns <n>`,
+the MCP cost tool and the desktop evidence surface accept a versioned local
+pricing table. Forecasts use an explicit additional-turn horizon and average
+only priced observed turns; future model, cache and agent behaviour remain
+assumptions in the report.
+
+### CT-082 · Compare recorded instructions with files on disk
+`status: done` · `tier: B` · `size: M` · `source: IDEAS.md §4`
+
+**Done when:** the report refuses when the recorded body is unavailable and
+otherwise states the exact file, digest and comparison basis.
+
+**2026-08-11 — completed.** `ct instruction-files`, MCP and the desktop invoke
+the content-analysis path and distinguish matching, changed, missing,
+unreadable and unavailable-recorded-body outcomes.
+
+### CT-083 · Add temporal ghost views for context changes
+`status: done` · `tier: C` · `size: L` · `source: IDEAS.md §3`
+
+**Done when:** two selected turns can be overlaid with explicit item identity,
+confidence and a refusal for incomparable content.
+
+**2026-08-11 — completed.** `ct ghost`, MCP and the desktop evidence panel
+classify gained, retained and removed items by stable identity, carry each
+item's confidence, bound token deltas using the existing instrument model, and
+refuse incomparable token instruments.
 
 ### CT-076 · Close the desktop's gap on the CLI
 `status: done` · `tier: A` · `size: L` · `source: product decision`
@@ -2157,7 +2162,7 @@ matches, the label stays the bare tool name: a wrong filename is worse than no
 filename.
 
 A second defect surfaced only once real paths were in the rows. Truncating
-`C:\Users\anesk\source\repos\VoxMux\BACKLOG.md` from the right yields a label
+`C:\work\OtherProject\BACKLOG.md` from the right yields a label
 naming a machine and a repository but not a file — the one thing being looked
 for. Long labels now lose their middle instead, which suits paths (informative
 tail) and commands (informative head) alike.

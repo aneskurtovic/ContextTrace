@@ -1,8 +1,7 @@
 # Continuous integration
 
-ContextTrace is built by the self-hosted [Woodpecker CI](https://woodpecker-ci.org/)
-instance at `ci.aneskurtovic.com`. The shared services are described by the
-separate `infra` repository; this repository carries only its own
+ContextTrace is built by a self-hosted [Woodpecker CI](https://woodpecker-ci.org/)
+controller. Shared infrastructure is maintained separately; this repository carries only its own
 [`.woodpecker/`](../.woodpecker) pipelines.
 
 Every job used to run on GitHub's `windows-latest`. Most of them did not need to.
@@ -329,7 +328,8 @@ Woodpecker's badge is keyed by the repository's numeric id. ContextTrace is
 id **5**:
 
 ```markdown
-[![status](https://ci.aneskurtovic.com/api/badges/5/status.svg)](https://ci.aneskurtovic.com/repos/5)
+The repository's Woodpecker dashboard is the source of truth for live pipeline
+status; no private controller URL is required to run the local checks below.
 ```
 
 ---

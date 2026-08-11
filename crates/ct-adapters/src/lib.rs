@@ -42,6 +42,7 @@ pub mod walk;
 pub use archive::FileArchiveStore;
 pub use claude_code::ClaudeCodeAdapter;
 pub use codex::CodexAdapter;
+pub use fingerprint::Sha256ContentHasher;
 pub use raw_source::FileRawEventSource;
 pub use tokenizers::{HeuristicEstimator, TiktokenEstimator};
 

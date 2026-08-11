@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 pub use ct_adapters::FileArchiveStore;
 use ct_adapters::{
-    ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, TiktokenEstimator,
+    ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, Sha256ContentHasher,
+    TiktokenEstimator,
 };
 use ct_application::{AgentBinding, ContextTrace};
 use ct_domain::ports::TokenEstimator;
@@ -80,6 +81,11 @@ pub fn heuristic_estimator(chars_per_token: f32) -> HeuristicEstimator {
 /// same filesystem adapter without making UI code construct driven adapters.
 pub fn raw_event_source(path: &str) -> impl ct_domain::ports::RawEventSource {
     FileRawEventSource::for_session(path)
+}
+
+/// The content identity used by parsers and instruction-file comparisons.
+pub fn content_hasher() -> impl ct_domain::ports::ContentHasher {
+    Sha256ContentHasher
 }
 
 /// The one store ContextTrace writes session copies to.

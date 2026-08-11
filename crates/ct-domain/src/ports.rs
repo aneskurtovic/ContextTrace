@@ -11,6 +11,7 @@
 //! out of adapter hands so a future agent integration cannot accidentally
 //! publish numbers that do not add up.
 
+use crate::model::analysis::ContentMeasurement;
 use crate::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use crate::model::compaction_diff::CompactionDiff;
 use crate::model::context::{CompactionEvent, ContextItem};
@@ -230,6 +231,14 @@ pub trait TokenEstimator: Send + Sync {
     fn chars_per_token(&self) -> Option<f32> {
         None
     }
+}
+
+/// A fixed-size content measurement supplied by the edge that knows the
+/// fingerprint algorithm. The application can compare a recorded payload
+/// with a current file without retaining either body or learning a hash
+/// implementation.
+pub trait ContentHasher: Send + Sync {
+    fn measure(&self, bytes: &[u8]) -> ContentMeasurement;
 }
 
 /// A driven port: fetching original bytes behind a [`SourceRef`].

@@ -11,6 +11,8 @@ import type {
   CompactionDiffUnavailableReason,
   CompactionItemDisposition,
   ContextDetail,
+  CostReport,
+  GhostItem,
   DoctorReport,
   ExportOutcome,
   LifecycleReport,
@@ -21,6 +23,9 @@ import type {
   SessionPage,
   SessionSummary,
   StartupSummary,
+  InstructionFileComparison,
+  InstructionFileReport,
+  TemporalGhost,
   ThreadRole,
   ToolDelta,
   TurnDiff,
@@ -39,6 +44,9 @@ import {
   demoSessions,
   demoStartup,
   demoTurnDiff,
+  demoInstructionFiles,
+  demoTemporalGhost,
+  demoCost,
 } from "./demo";
 
 const inTauri = () =>
@@ -571,6 +579,103 @@ function asTurnDiff(value: unknown): TurnDiff {
   return value as unknown as TurnDiff;
 }
 
+function isGhostItem(value: unknown): value is GhostItem {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    typeof value.category === "string" &&
+    typeof value.source === "string" &&
+    isNumberOrNull(value.leftTokens) &&
+    isNumberOrNull(value.rightTokens) &&
+    isNumberOrNull(value.tokenDelta) &&
+    typeof value.meaningfulTokenDelta === "boolean" &&
+    typeof value.confidence === "string" &&
+    confidenceLevels.has(value.confidence)
+  );
+}
+
+function asTemporalGhost(value: unknown): TemporalGhost {
+  if (!isRecord(value)) throw malformed("the temporal ghost");
+  if (value.status === "unavailable") {
+    if (
+      typeof value.leftTurn === "number" &&
+      typeof value.rightTurn === "number" &&
+      typeof value.reason === "string"
+    ) {
+      return value as unknown as TemporalGhost;
+    }
+  }
+  if (
+    value.status === "available" &&
+    typeof value.leftTurn === "number" &&
+    typeof value.rightTurn === "number" &&
+    isComparability(value.comparability) &&
+    Array.isArray(value.gained) &&
+    value.gained.every(isGhostItem) &&
+    Array.isArray(value.retained) &&
+    value.retained.every(isGhostItem) &&
+    Array.isArray(value.removed) &&
+    value.removed.every(isGhostItem) &&
+    Array.isArray(value.assumptions) &&
+    value.assumptions.every((item) => typeof item === "string")
+  ) {
+    return value as unknown as TemporalGhost;
+  }
+  throw malformed("the temporal ghost");
+}
+
+function isInstructionFileComparison(value: unknown): value is InstructionFileComparison {
+  return (
+    isRecord(value) &&
+    typeof value.path === "string" &&
+    isNumberOrNull(value.turn) &&
+    typeof value.line === "number" &&
+    typeof value.status === "string" &&
+    ["matching", "changed", "missing", "unreadable", "recordedBodyUnavailable"].includes(
+      value.status,
+    ) &&
+    isStringOrNull(value.recordedDigest) &&
+    isStringOrNull(value.currentDigest) &&
+    typeof value.recordedChars === "number" &&
+    isNumberOrNull(value.currentChars) &&
+    typeof value.comparisonBasis === "string" &&
+    isStringOrNull(value.detail)
+  );
+}
+
+function asInstructionFiles(value: unknown): InstructionFileReport {
+  if (
+    !isRecord(value) ||
+    typeof value.sessionId !== "string" ||
+    !isStringOrNull(value.projectRoot) ||
+    !Array.isArray(value.comparisons) ||
+    !value.comparisons.every(isInstructionFileComparison) ||
+    typeof value.refusalCount !== "number"
+  ) {
+    throw malformed("instruction-file comparison");
+  }
+  return value as unknown as InstructionFileReport;
+}
+
+function asCost(value: unknown): CostReport {
+  if (
+    !isRecord(value) ||
+    typeof value.sessionId !== "string" ||
+    typeof value.pricingVersion !== "string" ||
+    typeof value.pricingSource !== "string" ||
+    typeof value.warning !== "string" ||
+    !Array.isArray(value.categories) ||
+    typeof value.total !== "number" ||
+    !Array.isArray(value.turns) ||
+    !Array.isArray(value.unpriced) ||
+    !(value.forecast === null || isRecord(value.forecast))
+  ) {
+    throw malformed("cost report");
+  }
+  return value as unknown as CostReport;
+}
+
 /**
  * Compare a turn against another turn -- of the same session or a different
  * one. `left`/`right` each carry their own `agent`/`id` rather than sharing
@@ -587,6 +692,41 @@ export function getTurnDiff(left: TurnTarget, right: TurnTarget): Promise<TurnDi
     rightAgent: right.agent,
     rightTurn: right.turn,
   }).then(asTurnDiff);
+}
+
+export function getInstructionFiles(agent: Agent, id: string): Promise<InstructionFileReport> {
+  if (!inTauri()) return Promise.resolve(demoInstructionFiles(id));
+  return invoke<unknown>("get_instruction_files", { id, agent }).then(asInstructionFiles);
+}
+
+export function getCost(
+  agent: Agent,
+  id: string,
+  pricing: string | null,
+  forecastTurns: number | null,
+): Promise<CostReport> {
+  if (!inTauri()) return Promise.resolve(demoCost(id, forecastTurns ?? 0));
+  return invoke<unknown>("get_cost", {
+    id,
+    agent,
+    pricing,
+    forecastTurns,
+  }).then(asCost);
+}
+
+export function getTemporalGhost(
+  agent: Agent,
+  id: string,
+  leftTurn: number,
+  rightTurn: number,
+): Promise<TemporalGhost> {
+  if (!inTauri()) return Promise.resolve(demoTemporalGhost(leftTurn, rightTurn));
+  return invoke<unknown>("get_temporal_ghost", {
+    id,
+    agent,
+    leftTurn,
+    rightTurn,
+  }).then(asTemporalGhost);
 }
 
 function isResidualPoint(value: unknown): value is ResidualPoint {

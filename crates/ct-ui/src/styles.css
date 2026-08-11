@@ -14,6 +14,7 @@
   --blue: #4f8cff;
   --cyan: #47c6d6;
   --orange: #f1a759;
+  --amber: #f1a759;
   --green: #64c993;
   --pink: #d17adf;
 }
@@ -2063,3 +2064,18 @@ h2 {
   font-size: 11px;
   line-height: 1.5;
 }
+/* Evidence tools stay deliberately text-first: these are provenance reports,
+   not decorative dashboards, and long paths must remain readable at the
+   smallest supported native window. */
+.evidence-tools .button-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.evidence-result { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.evidence-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.5rem; align-items: center; padding: 0.4rem 0; }
+.evidence-row small { grid-column: 2 / -1; color: var(--muted); }
+.status-dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--muted); }
+.status-dot.matching { background: var(--green); }
+.status-dot.changed, .status-dot.missing, .status-dot.unreadable, .status-dot.recordedBodyUnavailable { background: var(--amber); }
+.ghost-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.ghost-item { padding: 0.35rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cost-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin-top: 0.75rem; }
+.cost-controls label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; }
+.cost-controls input { min-width: 12rem; }

@@ -123,6 +123,85 @@ export interface TurnDiff {
   tools: ToolDelta[];
 }
 
+export type InstructionFileStatus =
+  | "matching"
+  | "changed"
+  | "missing"
+  | "unreadable"
+  | "recordedBodyUnavailable";
+
+export interface InstructionFileComparison {
+  path: string;
+  turn: number | null;
+  line: number;
+  status: InstructionFileStatus;
+  recordedDigest: string | null;
+  currentDigest: string | null;
+  recordedChars: number;
+  currentChars: number | null;
+  comparisonBasis: string;
+  detail: string | null;
+}
+
+export interface InstructionFileReport {
+  sessionId: string;
+  projectRoot: string | null;
+  comparisons: InstructionFileComparison[];
+  refusalCount: number;
+}
+
+export interface CostCategory {
+  name: string;
+  tokens: number;
+  cost: number;
+  confidence: string;
+}
+
+export interface CostForecast {
+  additionalTurns: number;
+  averageTokensPerTurn: CostCategory[];
+  projectedAdditional: number;
+  projectedTotal: number;
+  assumptions: string[];
+}
+
+export interface CostReport {
+  sessionId: string;
+  pricingVersion: string;
+  pricingSource: string;
+  warning: string;
+  categories: CostCategory[];
+  total: number;
+  turns: unknown[];
+  unpriced: unknown[];
+  forecast: CostForecast | null;
+}
+
+export interface GhostItem {
+  id: string;
+  label: string;
+  category: string;
+  source: string;
+  leftTokens: number | null;
+  rightTokens: number | null;
+  tokenDelta: number | null;
+  meaningfulTokenDelta: boolean;
+  confidence: Confidence;
+}
+
+export type TemporalGhost =
+  | {
+      status: "available";
+      leftTurn: number;
+      rightTurn: number;
+      comparability: Comparability;
+      gained: GhostItem[];
+      retained: GhostItem[];
+      removed: GhostItem[];
+      assumptions: string[];
+    }
+  | { status: "unavailable"; leftTurn: number; rightTurn: number; reason: string };
+
 export interface SessionPage {
   sessions: SessionSummary[];
   total: number;

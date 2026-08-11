@@ -8,7 +8,7 @@
 
 ## Context
 
-`C:\Users\anesk\source\repos\ContextTrace` is an empty git repo (initialized, zero commits). We are building a
+`<repository>` is an empty git repo (initialized, zero commits). We are building a
 local-first tool that answers, for any Codex CLI or Claude Code session:
 
 > **What was in the model's context at this turn, where did it come from, how large was it, and how did it evolve?**

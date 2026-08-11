@@ -1,6 +1,6 @@
 # ContextTrace MVP status
 
-Assessment date: **2026-08-01**
+Assessment date: **2026-08-11**
 
 ## Bottom line
 
@@ -16,7 +16,7 @@ the desktop app covers its highest-value loop:
 6. opt into exact-duplicate, low-entropy and potential-secret diagnosis;
 7. see which local roots are read.
 
-It has **not reached a public, downloadable desktop MVP**. CI is green, the
+It has **not reached a public, downloadable desktop MVP**. Automated checks are green, the
 unsigned installer upgrades and launches locally, and installed 1024×680 and
 1440×900 acceptance now passes. A clean Windows host, downloaded release-asset
 and portable-CLI validation, and release-candidate soak remain. Windows signing
@@ -30,10 +30,10 @@ certificate procurement is deferred until the production-release decision.
 
 ## Evidence checked for this assessment
 
-| Check | Result through 2026-08-01 |
+| Check | Result through 2026-08-11 |
 |---|---|
 | Local repository | One local branch (`main`), no changes, stashes, extra worktrees, unmerged commits or unreachable commits before this documentation update |
-| Automated tests | 392 Rust tests plus 75 frontend tests |
+| Automated tests | Full workspace Rust tests plus 75 frontend tests; the new cost, instruction-file and temporal-ghost paths include focused contract tests |
 | Static verification | `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass |
 | Build | `cargo build --workspace --release` passes on Rust 1.97.1, Windows/MSVC |
 | Binary smoke | `ct 0.1.0` starts and exposes all eighteen documented commands |
@@ -42,7 +42,7 @@ certificate procurement is deferred until the production-release decision.
 | Format-drift sweep | 816 sessions (717 Claude Code, 99 Codex), 148,970 events, every type recognised, 5.88 seconds |
 | Privacy architecture | No application upload/telemetry code; core-only Tauri capability and local-IPC CSP. Agent directories are read-only. One adapter writes, and only when a session is explicitly archived or exported from either interface: copies go to `%LOCALAPPDATA%\ContextTrace-archive`, a sibling of the install directory rather than a child, so an uninstaller cannot take copies of already-deleted sessions with it. `ct roots` names that path whether or not anything has been archived, and credential shapes are replaced on ingest unless `--raw` is asked for and recorded |
 | Desktop acceptance | Real-corpus budgets, race handling, measurement-limit copy, keyboard semantics, loading/empty/error/malformed states and reduced motion pass; installed search and Codex/Claude filtering plus native 1024×680/1440×900 layouts pass against 816 sessions. Context Doctor's new responsive panel passes the same two viewport widths. |
-| Desktop differentiation | On-demand Context Doctor exposes exact repeats, low-entropy ranking and value-free potential-secret locations. Contributor rows open an observed lifecycle with compaction/branch/unknown departure semantics. Current release paths completed Doctor's analyses in 0.43 s plus 0.55 s and a 253-turn lifecycle sweep in 0.49 s. The desktop now also archives a session and verifies a copy, exports NDJSON, and compares turns across two sessions -- which is what makes `skewed` and `incomparable` reachable there at all. |
+| Desktop differentiation | On-demand Context Doctor exposes exact repeats, low-entropy ranking and value-free potential-secret locations. Contributor rows open an observed lifecycle with compaction/branch/unknown departure semantics. The desktop also archives a session and verifies a copy, exports NDJSON, compares turns across two sessions, estimates local cost with an explicit forecast, compares recorded instruction files and shows temporal context ghosts. |
 | Distribution | Windows CI is green; the 2026-08-01 unsigned NSIS candidate passed in-place upgrade plus local uninstall/fresh reinstall, restored shortcuts/uninstaller and launched successfully. The Doctor/lifecycle build subsequently rebuilt, upgraded in place and launched responsively; local staged CLI/checksums pass, while clean-machine downloaded-asset acceptance remains. |
 | Legal packaging | MIT `LICENSE` is present and included in the CLI archive |
 | crates.io packaging | `cargo package -p ct-cli --no-verify` fails because internal path dependencies have no registry version requirement |
@@ -67,7 +67,7 @@ evidence that one is required for the core workflow.
 
 | Gate | State | What remains |
 |---|---|---|
-| Core user workflow | Pass | The thirteen-command CLI covers discovery, inspection, reconstruction, exact Codex compaction diffs, diagnosis, lifecycle, comparison and export. |
+| Core user workflow | Pass | The eighteen-command CLI covers discovery, inspection, reconstruction, exact Codex compaction diffs, diagnosis, lifecycle, comparison, evidence tools and export. |
 | Desktop core workflow | Pass | Paged search, growth, race-safe turn selection, honest measurement limits, composition, contributors, lifecycle drill-down and opt-in Context Doctor pass automated acceptance; the previous installed native slice passed installer lifecycle acceptance. |
 | Two-agent support | Pass | Codex CLI and Claude Code adapters work against fixtures and the current local corpus. |
 | Honest measurements | Pass with limitation | Inline-image accounting is threshold-independent. A 40-session/3,353-turn exact audit could not reproduce the historical over-count and found no generic removal marker; the tool reports such cases as unknown rather than inventing semantics. |
@@ -84,11 +84,11 @@ evidence that one is required for the core workflow.
    production release, decide on and provision the certificate/timestamp
    service; the workflow will sign and verify both executables.
 
-The next product queue after release validation is CT-081 (local pricing and
-forecasting), CT-082 (recorded instruction bodies versus files on disk), and
-CT-083 (temporal context ghosting). Cost projection, family trees, fidelity
-trends, instruction signatures and the category treemap are implemented.
-Exact Codex compaction diffs (CT-027) are implemented.
+The next product queue after release validation is intentionally empty until
+the clean-machine evidence is complete. Cost projection, local pricing and
+forecasting, family trees, fidelity trends, instruction signatures and
+instruction-file comparisons, category treemap and temporal ghost views are
+implemented. Exact Codex compaction diffs (CT-027) are implemented.
 
 ## Main risks
 

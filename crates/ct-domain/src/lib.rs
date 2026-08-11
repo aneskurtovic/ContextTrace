@@ -49,3 +49,4 @@ pub use model::session::{
     AgentKind, AgentSession, SessionDescriptor, SessionMetadata, ThreadRole, Turn,
 };
 pub use model::tokens::{TokenCount, TokenUsage};
+pub use ports::ContentHasher;

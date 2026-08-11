@@ -182,9 +182,9 @@ Largest context contributors at turn 80 (total 181,510 [observed])
 Filter     category=tool-outputs, min-tokens=2000
            7 of 318 items, 36,691 of 181,510 tokens - 20.2% of this turn, excluding the unattributed remainder
 
-   14,729    8.1%  Tool outputs            Read C:\Users\anesk\source\repos\VoxMux\BACKLOG.md
+   14,729    8.1%  Tool outputs            Read C:\work\OtherProject\BACKLOG.md
                    claude:25  from tool: Read [estimated]
-    7,782    4.3%  Tool outputs            Read C:\Users\anesk\source\repos\VoxMux\docs\HANDOFF.md
+    7,782    4.3%  Tool outputs            Read C:\work\OtherProject\docs\HANDOFF.md
                    claude:51  from tool: Read [estimated]
     ...
 Shares are of the turn's full 181,510 tokens, so these rows deliberately do not
@@ -250,7 +250,7 @@ item actually appears:
 $ ct trace 257a927b --item claude:35
 
 Item      claude:35
-          Read C:\Users\anesk\source\repos\L…oids\client\e2e\game-a11y.spec.ts
+Read C:\work\OtherProject\client\e2e\game-a11y.spec.ts
 Category  Tool outputs, from tool: Read
 
 Entered   turn 4

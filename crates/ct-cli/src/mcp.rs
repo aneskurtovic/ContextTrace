@@ -106,6 +106,9 @@ fn tool_definitions() -> Vec<Value> {
         json!({"name":"doctor","description":"Diagnose format fidelity and context spikes for one session.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
         json!({"name":"fidelity","description":"Show parse fidelity per turn and unassigned events.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
         json!({"name":"instructions","description":"Show observed instruction signatures and changes without returning instruction bodies.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
+        json!({"name":"instruction_files","description":"Compare recorded repository instruction bodies with current files on disk. Refusals preserve missing/unavailable evidence.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
+        json!({"name":"cost","description":"Estimate observed request cost, optionally using a local pricing override and an explicit future-turn forecast.","inputSchema":object(json!({"id":{"type":"string"},"pricing":{"type":"string"},"forecast_turns":{"type":"integer","minimum":1},"model":{"type":"string"},"cap_input":{"type":"integer","minimum":0},"cap_output":{"type":"integer","minimum":0}}), &["id"])}),
+        json!({"name":"ghost","description":"Show context items gained, retained, and removed between two turns; refuses incomparable token instruments.","inputSchema":object(json!({"id":{"type":"string"},"left_turn":{"type":"integer","minimum":1},"right_turn":{"type":"integer","minimum":1}}), &["id","left_turn","right_turn"])}),
         json!({"name":"diff","description":"Compare two turns or sessions.","inputSchema":object(json!({"left":{"type":"string"},"right":{"type":"string"}}), &["left"])}),
         json!({"name":"secrets","description":"Find credential-shaped values without returning their values.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
         json!({"name":"recover_context_item","description":"Recover one context item's raw record. Redacted by default; raw=true is an explicit opt-out and is recorded in the response.","inputSchema":object(json!({"id":{"type":"string"},"turn":{"type":"integer","minimum":1},"item":{"type":"string"},"raw":{"type":"boolean"}}), &["id","item"])}),
@@ -260,6 +263,83 @@ fn call_tool(
             let (session, resolved) = app.load_with_archive(id, archive)?;
             Ok(with_source(
                 serde_json::to_value(ct_application::instruction_drift(&session))?,
+                Some(&resolved.source),
+                false,
+            ))
+        }
+        "instruction_files" => {
+            let id = required_string(&args, "id")?;
+            let (session, resolved) = app.load_with_content_analysis_and_archive(id, archive)?;
+            let hasher = ct_runtime::content_hasher();
+            Ok(with_source(
+                serde_json::to_value(ct_application::compare_instruction_files(&session, &hasher))?,
+                Some(&resolved.source),
+                false,
+            ))
+        }
+        "cost" => {
+            let id = required_string(&args, "id")?;
+            let (session, resolved) = app.load_with_archive(id, archive)?;
+            let pricing = args
+                .get("pricing")
+                .and_then(Value::as_str)
+                .map(ct_application::PricingOverrides::from_path)
+                .transpose()?;
+            let scenario = ct_application::CostScenario {
+                model_override: args
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                cap_input_tokens: args
+                    .get("cap_input")
+                    .and_then(Value::as_u64)
+                    .map(|n| n as u32),
+                cap_output_tokens: args
+                    .get("cap_output")
+                    .and_then(Value::as_u64)
+                    .map(|n| n as u32),
+                forecast_turns: args
+                    .get("forecast_turns")
+                    .and_then(Value::as_u64)
+                    .map(|n| n as u32),
+                pricing,
+            };
+            let value = if scenario.model_override.is_none()
+                && scenario.cap_input_tokens.is_none()
+                && scenario.cap_output_tokens.is_none()
+            {
+                serde_json::to_value(ct_application::project_cost_scenario(&session, &scenario))?
+            } else {
+                serde_json::to_value(ct_application::compare_cost(&session, &scenario))?
+            };
+            Ok(with_source(value, Some(&resolved.source), false))
+        }
+        "ghost" => {
+            let id = required_string(&args, "id")?;
+            let left_turn = args
+                .get("left_turn")
+                .and_then(Value::as_u64)
+                .ok_or("ghost requires left_turn")? as u32;
+            let right_turn = args
+                .get("right_turn")
+                .and_then(Value::as_u64)
+                .ok_or("ghost requires right_turn")? as u32;
+            let (session, resolved) = app.load_with_archive(id, archive)?;
+            let left_turn = ct_domain::TurnNumber::new(left_turn)?;
+            let right_turn = ct_domain::TurnNumber::new(right_turn)?;
+            let calibration = session_estimator(app, &session, resolved.binding);
+            let left_snapshot = calibration.snapshot(app, &session, resolved.binding, left_turn)?;
+            let right_snapshot =
+                calibration.snapshot(app, &session, resolved.binding, right_turn)?;
+            let instrument = calibration.instrument(app, resolved.binding);
+            let report = ct_application::temporal_ghost(
+                &left_snapshot,
+                instrument.clone(),
+                &right_snapshot,
+                instrument,
+            );
+            Ok(with_source(
+                serde_json::to_value(report)?,
                 Some(&resolved.source),
                 false,
             ))

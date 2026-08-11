@@ -20,9 +20,11 @@ import type {
   CompactionDiffUnavailableReason,
   CompactionItemDisposition,
   ContextDetail,
+  CostReport,
   DoctorReport,
   ExportOutcome,
   GrowthPoint,
+  InstructionFileReport,
   LifecycleReport,
   ResidualPoint,
   ResidualReport,
@@ -32,6 +34,7 @@ import type {
   StartupSummary,
   TurnDiff,
   TurnTarget,
+  TemporalGhost,
 } from "./types";
 
 type AgentFilter = "all" | Agent;
@@ -1729,6 +1732,137 @@ function ExportControl({
   );
 }
 
+function EvidenceTools({
+  instructionFiles,
+  instructionFilesLoading,
+  onRunInstructionFiles,
+  ghost,
+  ghostLoading,
+  onRunGhost,
+  currentTurn,
+  pinnedTurn,
+  cost,
+  costLoading,
+  onRunCost,
+}: {
+  instructionFiles: InstructionFileReport | null;
+  instructionFilesLoading: boolean;
+  onRunInstructionFiles: () => void;
+  ghost: TemporalGhost | null;
+  ghostLoading: boolean;
+  onRunGhost: () => void;
+  currentTurn: number | null;
+  pinnedTurn: number | null;
+  cost: CostReport | null;
+  costLoading: boolean;
+  onRunCost: (pricingPath: string | null, forecastTurns: number | null) => void;
+}) {
+  const [pricingPath, setPricingPath] = useState("");
+  const [forecastTurns, setForecastTurns] = useState("10");
+  return (
+    <section className="panel evidence-tools" aria-labelledby="evidence-tools-heading">
+      <div className="panel-heading">
+        <div>
+          <span className="eyebrow">Evidence tools</span>
+          <h2 id="evidence-tools-heading">What changed outside the headline total?</h2>
+        </div>
+        <div className="button-row">
+          <button type="button" onClick={onRunInstructionFiles} disabled={instructionFilesLoading}>
+            {instructionFilesLoading ? "Comparing files…" : "Compare instruction files"}
+          </button>
+          <button
+            type="button"
+            onClick={onRunGhost}
+            disabled={ghostLoading || pinnedTurn == null || currentTurn == null}
+          >
+            {ghostLoading ? "Building ghost…" : "Show turn ghost"}
+          </button>
+        </div>
+      </div>
+      {instructionFiles && (
+        <div className="evidence-result">
+          <strong>Instruction files</strong>
+          {instructionFiles.comparisons.length === 0 ? (
+            <p>No repository instruction files were recorded.</p>
+          ) : (
+            instructionFiles.comparisons.map((comparison) => (
+              <div className="evidence-row" key={`${comparison.path}:${comparison.line}`}>
+                <span className={`status-dot ${comparison.status}`} />
+                <code>{comparison.path}</code>
+                <span>{comparison.status}</span>
+                <small>{comparison.detail}</small>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      {ghost && (
+        <div className="evidence-result">
+          <strong>Temporal ghost</strong>
+          {ghost.status === "unavailable" ? (
+            <p>{ghost.reason}</p>
+          ) : (
+            <>
+              <p>
+                Turn {ghost.leftTurn} → {ghost.rightTurn}: {ghost.gained.length} gained, {ghost.retained.length} retained, {ghost.removed.length} removed.
+              </p>
+              <div className="ghost-columns">
+                {(["gained", "removed"] as const).map((group) => (
+                  <div key={group}>
+                    <span className="eyebrow">{group}</span>
+                    {ghost[group].slice(0, 8).map((item) => (
+                      <div className="ghost-item" key={`${group}:${item.id}`}>
+                        {item.label} <small>{item.confidence}</small>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      <div className="evidence-result">
+        <strong>Cost forecast</strong>
+        <div className="cost-controls">
+          <label>
+            Local pricing JSON
+            <input
+              value={pricingPath}
+              onChange={(event) => setPricingPath(event.target.value)}
+              placeholder="optional path"
+            />
+          </label>
+          <label>
+            Additional turns
+            <input
+              type="text"
+              inputMode="numeric"
+              aria-label="Additional forecast turns"
+              value={forecastTurns}
+              onChange={(event) => setForecastTurns(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={costLoading}
+            onClick={() => onRunCost(pricingPath.trim() || null, Number(forecastTurns) || null)}
+          >
+            {costLoading ? "Estimating…" : "Estimate"}
+          </button>
+        </div>
+        {cost && (
+          <p>
+            {cost.pricingSource}: ${(cost.total / 1_000_000).toFixed(6)} observed
+            {cost.forecast &&
+              ` · $${(cost.forecast.projectedTotal / 1_000_000).toFixed(6)} projected`}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SessionWorkspace({
   detail,
   context,
@@ -1776,6 +1910,15 @@ function SessionWorkspace({
   onTurn,
   onCompaction,
   onCloseCompaction,
+  instructionFiles,
+  instructionFilesLoading,
+  onRunInstructionFiles,
+  ghost,
+  ghostLoading,
+  onRunGhost,
+  cost,
+  costLoading,
+  onRunCost,
 }: {
   detail: SessionDetail;
   context: ContextDetail | null;
@@ -1823,6 +1966,15 @@ function SessionWorkspace({
   onTurn: (turn: number) => void;
   onCompaction: (lineNo: number) => void;
   onCloseCompaction: () => void;
+  instructionFiles: InstructionFileReport | null;
+  instructionFilesLoading: boolean;
+  onRunInstructionFiles: () => void;
+  ghost: TemporalGhost | null;
+  ghostLoading: boolean;
+  onRunGhost: () => void;
+  cost: CostReport | null;
+  costLoading: boolean;
+  onRunCost: (pricingPath: string | null, forecastTurns: number | null) => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
   const measuredTurns = growth.filter((point) => point.promptTokens != null);
@@ -1979,6 +2131,20 @@ function SessionWorkspace({
 
       <UnloggedContext report={residual} loading={residualLoading} onRun={onRunResidual} />
 
+      <EvidenceTools
+        instructionFiles={instructionFiles}
+        instructionFilesLoading={instructionFilesLoading}
+        onRunInstructionFiles={onRunInstructionFiles}
+        ghost={ghost}
+        ghostLoading={ghostLoading}
+        onRunGhost={onRunGhost}
+        currentTurn={context?.turn ?? null}
+        pinnedTurn={pinnedTurn}
+        cost={cost}
+        costLoading={costLoading}
+        onRunCost={onRunCost}
+      />
+
       <ArchivePanel
         holding={archive}
         loading={archiveLoading}
@@ -2092,6 +2258,12 @@ export default function App() {
   // Redaction is the default here even though `ct export`'s is not; see
   // `ExportControl` for why the destination changes the answer.
   const [exportKeepSecrets, setExportKeepSecrets] = useState(false);
+  const [instructionFiles, setInstructionFiles] = useState<InstructionFileReport | null>(null);
+  const [instructionFilesLoading, setInstructionFilesLoading] = useState(false);
+  const [ghost, setGhost] = useState<TemporalGhost | null>(null);
+  const [ghostLoading, setGhostLoading] = useState(false);
+  const [cost, setCost] = useState<CostReport | null>(null);
+  const [costLoading, setCostLoading] = useState(false);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
@@ -2101,6 +2273,7 @@ export default function App() {
   const residualRequest = useRef(0);
   const catalogRequest = useRef(0);
   const archiveRequest = useRef(0);
+  const evidenceRequest = useRef(0);
 
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
@@ -2219,6 +2392,12 @@ export default function App() {
       setExportOutcome(null);
       setExportError(null);
       setExporting(false);
+      setInstructionFiles(null);
+      setGhost(null);
+      setInstructionFilesLoading(false);
+      setGhostLoading(false);
+      setCost(null);
+      setCostLoading(false);
       return;
     }
     const request = ++sessionRequest.current;
@@ -2236,12 +2415,18 @@ export default function App() {
     setCompactionDiff(null);
     setCompactionLineNo(null);
     setResidual(null);
+    setInstructionFiles(null);
+    setGhost(null);
+    setCost(null);
     setLoadingDetail(true);
     setLoadingContext(false);
     setLoadingDoctor(false);
     setLoadingLifecycle(false);
     setLoadingCompaction(false);
     setLoadingResidual(false);
+    setInstructionFilesLoading(false);
+    setGhostLoading(false);
+    setCostLoading(false);
     // The baseline, the cross-session pick and the last export result all
     // name a specific session; carrying any of them into a newly selected one
     // would present a stale answer as though it were about the session now on
@@ -2353,6 +2538,68 @@ export default function App() {
       if (request === residualRequest.current) setLoadingResidual(false);
     }
   }, [selected]);
+
+  const runInstructionFiles = useCallback(async () => {
+    if (!selected) return;
+    const request = ++evidenceRequest.current;
+    const session = selected;
+    setInstructionFilesLoading(true);
+    setError(null);
+    try {
+      const report = await api.getInstructionFiles(session.agent, session.id);
+      if (request === evidenceRequest.current && sameSession(session, selected)) {
+        setInstructionFiles(report);
+      }
+    } catch (loadError) {
+      if (request === evidenceRequest.current) setError(errorMessage(loadError));
+    } finally {
+      if (request === evidenceRequest.current) setInstructionFilesLoading(false);
+    }
+  }, [selected]);
+
+  const runGhost = useCallback(async () => {
+    if (!selected || !context || pinnedTurn == null || pinnedTurn === context.turn) return;
+    const request = ++evidenceRequest.current;
+    const session = selected;
+    setGhostLoading(true);
+    setError(null);
+    try {
+      const report = await api.getTemporalGhost(
+        session.agent,
+        session.id,
+        pinnedTurn,
+        context.turn,
+      );
+      if (request === evidenceRequest.current && sameSession(session, selected)) {
+        setGhost(report);
+      }
+    } catch (loadError) {
+      if (request === evidenceRequest.current) setError(errorMessage(loadError));
+    } finally {
+      if (request === evidenceRequest.current) setGhostLoading(false);
+    }
+  }, [context, pinnedTurn, selected]);
+
+  const runCost = useCallback(
+    async (pricingPath: string | null, forecastTurns: number | null) => {
+      if (!selected) return;
+      const request = ++evidenceRequest.current;
+      const session = selected;
+      setCostLoading(true);
+      setError(null);
+      try {
+        const report = await api.getCost(session.agent, session.id, pricingPath, forecastTurns);
+        if (request === evidenceRequest.current && sameSession(session, selected)) {
+          setCost(report);
+        }
+      } catch (loadError) {
+        if (request === evidenceRequest.current) setError(errorMessage(loadError));
+      } finally {
+        if (request === evidenceRequest.current) setCostLoading(false);
+      }
+    },
+    [selected],
+  );
 
   const inspectContributor = useCallback(
     async (item: string) => {
@@ -2755,6 +3002,15 @@ export default function App() {
             onTurn={selectTurn}
             onCompaction={inspectCompaction}
             onCloseCompaction={closeCompaction}
+            instructionFiles={instructionFiles}
+            instructionFilesLoading={instructionFilesLoading}
+            onRunInstructionFiles={runInstructionFiles}
+            ghost={ghost}
+            ghostLoading={ghostLoading}
+            onRunGhost={runGhost}
+            cost={cost}
+            costLoading={costLoading}
+            onRunCost={runCost}
           />
         ) : (
           <div className="workspace-centered empty-workspace">

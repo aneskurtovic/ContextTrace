@@ -6,8 +6,10 @@ import type {
   Comparability,
   CompactionDiff,
   ContextDetail,
+  CostReport,
   DoctorReport,
   GrowthPoint,
+  InstructionFileReport,
   LifecycleReport,
   ResidualPoint,
   ResidualReport,
@@ -18,6 +20,7 @@ import type {
   ThreadRole,
   TurnDiff,
   TurnTarget,
+  TemporalGhost,
 } from "./types";
 
 /** The log line the demo session's one compaction marker sits on. Arbitrary
@@ -655,6 +658,80 @@ export function demoTurnDiff(left: TurnTarget, right: TurnTarget): TurnDiff {
         meaningful: bound != null && Math.abs(r.tokens - l.tokens) > bound,
       };
     }),
+  };
+}
+
+export function demoInstructionFiles(id: string): InstructionFileReport {
+  return {
+    sessionId: id,
+    projectRoot: "C:\\work\\ContextTrace",
+    comparisons: [
+      {
+        path: "C:\\work\\ContextTrace\\AGENTS.md",
+        turn: 1,
+        line: 3,
+        status: "matching",
+        recordedDigest: "a".repeat(64),
+        currentDigest: "a".repeat(64),
+        recordedChars: 1280,
+        currentChars: 1280,
+        comparisonBasis: "SHA-256 of the recorded attachment payload versus SHA-256 of current file bytes",
+        detail: "recorded attachment content fingerprint equals current file bytes",
+      },
+    ],
+    refusalCount: 0,
+  };
+}
+
+export function demoTemporalGhost(leftTurn: number, rightTurn: number): TemporalGhost {
+  const left = demoContext(leftTurn);
+  const right = demoContext(rightTurn);
+  const item = (candidate: typeof left.contributors[number], side: "left" | "right") => ({
+    id: candidate.id,
+    label: candidate.label,
+    category: candidate.category,
+    source: candidate.source,
+    leftTokens: side === "left" ? candidate.tokens : null,
+    rightTokens: side === "right" ? candidate.tokens : null,
+    tokenDelta: null,
+    meaningfulTokenDelta: false,
+    confidence: candidate.confidence,
+  });
+  return {
+    status: "available",
+    leftTurn,
+    rightTurn,
+    comparability: { kind: "identical", estimator: "demo" },
+    gained: [item(right.contributors[1], "right")],
+    retained: [item(left.contributors[0], "left")],
+    removed: [item(left.contributors[2], "left")],
+    assumptions: [
+      "Demo content is illustrative and is not read from a local session.",
+      "Item identity is the adapter's stable context-item id; it is not a text diff.",
+    ],
+  };
+}
+
+export function demoCost(id: string, forecastTurns: number): CostReport {
+  const category = { name: "input", tokens: 48_000, cost: 240_000, confidence: "estimated" };
+  return {
+    sessionId: id,
+    pricingVersion: "demo",
+    pricingSource: "synthetic demo table",
+    warning: "Demo data; no local pricing file was read.",
+    categories: [category],
+    total: category.cost,
+    turns: [],
+    unpriced: [],
+    forecast: forecastTurns > 0
+      ? {
+          additionalTurns: forecastTurns,
+          averageTokensPerTurn: [category],
+          projectedAdditional: category.cost * forecastTurns,
+          projectedTotal: category.cost * (forecastTurns + 1),
+          assumptions: ["Demo forecast uses one synthetic priced turn."],
+        }
+      : null,
   };
 }
 

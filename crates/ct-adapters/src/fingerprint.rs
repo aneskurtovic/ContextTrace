@@ -5,7 +5,7 @@
 //! and compress content while the parsed JSON value is already in memory and
 //! retain only the digest and two byte counts.
 
-use ct_domain::{ContentFingerprint, ContentMeasurement};
+use ct_domain::{ContentFingerprint, ContentHasher, ContentMeasurement};
 use miniz_oxide::deflate::compress_to_vec;
 use serde_json::Value;
 
@@ -39,6 +39,22 @@ fn bytes(value: &[u8]) -> ContentMeasurement {
         value.len(),
         compressed.len(),
     )
+}
+
+/// The same measurement used while parsing an event, exposed for comparisons
+/// against a file that exists outside the session log.
+pub fn measure_bytes(value: &[u8]) -> ContentMeasurement {
+    bytes(value)
+}
+
+/// Adapter-owned implementation of the domain's content-measurement port.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Sha256ContentHasher;
+
+impl ContentHasher for Sha256ContentHasher {
+    fn measure(&self, bytes: &[u8]) -> ContentMeasurement {
+        measure_bytes(bytes)
+    }
 }
 
 // Kept here instead of adding a hashing crate because this project's

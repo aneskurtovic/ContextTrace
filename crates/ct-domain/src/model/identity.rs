@@ -176,6 +176,11 @@ impl ContentFingerprint {
     pub fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
+
+    /// Stable lowercase hexadecimal form for reports and diagnostics.
+    pub fn hex(&self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -212,7 +212,7 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
 /// Best-effort reversal of Claude Code's directory slugification.
 ///
 /// The scheme replaces path separators and colons with `-`, which is lossy:
-/// `C--Users-anesk-source-repos-my-project` could have come from either
+/// `C--Users-tester-source-repos-my-project` could have come from either
 /// `my-project` or `my/project`. So this is a display fallback only, used when
 /// the session's own recorded `cwd` is unavailable, and never as an identifier.
 fn unslug(slug: &str) -> String {
@@ -319,8 +319,8 @@ mod tests {
     #[test]
     fn unslugs_windows_project_directories() {
         assert_eq!(
-            unslug("C--Users-anesk-source-repos-ContextTrace"),
-            "C:\\Users\\anesk\\source\\repos\\ContextTrace"
+            unslug("C--Users-tester-source-repos-ContextTrace"),
+            "C:\\Users\\tester\\source\\repos\\ContextTrace"
         );
     }
 

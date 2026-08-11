@@ -93,7 +93,7 @@ pub fn ellipsize(s: &str, max: usize) -> String {
 /// Shorten by removing the middle, keeping both ends.
 ///
 /// For anything path-shaped, cutting the tail throws away the only part that
-/// identifies it: `C:\Users\anesk\source\repos\VoxMux\BACKLO…` names a machine
+/// identifies it: `C:\work\OtherProject\BACKLO…` names a machine
 /// and a repository but not a file. Commands are the opposite -- their start
 /// carries the meaning -- so keeping both ends is the one rule that serves both.
 pub fn ellipsize_middle(s: &str, max: usize) -> String {
@@ -249,7 +249,8 @@ mod tests {
         // The regression this guards: cutting the tail off an absolute path
         // leaves a row that names a machine and a repository but not a file,
         // which is the one thing the reader is looking for.
-        let path = "Tool output: Read C:\\Users\\anesk\\source\\repos\\VoxMux\\docs\\HANDBOOK.md";
+        let path =
+            "Tool output: Read C:\\Users\\tester\\source\\repos\\OtherProject\\docs\\HANDBOOK.md";
         let short = ellipsize_middle(path, 48);
         assert!(short.starts_with("Tool output: Read"), "got {short}");
         assert!(

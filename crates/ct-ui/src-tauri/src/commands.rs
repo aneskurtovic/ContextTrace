@@ -756,6 +756,75 @@ impl AppState {
         Ok(TurnDiffSummary::from(diff))
     }
 
+    fn instruction_files(
+        &self,
+        agent: AgentKind,
+        id: &str,
+    ) -> Result<ct_application::InstructionFileReport, String> {
+        let cached = self.cached_session(agent, id, true)?;
+        let hasher = ct_runtime::content_hasher();
+        Ok(ct_application::compare_instruction_files(
+            &cached.session,
+            &hasher,
+        ))
+    }
+
+    fn cost(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        pricing_path: Option<&str>,
+        forecast_turns: Option<u32>,
+    ) -> Result<ct_application::CostReport, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let pricing = pricing_path
+            .map(ct_application::PricingOverrides::from_path)
+            .transpose()?;
+        Ok(ct_application::project_cost_scenario(
+            &cached.session,
+            &ct_application::CostScenario {
+                forecast_turns,
+                pricing,
+                ..Default::default()
+            },
+        ))
+    }
+
+    fn temporal_ghost(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        left_turn: u32,
+        right_turn: u32,
+    ) -> Result<ct_application::TemporalGhost, String> {
+        let left_turn = TurnNumber::new(left_turn).map_err(|error| error.to_string())?;
+        let right_turn = TurnNumber::new(right_turn).map_err(|error| error.to_string())?;
+        let cached = self.cached_session(agent, id, false)?;
+        let fitted = cached
+            .chars_per_token()
+            .map(ct_runtime::heuristic_estimator);
+        let estimator: &dyn TokenEstimator = match fitted.as_ref() {
+            Some(estimator) => estimator,
+            None => self.app.binding_estimator(cached.binding),
+        };
+        let left = self
+            .app
+            .snapshot_with(&cached.session, cached.binding, left_turn, estimator)
+            .map_err(|error| error.to_string())?;
+        let right = self
+            .app
+            .snapshot_with(&cached.session, cached.binding, right_turn, estimator)
+            .map_err(|error| error.to_string())?;
+        let instrument =
+            ct_application::Instrument::new(estimator.name(), estimator.chars_per_token());
+        Ok(ct_application::temporal_ghost(
+            &left,
+            instrument.clone(),
+            &right,
+            instrument,
+        ))
+    }
+
     /// The unlogged remainder across a session's turns: CT-072's signature
     /// measurement, previously reachable only from `ct residual`.
     ///
@@ -2106,6 +2175,42 @@ pub fn get_turn_diff(
         &right_id,
         right_turn,
     )
+}
+
+#[tauri::command]
+pub fn get_instruction_files(
+    id: String,
+    agent: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ct_application::InstructionFileReport, String> {
+    state.instruction_files(parse_agent(&agent)?, &id)
+}
+
+#[tauri::command]
+pub fn get_cost(
+    id: String,
+    agent: String,
+    pricing: Option<String>,
+    forecast_turns: Option<u32>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ct_application::CostReport, String> {
+    state.cost(
+        parse_agent(&agent)?,
+        &id,
+        pricing.as_deref(),
+        forecast_turns,
+    )
+}
+
+#[tauri::command]
+pub fn get_temporal_ghost(
+    id: String,
+    agent: String,
+    left_turn: u32,
+    right_turn: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<ct_application::TemporalGhost, String> {
+    state.temporal_ghost(parse_agent(&agent)?, &id, left_turn, right_turn)
 }
 
 #[tauri::command]

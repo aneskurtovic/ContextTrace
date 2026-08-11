@@ -60,6 +60,12 @@ enum Command {
         /// Price every turn as this model instead of its recorded model
         #[arg(long)]
         model: Option<String>,
+        /// JSON file with local model-prefix rates, in microdollars per million tokens
+        #[arg(long)]
+        pricing: Option<String>,
+        /// Forecast this many additional turns from the session's average priced turn
+        #[arg(long)]
+        forecast_turns: Option<u32>,
         #[arg(long)]
         json: bool,
     },
@@ -74,6 +80,14 @@ enum Command {
 
     /// Show observed instruction-artifact signatures and changes.
     Instructions {
+        /// Session id, or an unambiguous prefix
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Compare recorded instruction-file bodies with the current files on disk.
+    InstructionFiles {
         /// Session id, or an unambiguous prefix
         id: String,
         #[arg(long)]
@@ -298,6 +312,18 @@ enum Command {
         left: String,
         /// Right side: `<id>[@<turn>]`
         right: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show context items gained, retained, and removed between two turns.
+    Ghost {
+        /// Session id, or an unambiguous prefix
+        id: String,
+        /// Earlier turn
+        left_turn: u32,
+        /// Later turn
+        right_turn: u32,
         #[arg(long)]
         json: bool,
     },
@@ -532,16 +558,31 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             cap_input,
             cap_output,
             model,
+            pricing,
+            forecast_turns,
             json,
         } => {
             let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
+            let pricing = pricing
+                .as_deref()
+                .map(ct_application::PricingOverrides::from_path)
+                .transpose()?;
             let scenario = ct_application::CostScenario {
                 model_override: model,
                 cap_input_tokens: cap_input,
                 cap_output_tokens: cap_output,
+                forecast_turns,
+                pricing,
             };
-            if scenario == ct_application::CostScenario::default() {
-                render::cost(&ct_application::project_cost(&session), &resolved, json);
+            if scenario.model_override.is_none()
+                && scenario.cap_input_tokens.is_none()
+                && scenario.cap_output_tokens.is_none()
+            {
+                render::cost(
+                    &ct_application::project_cost_scenario(&session, &scenario),
+                    &resolved,
+                    json,
+                );
             } else {
                 render::cost_comparison(
                     &ct_application::compare_cost(&session, &scenario),
@@ -561,6 +602,15 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             render::instructions(
                 &ct_application::instruction_drift(&session),
                 &resolved,
+                json,
+            );
+        }
+
+        Command::InstructionFiles { id, json } => {
+            let (session, _) = app.load_with_content_analysis_and_archive(&id, &archive_store)?;
+            let hasher = ct_runtime::content_hasher();
+            render::instruction_files(
+                &ct_application::compare_instruction_files(&session, &hasher),
                 json,
             );
         }
@@ -856,6 +906,30 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 },
             );
             render::diff(&diff, json);
+        }
+
+        Command::Ghost {
+            id,
+            left_turn,
+            right_turn,
+            json,
+        } => {
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
+            let left_turn = TurnNumber::new(left_turn)?;
+            let right_turn = TurnNumber::new(right_turn)?;
+            let calibration = session_estimator(&app, &session, resolved.binding);
+            let left_snapshot =
+                calibration.snapshot(&app, &session, resolved.binding, left_turn)?;
+            let right_snapshot =
+                calibration.snapshot(&app, &session, resolved.binding, right_turn)?;
+            let instrument = calibration.instrument(&app, resolved.binding);
+            let report = ct_application::temporal_ghost(
+                &left_snapshot,
+                instrument.clone(),
+                &right_snapshot,
+                instrument,
+            );
+            render::ghost(&report, json);
         }
 
         Command::Doctor { id, dir, json } => match (id, dir) {
