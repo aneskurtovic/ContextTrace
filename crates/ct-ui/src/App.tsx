@@ -219,7 +219,7 @@ function CrossSessionPicker({
   return (
     <div className="diff-cross-session">
       <label>
-        <span>Compare against</span>
+        <span>Compare this turn with</span>
         <select
           value={crossSession ? JSON.stringify(crossSession) : ""}
           onChange={(event) => {
@@ -230,7 +230,7 @@ function CrossSessionPicker({
             onSetCrossSession(JSON.parse(event.target.value));
           }}
         >
-          <option value="">This session, the turn on the slider</option>
+          <option value="">Another turn in this session</option>
           {otherSessions.map((session) => (
             <option
               key={`${session.agent}:${session.id}`}
@@ -243,7 +243,7 @@ function CrossSessionPicker({
       </label>
       {crossSession && (
         <label>
-          <span>Turn</span>
+          <span>Turn to compare</span>
           <input
             type="number"
             min={1}
@@ -298,14 +298,14 @@ function TurnComparison({
         <div className="panel-heading">
           <div>
             <span className="eyebrow">Turn comparison</span>
-            <h2 id="diff-heading">Baseline pinned at {sideLabel(leftTarget)}</h2>
+          <h2 id="diff-heading">Baseline pinned at {sideLabel(leftTarget)}</h2>
           </div>
         </div>
         {picker}
         <p className="diff-empty">
           {crossSession
             ? "Enter a turn number to compare against in the selected session."
-            : "Scrub the slider or pick a point on the chart to choose a turn to compare this one against, or pick a different session above."}
+            : "Pin a baseline, then choose another turn on the timeline or compare with a different session above."}
         </p>
       </section>
     );
@@ -745,7 +745,7 @@ function UnloggedContext({
       <div className="panel-heading doctor-heading">
         <div>
           <span className="eyebrow">Unlogged context</span>
-          <h2 id="residual-heading">What the agent never wrote down</h2>
+          <h2 id="residual-heading">What is missing from the log</h2>
         </div>
         <button className="doctor-run" onClick={onRun} disabled={loading}>
           {loading ? "Measuring locally…" : report ? "Measure again" : "Measure this session"}
@@ -860,7 +860,7 @@ function ContextComposition({ context }: { context: ContextDetail }) {
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Composition</span>
-          <h2 id="composition-heading">What filled the prompt</h2>
+          <h2 id="composition-heading">What filled the context window</h2>
         </div>
         <span className="panel-total">{context.totalTokens.toLocaleString()} tokens</span>
       </div>
@@ -956,7 +956,7 @@ function Contributors({
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Largest contributors</span>
-          <h2 id="contributors-heading">Where to look first</h2>
+          <h2 id="contributors-heading">Where the context went</h2>
         </div>
         <span className="count-pill">{contributors.length} shown</span>
       </div>
@@ -1277,7 +1277,7 @@ function ContextDoctor({
       <div className="panel-heading doctor-heading">
         <div>
           <span className="eyebrow">Context Doctor</span>
-          <h2 id="doctor-heading">Find avoidable context and potential credential exposure</h2>
+          <h2 id="doctor-heading">Find waste and possible secrets</h2>
         </div>
         <button className="doctor-run" onClick={onRun} disabled={loading}>
           {loading ? "Scanning locally…" : report ? "Scan again" : `Analyze turn ${turn}`}
@@ -1570,7 +1570,7 @@ function ArchivePanel({
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Archive</span>
-          <h2 id="archive-heading">What this tool has copied</h2>
+          <h2 id="archive-heading">Saved copies of this session</h2>
         </div>
         {holding && <span className="panel-total">{holding.entries.length} held</span>}
       </div>
@@ -1667,7 +1667,7 @@ function ExportControl({
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Export</span>
-          <h2 id="export-heading">Write this session to NDJSON</h2>
+          <h2 id="export-heading">Export this session</h2>
         </div>
       </div>
 
@@ -1758,24 +1758,24 @@ function EvidenceTools({
   onRunCost: (pricingPath: string | null, forecastTurns: number | null) => void;
 }) {
   const [pricingPath, setPricingPath] = useState("");
-  const [forecastTurns, setForecastTurns] = useState("10");
+  const [forecastTurns, setForecastTurns] = useState("");
   return (
     <section className="panel evidence-tools" aria-labelledby="evidence-tools-heading">
       <div className="panel-heading">
         <div>
-          <span className="eyebrow">Evidence tools</span>
-          <h2 id="evidence-tools-heading">What changed outside the headline total?</h2>
+          <span className="eyebrow">Investigate</span>
+          <h2 id="evidence-tools-heading">Investigate what changed</h2>
         </div>
         <div className="button-row">
           <button type="button" onClick={onRunInstructionFiles} disabled={instructionFilesLoading}>
-            {instructionFilesLoading ? "Comparing files…" : "Compare instruction files"}
+            {instructionFilesLoading ? "Checking files…" : "Check instruction files"}
           </button>
           <button
             type="button"
             onClick={onRunGhost}
             disabled={ghostLoading || pinnedTurn == null || currentTurn == null}
           >
-            {ghostLoading ? "Building ghost…" : "Show turn ghost"}
+            {ghostLoading ? "Reconstructing…" : "Find hidden changes"}
           </button>
         </div>
       </div>
@@ -1823,23 +1823,24 @@ function EvidenceTools({
         </div>
       )}
       <div className="evidence-result">
-        <strong>Cost forecast</strong>
+        <strong>Estimate future cost</strong>
         <div className="cost-controls">
           <label>
-            Local pricing JSON
+            Pricing file <span className="field-help">Optional; blank uses built-in rates.</span>
             <input
               value={pricingPath}
               onChange={(event) => setPricingPath(event.target.value)}
-              placeholder="optional path"
+              placeholder="e.g. C:\\path\\pricing.json"
             />
           </label>
           <label>
-            Additional turns
+            More turns <span className="field-help">How many future turns should we model?</span>
             <input
               type="text"
               inputMode="numeric"
               aria-label="Additional forecast turns"
               value={forecastTurns}
+              placeholder="e.g. 10"
               onChange={(event) => setForecastTurns(event.target.value)}
             />
           </label>
@@ -1989,6 +1990,7 @@ function SessionWorkspace({
 
   return (
     <main className="workspace" aria-busy={contextLoading}>
+      <div id="overview" className="workspace-section">
       <header className="workspace-header">
         <div>
           <div className="title-line">
@@ -2028,13 +2030,13 @@ function SessionWorkspace({
 
       <section className="metrics">
         <Metric
-          label="Peak prompt"
+          label="Largest prompt"
           value={formatTokens(detail.peakPromptTokens)}
           note={detail.peakTurn ? `at turn ${detail.peakTurn}` : "No usage recorded"}
           accent
         />
         <Metric
-          label="Window used"
+          label="Context used"
           value={formatPercent(peakUtilisation)}
           note={
             detail.contextWindow
@@ -2043,12 +2045,12 @@ function SessionWorkspace({
           }
         />
         <Metric
-          label="Conversation"
+          label="Turns"
           value={`${detail.turnCount}`}
           note={`${detail.eventCount.toLocaleString()} events`}
         />
         <Metric
-          label="Parse fidelity"
+          label="Data coverage"
           value={formatPercent(detail.fidelity)}
           note={
             detail.unrecognisedEvents
@@ -2061,8 +2063,8 @@ function SessionWorkspace({
       <section className="panel timeline-panel" aria-labelledby="timeline-heading">
         <div className="panel-heading">
           <div>
-            <span className="eyebrow">Prompt growth</span>
-            <h2 id="timeline-heading">Session timeline</h2>
+            <span className="eyebrow">Context over time</span>
+            <h2 id="timeline-heading">How this session grew</h2>
           </div>
           <div className="legend">
             <span><i className="legend-growth" /> prompt size</span>
@@ -2110,7 +2112,9 @@ function SessionWorkspace({
           </div>
         )}
       </section>
+      </div>
 
+      <div id="compare" className="workspace-section">
       <TurnComparison
         diff={turnDiff}
         loading={turnDiffLoading}
@@ -2128,7 +2132,9 @@ function SessionWorkspace({
         loading={compactionLoading}
         onClose={onCloseCompaction}
       />
+      </div>
 
+      <div id="insights" className="workspace-section">
       <UnloggedContext report={residual} loading={residualLoading} onRun={onRunResidual} />
 
       <EvidenceTools
@@ -2143,30 +2149,6 @@ function SessionWorkspace({
         cost={cost}
         costLoading={costLoading}
         onRunCost={onRunCost}
-      />
-
-      <ArchivePanel
-        holding={archive}
-        loading={archiveLoading}
-        selected={detail.session}
-        archiving={archiving}
-        archiveRaw={archiveRaw}
-        onToggleRaw={onToggleArchiveRaw}
-        onArchive={onArchiveSelected}
-        verifications={verifications}
-        onVerify={onVerifyEntry}
-        demoData={demoData}
-      />
-
-      <ExportControl
-        exporting={exporting}
-        outcome={exportOutcome}
-        error={exportError}
-        archiveRoot={archive?.root ?? null}
-        keepSecrets={exportKeepSecrets}
-        onToggleKeep={onToggleExportKeep}
-        onExport={onExportSelected}
-        demoData={demoData}
       />
 
       {contextLoading && !context ? (
@@ -2196,6 +2178,33 @@ function SessionWorkspace({
       ) : (
         <p className="empty-inline">This session has no reconstructable prompt turn.</p>
       )}
+      </div>
+
+      <div id="archive" className="workspace-section">
+        <ArchivePanel
+          holding={archive}
+          loading={archiveLoading}
+          selected={detail.session}
+          archiving={archiving}
+          archiveRaw={archiveRaw}
+          onToggleRaw={onToggleArchiveRaw}
+          onArchive={onArchiveSelected}
+          verifications={verifications}
+          onVerify={onVerifyEntry}
+          demoData={demoData}
+        />
+
+        <ExportControl
+          exporting={exporting}
+          outcome={exportOutcome}
+          error={exportError}
+          archiveRoot={archive?.root ?? null}
+          keepSecrets={exportKeepSecrets}
+          onToggleKeep={onToggleExportKeep}
+          onExport={onExportSelected}
+          demoData={demoData}
+        />
+      </div>
     </main>
   );
 }
@@ -2784,6 +2793,9 @@ export default function App() {
   }, [selected, exportKeepSecrets]);
 
   const visibleDetail = sameSession(detailFor, selected) ? detail : null;
+  const scrollToSection = useCallback((id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   return (
     <div className="app-shell">
@@ -2796,7 +2808,7 @@ export default function App() {
           </span>
           <div>
             <strong>ContextTrace</strong>
-            <span>Local context inspector</span>
+            <span>See what fills your AI context</span>
           </div>
         </header>
 
@@ -2804,7 +2816,7 @@ export default function App() {
           <span aria-hidden="true">⌕</span>
           <input
             type="search"
-            placeholder="Search sessions or projects"
+            placeholder="Find a project or session…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             aria-label="Search sessions"
@@ -2837,8 +2849,26 @@ export default function App() {
           </button>
         </div>
 
+        <nav className="primary-nav" aria-label="Workspace sections">
+          <span className="nav-label">Workspace</span>
+          {[
+            ["overview", "Overview", "Start with the session story"],
+            ["compare", "Compare", "See what changed between turns"],
+            ["insights", "Context insights", "Find waste and hidden changes"],
+            ["archive", "Save & export", "Keep or share the evidence"],
+          ].map(([id, label, detail]) => (
+            <button key={id} type="button" onClick={() => scrollToSection(id)}>
+              <span className="nav-index">{String(["overview", "compare", "insights", "archive"].indexOf(id) + 1).padStart(2, "0")}</span>
+              <span>
+                <strong>{label}</strong>
+                <small>{detail}</small>
+              </span>
+            </button>
+          ))}
+        </nav>
+
         <div className="session-list-heading" aria-live="polite" aria-atomic="true">
-          <span>{demoData ? "Demonstration sessions" : "Recent sessions"}</span>
+          <span>{demoData ? "Demonstration sessions" : "Your sessions"}</span>
           <span>
             {sessions.length === sessionTotal
               ? sessionTotal

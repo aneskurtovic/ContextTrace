@@ -57,7 +57,7 @@ What runs today:
 ## Install
 
 Windows x64 is the supported surface. There is no public download yet, so
-the working path is a local build from source; it produces the same two
+the working path is a local build from source; it produces the same three
 artifacts the release workflow packages.
 
 ### Prerequisites
@@ -113,22 +113,25 @@ that is the native app against the real read-only local adapters.
 
 Each `v<version>` tag produces a **draft** GitHub release, not yet public,
 containing `ContextTrace-<version>-windows-x64-setup.exe` (the per-user
-desktop installer), `ContextTrace-<version>-windows-x64-cli.zip` (the
-companion `ct.exe` and license), and `SHA256SUMS.txt` (SHA-256 hashes for
-both).
+desktop installer), `ContextTrace-<version>-windows-x64-portable.zip` (the
+desktop executable for extract-and-run use), `ContextTrace-<version>-windows-x64-cli.zip`
+(the companion `ct.exe` and license), and `SHA256SUMS.txt`.
 
 Before running a candidate, compare its hash with `SHA256SUMS.txt`:
 
 ```powershell
 Get-FileHash .\ContextTrace-<version>-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\ContextTrace-<version>-windows-x64-portable.zip -Algorithm SHA256
 Get-FileHash .\ContextTrace-<version>-windows-x64-cli.zip -Algorithm SHA256
 ```
 
 The desktop installer targets the current user and does not require
 administrator access. To upgrade, run the newer installer over the existing
 version; ContextTrace does not own or modify the Codex/Claude session
-directories it reads. The CLI ZIP is portable: extract it and run
-`.\ct.exe --help`.
+directories it reads. The desktop portable ZIP is for users who do not want
+an installer: extract it and run the included `context-trace.exe`. It still
+requires Microsoft Edge WebView2 Runtime. The CLI ZIP is also portable:
+extract it and run `.\ct.exe --help`.
 
 **Uninstalling does not remove archived sessions.** `ct archive` writes to
 `%LOCALAPPDATA%\ContextTrace-archive`, deliberately a sibling of the app's

@@ -1,22 +1,22 @@
 :root {
   font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
-  color: #edf2fa;
-  background: #080b11;
+  color: #eef3fb;
+  background: #0b1020;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #080b11;
-  --sidebar: #0c1018;
-  --panel: #111722;
-  --panel-hover: #151d2a;
-  --line: #202a3a;
-  --muted: #8490a2;
-  --dim: #5f6b7c;
-  --blue: #4f8cff;
-  --cyan: #47c6d6;
-  --orange: #f1a759;
-  --amber: #f1a759;
-  --green: #64c993;
-  --pink: #d17adf;
+  --bg: #0b1020;
+  --sidebar: #10172a;
+  --panel: #151e32;
+  --panel-hover: #1b2943;
+  --line: #2a3854;
+  --muted: #9aa9bf;
+  --dim: #70819d;
+  --blue: #7c9cff;
+  --cyan: #61d6d0;
+  --orange: #efb56f;
+  --amber: #efb56f;
+  --green: #70d4a2;
+  --pink: #c7a0ff;
 }
 
 * {
@@ -25,13 +25,16 @@
 
 body {
   margin: 0;
-  min-width: 1024px;
+  min-width: 0;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -54,7 +57,7 @@ button:disabled {
 .app-shell {
   display: grid;
   grid-template-columns: 326px minmax(0, 1fr);
-  height: 100vh;
+  min-height: 100vh;
   background:
     radial-gradient(circle at 84% -10%, rgba(47, 96, 183, .12), transparent 36%),
     var(--bg);
@@ -64,6 +67,10 @@ button:disabled {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  max-height: 100vh;
   border-right: 1px solid #1a2230;
   background: rgba(12, 16, 24, .95);
 }
@@ -184,6 +191,64 @@ button:disabled {
 .filter-row .refresh {
   margin-left: auto;
   font-size: 15px;
+}
+
+.primary-nav {
+  display: grid;
+  gap: 4px;
+  padding: 0 12px 15px;
+  border-bottom: 1px solid #202d45;
+}
+
+.nav-label {
+  padding: 2px 5px 5px;
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.primary-nav button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.primary-nav button:hover {
+  border-color: #2c4369;
+  background: #192640;
+  color: #f0f4fb;
+}
+
+.primary-nav button > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.primary-nav strong {
+  color: inherit;
+  font-size: 12px;
+}
+
+.primary-nav small {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.nav-index {
+  color: var(--blue);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .session-list-heading {
@@ -401,13 +466,30 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: visible;
 }
 
 .workspace {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+  min-height: 100vh;
+  overflow: visible;
   padding: 36px 42px 64px;
+}
+
+.workspace-section {
+  display: grid;
+  gap: 14px;
+  max-width: 1260px;
+  margin: 0 auto 24px;
+  scroll-margin-top: 24px;
+}
+
+.workspace-section > .workspace-header,
+.workspace-section > .metrics,
+.workspace-section > .panel,
+.workspace-section > .context-grid {
+  width: 100%;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 /* Deliberately part of the layout rather than a dismissible overlay: the
@@ -605,7 +687,7 @@ h2 {
 .panel {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(16, 22, 32, .83);
+  background: linear-gradient(145deg, rgba(21, 30, 50, .96), rgba(16, 24, 41, .96));
   box-shadow: 0 12px 40px rgba(0, 0, 0, .1);
 }
 
@@ -2079,3 +2161,126 @@ h2 {
 .cost-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin-top: 0.75rem; }
 .cost-controls label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; }
 .cost-controls input { min-width: 12rem; }
+
+/* Shared controls: native defaults were making the analysis forms look like
+   unrelated browser widgets. */
+select,
+input[type="text"],
+input[type="number"] {
+  min-height: 38px;
+  border: 1px solid #354766;
+  border-radius: 8px;
+  background: #0f1729;
+  color: #edf3fd;
+  outline: none;
+  padding: 0 11px;
+}
+
+select:focus,
+input[type="text"]:focus,
+input[type="number"]:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(124, 156, 255, .14);
+}
+
+select option {
+  background: #121b2e;
+  color: #edf3fd;
+}
+
+.diff-cross-session {
+  display: grid;
+  grid-template-columns: minmax(250px, 1fr) 160px;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 13px;
+  border: 1px solid #2a3a59;
+  border-radius: 10px;
+  background: rgba(11, 17, 31, .5);
+}
+
+.diff-cross-session label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.diff-cross-session label span,
+.cost-controls label {
+  display: grid;
+  gap: 3px;
+}
+
+.field-help {
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.button-row button,
+.cost-controls button,
+.panel-heading button {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid #3b5279;
+  border-radius: 8px;
+  background: #223556;
+  color: #edf3fd;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.button-row button:hover:not(:disabled),
+.cost-controls button:hover:not(:disabled),
+.panel-heading button:hover:not(:disabled) {
+  border-color: var(--blue);
+  background: #2d4772;
+}
+
+.button-row button:disabled,
+.cost-controls button:disabled {
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: relative;
+    height: auto;
+    max-height: none;
+  }
+
+  .session-list {
+    max-height: 280px;
+  }
+
+  .primary-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nav-label {
+    grid-column: 1 / -1;
+  }
+
+  .workspace {
+    padding: 24px 18px 48px;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-header {
+    flex-direction: column;
+  }
+
+  .diff-cross-session {
+    grid-template-columns: 1fr;
+  }
+}

@@ -151,8 +151,10 @@ jobs:
           )
           if ($signtool.Count -ne 1) { throw 'No x64 signtool.exe was found on the Windows runner.' }
 
-          & $signtool[0].FullName sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd SHA256 /tr $env:WINDOWS_TIMESTAMP_URL /td SHA256 target/release/ct.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($artifact in @('target/release/context-trace.exe', 'target/release/ct.exe')) {
+            & $signtool[0].FullName sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd SHA256 /tr $env:WINDOWS_TIMESTAMP_URL /td SHA256 $artifact
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Verify signed Windows artifacts
         if: ${{ steps.signing.outputs.thumbprint != '' }}
@@ -163,7 +165,7 @@ jobs:
           $expectedThumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT -replace '\s', ''
           $installer = @(Get-ChildItem target/release/bundle/nsis -File -Filter '*.exe')
           if ($installer.Count -ne 1) { throw "Expected one NSIS installer, found $($installer.Count)." }
-          $artifacts = @($installer[0].FullName, 'target/release/ct.exe')
+          $artifacts = @($installer[0].FullName, 'target/release/context-trace.exe', 'target/release/ct.exe')
           foreach ($artifact in $artifacts) {
             $signature = Get-AuthenticodeSignature $artifact
             if ($signature.Status -ne 'Valid') {
@@ -177,7 +179,7 @@ jobs:
             }
           }
 
-      - name: Stage installer, CLI archive, and checksums
+      - name: Stage installer, portable desktop archive, CLI archive, and checksums
         shell: pwsh
         run: |
           $assets = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
@@ -186,6 +188,19 @@ jobs:
           $installer = @(Get-ChildItem target/release/bundle/nsis -File -Filter '*.exe')
           if ($installer.Count -ne 1) { throw "Expected one NSIS installer, found $($installer.Count)." }
           Copy-Item $installer[0].FullName (Join-Path $assets "$env:ASSET_PREFIX-setup.exe")
+
+          $portableDirectory = Join-Path $env:GITHUB_WORKSPACE 'release-portable'
+          New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
+          Copy-Item target/release/context-trace.exe (Join-Path $portableDirectory 'context-trace.exe')
+          Copy-Item LICENSE (Join-Path $portableDirectory 'LICENSE')
+          Set-Content -Path (Join-Path $portableDirectory 'PORTABLE.txt') -Encoding ascii -Value @(
+            'ContextTrace portable desktop app'
+            ''
+            'Run context-trace.exe without installing ContextTrace.'
+            'This build still requires the Microsoft Edge WebView2 Runtime on the machine.'
+            'The app reads local Codex and Claude Code logs and stores archives in the normal user data location.'
+          )
+          Compress-Archive -Path (Join-Path $portableDirectory '*') -DestinationPath (Join-Path $assets "$env:ASSET_PREFIX-portable.zip")
 
           $cliDirectory = Join-Path $env:GITHUB_WORKSPACE 'release-cli'
           New-Item -ItemType Directory -Force -Path $cliDirectory | Out-Null

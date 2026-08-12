@@ -12,8 +12,10 @@ consuming GitHub-hosted minutes for the normal release path.
 It creates a draft GitHub release containing:
 
 - `ContextTrace-<version>-windows-x64-setup.exe` — the NSIS desktop installer;
+- `ContextTrace-<version>-windows-x64-portable.zip` — the desktop executable,
+  license and portable-use notes; extract and run without installing;
 - `ContextTrace-<version>-windows-x64-cli.zip` — `ct.exe` and `LICENSE`;
-- `SHA256SUMS.txt` — SHA-256 hashes for both downloadable files.
+- `SHA256SUMS.txt` — SHA-256 hashes for all downloadable files.
 
 ## Woodpecker packaging path
 
@@ -36,7 +38,7 @@ git tag -a v0.1.0 -m "ContextTrace 0.1.0"
 git push origin v0.1.0
 ```
 
-Watch the Woodpecker tag pipeline. When it succeeds, retrieve the three files
+Watch the Woodpecker tag pipeline. When it succeeds, retrieve the four files
 from the staging directory and create a draft GitHub release manually, or use
 the Woodpecker release publisher once a GitHub token has been stored as a
 repository secret. A GitHub token is separate from the Woodpecker API token.
@@ -50,11 +52,15 @@ PowerShell:
 
 ```powershell
 Get-FileHash .\ContextTrace-<version>-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\ContextTrace-<version>-windows-x64-portable.zip -Algorithm SHA256
 Get-FileHash .\ContextTrace-<version>-windows-x64-cli.zip -Algorithm SHA256
 ```
 
-Also install the NSIS artifact on a clean Windows machine, run `ct.exe --help`
-from the extracted CLI ZIP, and complete the desktop acceptance checks.
+Also install the NSIS artifact on a clean Windows machine, launch the extracted
+portable desktop ZIP, run `ct.exe --help` from the CLI ZIP, and complete the
+desktop acceptance checks. The portable desktop ZIP still requires the
+Microsoft Edge WebView2 Runtime; it removes the ContextTrace installation step,
+not that OS runtime dependency.
 
 Use this acceptance sequence on the clean host:
 
@@ -75,10 +81,11 @@ It does not replace the separate clean-host and downloaded-asset checks.
 
 ## Optional Windows code signing
 
-Both the desktop installer and portable `ct.exe` are unsigned by default. If
+The desktop installer, portable desktop executable and portable `ct.exe` are
+unsigned by default. If
 all three repository secrets below are set, the workflow imports the certificate
 only on the Windows runner, passes its discovered thumbprint to Tauri, and signs
-`ct.exe` before it is zipped:
+the desktop executable and `ct.exe` before they are zipped:
 
 - `WINDOWS_CERTIFICATE_BASE64`: base64-encoded PFX certificate;
 - `WINDOWS_CERTIFICATE_PASSWORD`: PFX password.

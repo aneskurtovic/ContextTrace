@@ -74,6 +74,33 @@ if ($installers.Count -ne 1) {
 $assetPrefix = "ContextTrace-$version-windows-x64"
 Copy-Item -LiteralPath $installers[0].FullName -Destination (Join-Path $stage "$assetPrefix-setup.exe")
 
+$uiPackage = @($metadata.packages | Where-Object { $_.name -eq 'ct-ui' })
+if ($uiPackage.Count -ne 1) {
+    throw "Expected exactly one ct-ui package in cargo metadata; found $($uiPackage.Count)."
+}
+$uiBinaries = @($uiPackage[0].targets | Where-Object { $_.kind -contains 'bin' })
+if ($uiBinaries.Count -ne 1) {
+    throw "Expected exactly one ct-ui binary target; found $($uiBinaries.Count)."
+}
+$desktopExecutable = Join-Path $targetDir "release/$($uiBinaries[0].name).exe"
+if (-not (Test-Path -LiteralPath $desktopExecutable -PathType Leaf)) {
+    throw "The Tauri desktop executable was not produced at '$desktopExecutable'."
+}
+
+$portableStage = Join-Path $stage 'portable'
+New-Item -ItemType Directory -Force -Path $portableStage | Out-Null
+Copy-Item -LiteralPath $desktopExecutable -Destination (Join-Path $portableStage (Split-Path $desktopExecutable -Leaf))
+Copy-Item -LiteralPath 'LICENSE' -Destination (Join-Path $portableStage 'LICENSE')
+Set-Content -LiteralPath (Join-Path $portableStage 'PORTABLE.txt') -Encoding ascii -Value @(
+    'ContextTrace portable desktop app'
+    ''
+    "Run $(Split-Path $desktopExecutable -Leaf) without installing ContextTrace."
+    'This build still requires the Microsoft Edge WebView2 Runtime on the machine.'
+    'The app reads local Codex and Claude Code logs and stores archives in the normal user data location.'
+)
+Compress-Archive -Path (Join-Path $portableStage '*') -DestinationPath (Join-Path $stage "$assetPrefix-portable.zip")
+Remove-Item -LiteralPath $portableStage -Recurse -Force
+
 $cliStage = Join-Path $stage 'cli'
 New-Item -ItemType Directory -Force -Path $cliStage | Out-Null
 Copy-Item -LiteralPath (Join-Path $targetDir 'release/ct.exe') -Destination (Join-Path $cliStage 'ct.exe')
