@@ -38,15 +38,9 @@ if ($workspaceVersions.Count -ne 1 -or $workspaceVersions[0] -ne $version) {
 
 $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
 $stageRoot = Join-Path $cacheRoot 'release-assets'
-$stage = Join-Path $stageRoot $tag
-if (Test-Path -LiteralPath $stage) {
-    $existingFiles = @(Get-ChildItem -LiteralPath $stage -File -ErrorAction SilentlyContinue)
-    if ($existingFiles.Count -gt 0) {
-        throw "Release staging directory already contains files: $stage. Remove it manually before retrying."
-    }
-    Write-Host "Removing empty staging directory from an earlier failed attempt: $stage"
-    Remove-Item -LiteralPath $stage -Recurse -Force
-}
+$publishedStage = Join-Path $stageRoot $tag
+$stagingRoot = Join-Path $stageRoot '.staging'
+$stage = Join-Path $stagingRoot "$tag-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 Write-Host "Building ContextTrace $version on the Windows Woodpecker agent."
@@ -113,5 +107,12 @@ $checksums = Get-ChildItem -LiteralPath $stage -File | Sort-Object Name | ForEac
 }
 Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Value $checksums -Encoding ascii
 
-Write-Host "Release assets staged at $stage"
-Get-ChildItem -LiteralPath $stage -File | Select-Object Name, Length | Format-Table -AutoSize
+if (Test-Path -LiteralPath $publishedStage) {
+    Write-Host "Replacing the previous incomplete or superseded release output: $publishedStage"
+    Remove-Item -LiteralPath $publishedStage -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+Move-Item -LiteralPath $stage -Destination $publishedStage
+
+Write-Host "Release assets staged at $publishedStage"
+Get-ChildItem -LiteralPath $publishedStage -File | Select-Object Name, Length | Format-Table -AutoSize
