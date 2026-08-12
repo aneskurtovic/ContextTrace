@@ -22,6 +22,13 @@ variables:
     CARGO_INCREMENTAL: "0"
     CARGO_TARGET_DIR: C:/woodpecker-cache/contexttrace/target
     npm_config_cache: C:/woodpecker-cache/contexttrace/npm
+    HOME: C:/woodpecker-cache/contexttrace/home
+    USERPROFILE: C:/woodpecker-cache/contexttrace/home
+    LOCALAPPDATA: C:/woodpecker-cache/contexttrace/localappdata
+    APPDATA: C:/woodpecker-cache/contexttrace/appdata
+    TEMP: C:/woodpecker-cache/contexttrace/temp
+    TMP: C:/woodpecker-cache/contexttrace/temp
+    RUST_BACKTRACE: "1"
 
 steps:
   - name: package-windows

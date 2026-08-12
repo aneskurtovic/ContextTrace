@@ -1,5 +1,21 @@
 $ErrorActionPreference = 'Stop'
 
+# Woodpecker's Windows local backend can run without a normal user profile.
+# Tauri's other build tools and the Woodpecker host still need stable writable
+# profile/cache locations even though NSIS itself uses target/.tauri.
+$cacheRoot = 'C:/woodpecker-cache/contexttrace'
+$env:HOME = Join-Path $cacheRoot 'home'
+$env:USERPROFILE = $env:HOME
+$env:LOCALAPPDATA = Join-Path $cacheRoot 'localappdata'
+$env:APPDATA = Join-Path $cacheRoot 'appdata'
+$env:TEMP = Join-Path $cacheRoot 'temp'
+$env:TMP = $env:TEMP
+$env:RUST_BACKTRACE = '1'
+
+foreach ($directory in @($env:HOME, $env:LOCALAPPDATA, $env:APPDATA, $env:TEMP)) {
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+}
+
 if ([string]::IsNullOrWhiteSpace($env:CI_COMMIT_TAG)) {
     throw 'This script must run from a Woodpecker tag pipeline.'
 }
@@ -21,10 +37,15 @@ if ($workspaceVersions.Count -ne 1 -or $workspaceVersions[0] -ne $version) {
 }
 
 $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
-$stageRoot = 'C:/woodpecker-cache/contexttrace/release-assets'
+$stageRoot = Join-Path $cacheRoot 'release-assets'
 $stage = Join-Path $stageRoot $tag
 if (Test-Path -LiteralPath $stage) {
-    throw "Release staging directory already exists: $stage. Remove it manually before retrying."
+    $existingFiles = @(Get-ChildItem -LiteralPath $stage -File -ErrorAction SilentlyContinue)
+    if ($existingFiles.Count -gt 0) {
+        throw "Release staging directory already contains files: $stage. Remove it manually before retrying."
+    }
+    Write-Host "Removing empty staging directory from an earlier failed attempt: $stage"
+    Remove-Item -LiteralPath $stage -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
