@@ -209,6 +209,15 @@ export interface SessionPage {
   hasMore: boolean;
 }
 
+export interface MemoryHit {
+  sessionId: string;
+  agent: Agent;
+  project: string | null;
+  line: number;
+  turn: number | null;
+  preview: string;
+}
+
 export interface CompactionSummary {
   turn: number | null;
   reclaimed: number | null;

@@ -16,6 +16,7 @@ import type {
   DoctorReport,
   ExportOutcome,
   LifecycleReport,
+  MemoryHit,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -577,6 +578,23 @@ function asTurnDiff(value: unknown): TurnDiff {
     throw malformed("the turn comparison");
   }
   return value as unknown as TurnDiff;
+}
+
+function asMemoryHits(value: unknown): MemoryHit[] {
+  if (!Array.isArray(value)) throw malformed("memory search results");
+  return value.map((item) => {
+    if (!isRecord(item) || typeof item.sessionId !== "string" || typeof item.agent !== "string" || !agents.has(item.agent as Agent) ||
+      !(typeof item.project === "string" || item.project === null) || typeof item.line !== "number" ||
+      !(typeof item.turn === "number" || item.turn === null) || typeof item.preview !== "string") {
+      throw malformed("memory search result");
+    }
+    return item as unknown as MemoryHit;
+  });
+}
+
+export function searchMemory(agent: Agent | undefined, query: string, limit = 50): Promise<MemoryHit[]> {
+  if (!inTauri()) return Promise.resolve([]);
+  return invoke<unknown>("search_memory", { agent: agent ?? null, query, limit }).then(asMemoryHits);
 }
 
 function isGhostItem(value: unknown): value is GhostItem {

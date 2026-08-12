@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import * as api from "./api";
 import {
   errorMessage,
@@ -26,6 +26,7 @@ import type {
   GrowthPoint,
   InstructionFileReport,
   LifecycleReport,
+  MemoryHit,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -134,6 +135,22 @@ function SessionListItem({
       </span>
       <span className="session-activity">{formatActivity(session.lastActivity)}</span>
     </button>
+  );
+}
+
+function MemorySearchResults({ hits, loading, onSelect }: { hits: MemoryHit[]; loading: boolean; onSelect: (hit: MemoryHit) => void }) {
+  if (!loading && !hits.length) return null;
+  return (
+    <div className="memory-results" aria-live="polite">
+      <div className="memory-results-heading"><span>Memory hits</span><span>{loading ? "…" : hits.length}</span></div>
+      {loading ? <Spinner label="Searching local session content…" /> : hits.slice(0, 6).map((hit, index) => (
+        <button type="button" className="memory-hit" key={`${hit.agent}:${hit.sessionId}:${hit.line}:${index}`} onClick={() => onSelect(hit)}>
+          <strong>{hit.project ?? hit.sessionId.slice(0, 8)}</strong>
+          <small>{hit.agent} · {hit.turn ? `turn ${hit.turn} · ` : ""}line {hit.line}</small>
+          <code>{hit.preview}</code>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -937,6 +954,268 @@ function ContextComposition({ context }: { context: ContextDetail }) {
           a complete inventory.
         </p>
       )}
+    </section>
+  );
+}
+
+function DiagnosticsRail({
+  context,
+  doctor,
+  detail,
+}: {
+  context: ContextDetail;
+  doctor: DoctorReport | null;
+  detail: SessionDetail;
+}) {
+  const toolOutputs = context.categories.find((category) => category.category === "tool-outputs");
+  const largest = context.contributors[0];
+  const diagnostics: { tone: "danger" | "warn" | "tip"; title: string; detail: string }[] = [];
+
+  if (doctor?.secretOccurrences) {
+    diagnostics.push({
+      tone: "danger",
+      title: "Credential-shaped content detected",
+      detail: `${doctor.secretOccurrences} occurrence(s) found. Values stay hidden; review Security & leaks before sharing this session.`,
+    });
+  }
+  if (toolOutputs && toolOutputs.share >= 0.5) {
+    diagnostics.push({
+      tone: "warn",
+      title: "Massive tool output",
+      detail: `${formatPercent(toolOutputs.share)} of the current window is tool output. This is the first place to trim or cap.`,
+    });
+  }
+  if (doctor?.lowEntropyItems) {
+    diagnostics.push({
+      tone: "warn",
+      title: "Low-information payload",
+      detail: `${doctor.lowEntropyItems} block(s) are highly compressible and account for ${formatTokens(doctor.wasteScoreTokens)} of waste score.`,
+    });
+  }
+  if (largest && largest.share >= 0.25) {
+    diagnostics.push({
+      tone: "tip",
+      title: "One contributor dominates",
+      detail: `${largest.label} is ${formatPercent(largest.share)} of this turn. Use Token Diet to model excluding it.`,
+    });
+  }
+  if (detail.peakPromptTokens && detail.contextWindow && detail.peakPromptTokens / detail.contextWindow >= 0.8) {
+    diagnostics.push({
+      tone: "danger",
+      title: "Context headroom is getting thin",
+      detail: `${formatPercent(detail.peakPromptTokens / detail.contextWindow)} of the window is occupied at peak.`,
+    });
+  }
+
+  return (
+    <section className="diagnostics-rail" aria-labelledby="diagnostics-heading">
+      <div className="diagnostics-title">
+        <span className="eyebrow">AI Doctor · session signals</span>
+        <strong id="diagnostics-heading">What deserves attention now</strong>
+      </div>
+      <div className="diagnostics-list">
+        {diagnostics.length ? diagnostics.slice(0, 4).map((item, index) => (
+          <div className={`diagnostic-card ${item.tone}`} key={`${item.title}-${index}`}>
+            <span className="diagnostic-icon" aria-hidden="true">{item.tone === "danger" ? "!" : item.tone === "warn" ? "~" : "i"}</span>
+            <div><strong>{item.title}</strong><p>{item.detail}</p></div>
+          </div>
+        )) : (
+          <div className="diagnostic-card clean">
+            <span className="diagnostic-icon" aria-hidden="true">✓</span>
+            <div><strong>No high-confidence warning yet</strong><p>Run the local scan to unlock duplicate, compression, and secret diagnostics.</p></div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReplayControl({
+  detail,
+  currentTurn,
+  playing,
+  onPlaying,
+  onTurn,
+}: {
+  detail: SessionDetail;
+  currentTurn: number | null;
+  playing: boolean;
+  onPlaying: (playing: boolean) => void;
+  onTurn: (turn: number) => void;
+}) {
+  const points = detail.growth.filter((point) => point.promptTokens != null);
+  const index = Math.max(0, points.findIndex((point) => point.turn === currentTurn));
+  useEffect(() => {
+    if (!playing || points.length < 2) return;
+    const timer = window.setInterval(() => {
+      const next = index + 1;
+      if (next >= points.length) onPlaying(false);
+      else onTurn(points[next].turn);
+    }, 850);
+    return () => window.clearInterval(timer);
+  }, [index, onPlaying, onTurn, playing, points]);
+
+  return (
+    <div className="replay-control" aria-label="Session playback controls">
+      <span className="replay-label"><span className={playing ? "live-pip playing" : "live-pip"} /> VCR mode</span>
+      <button type="button" className="replay-button" onClick={() => onPlaying(!playing)} disabled={points.length < 2}>
+        {playing ? "Pause" : "Play session"}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={Math.max(0, points.length - 1)}
+        value={index}
+        onChange={(event) => { onPlaying(false); onTurn(points[Number(event.target.value)].turn); }}
+        aria-label="Playback position"
+      />
+      <span className="replay-position">{currentTurn ? `turn ${currentTurn}` : "—"} / {points.at(-1)?.turn ?? "—"}</span>
+    </div>
+  );
+}
+
+function LiveMonitor({
+  detail,
+  context,
+  live,
+  onLive,
+}: {
+  detail: SessionDetail;
+  context: ContextDetail | null;
+  live: boolean;
+  onLive: (live: boolean) => void;
+}) {
+  const utilisation = context?.utilisation ?? (detail.peakPromptTokens && detail.contextWindow ? detail.peakPromptTokens / detail.contextWindow : 0);
+  const tone = utilisation >= .9 ? "critical" : utilisation >= .75 ? "elevated" : "steady";
+  return (
+    <section className={`live-monitor ${live ? "following" : ""}`} aria-label="Live session monitor">
+      <div className="live-monitor-heading">
+        <span className="live-status"><span className="live-pip" /> {live ? "Following log" : "Live monitor"}</span>
+        <button type="button" onClick={() => onLive(!live)}>{live ? "Stop follow" : "Follow live"}</button>
+      </div>
+      <div className="live-gauge-wrap">
+        <div className="live-gauge" style={{ "--gauge": `${Math.min(100, utilisation * 100)}%` } as CSSProperties}>
+          <span>{formatPercent(utilisation)}</span>
+        </div>
+        <div><strong>Live prompt size</strong><p>{context ? `${formatTokens(context.totalTokens)} / ${formatTokens(context.contextWindow ?? detail.contextWindow ?? 0)}` : "Waiting for a measured turn"}</p></div>
+      </div>
+      <small>{live ? "Refreshes local session evidence every 2.5s · use Ctrl+C in the agent terminal to stop the run." : "Follow mode reads the local log as it grows; it never writes to or controls the agent."}</small>
+      <div className={`live-headroom ${tone}`}><span style={{ width: `${Math.min(100, utilisation * 100)}%` }} /></div>
+    </section>
+  );
+}
+
+function ContextDiffBoard({ ghost }: { ghost: TemporalGhost | null }) {
+  if (!ghost) return null;
+  if (ghost.status === "unavailable") {
+    return <div className="diff-board-empty">{ghost.reason}</div>;
+  }
+  const groups = [
+    { key: "removed", label: "Evicted", tone: "removed", items: ghost.removed },
+    { key: "retained", label: "Retained", tone: "retained", items: ghost.retained },
+    { key: "gained", label: "Injected", tone: "gained", items: ghost.gained },
+  ] as const;
+  return (
+    <div className="rich-diff" aria-label={`Context diff from turn ${ghost.leftTurn} to turn ${ghost.rightTurn}`}>
+      <div className="rich-diff-header"><strong>Turn {ghost.leftTurn}</strong><span>Context identity diff</span><strong>Turn {ghost.rightTurn}</strong></div>
+      <div className="rich-diff-columns">
+        {groups.map((group) => (
+          <div className={`rich-diff-column ${group.tone}`} key={group.key}>
+            <div className="rich-diff-column-title"><span className="diff-swatch" /> <strong>{group.label}</strong><span>{group.items.length}</span></div>
+            {group.items.length ? group.items.slice(0, 8).map((item) => (
+              <div className="rich-diff-item" key={`${group.key}-${item.id}`}>
+                <strong title={item.label}>{item.label}</strong><span>{formatTokens(item.leftTokens ?? item.rightTokens ?? 0)}</span><small>{item.category} · {item.source}</small>
+              </div>
+            )) : <p className="diff-board-empty">No blocks in this group.</p>}
+            {group.items.length > 8 && <small className="diff-more">+{group.items.length - 8} more blocks</small>}
+          </div>
+        ))}
+      </div>
+      <p className="diff-board-note">Identity is based on stable reconstructed context items, not returned secret values or an invented text diff.</p>
+    </div>
+  );
+}
+
+function TokenDiet({
+  context,
+  cost,
+  excluded,
+  onToggle,
+  budgetShare,
+  onBudgetShare,
+}: {
+  context: ContextDetail;
+  cost: CostReport | null;
+  excluded: Set<string>;
+  onToggle: (id: string) => void;
+  budgetShare: number;
+  onBudgetShare: (value: number) => void;
+}) {
+  const removed = context.contributors.filter((item) => excluded.has(item.id));
+  const saved = removed.reduce((sum, item) => sum + item.tokens, 0);
+  const remaining = Math.max(0, context.totalTokens - saved);
+  const perToken = cost && cost.total > 0 ? cost.total / Math.max(1, context.totalTokens) : 0;
+  const savedCost = saved * perToken;
+  const toolShare = context.categories.find((category) => category.category === "tool-outputs")?.share ?? 0;
+  const thresholdHit = toolShare * 100 >= budgetShare;
+  return (
+    <section className="panel sandbox-panel" aria-labelledby="sandbox-heading">
+      <div className="panel-heading"><div><span className="eyebrow">Context sandbox</span><h2 id="sandbox-heading">Token Diet · what-if analysis</h2></div><span className="sandbox-badge">simulation only</span></div>
+      <p className="sandbox-intro">Toggle a contributor to model an ignore rule or output cap. The source log stays read-only.</p>
+      <div className="sandbox-metrics"><div><span>Simulated prompt</span><strong>{formatTokens(remaining)}</strong><small>{formatPercent(remaining / Math.max(1, context.totalTokens))} of current</small></div><div><span>Tokens saved</span><strong>{formatTokens(saved)}</strong><small>{cost ? `$${(savedCost / 1_000_000).toFixed(4)} / turn` : "load pricing for cost"}</small></div><div><span>Tool-output budget</span><strong>{formatPercent(toolShare)}</strong><small className={thresholdHit ? "budget-hit" : ""}>{thresholdHit ? "threshold exceeded" : "within budget"}</small></div></div>
+      <div className="budget-control"><label htmlFor="tool-budget">Warn when tool outputs exceed <strong>{budgetShare}%</strong></label><input id="tool-budget" type="range" min={10} max={90} step={5} value={budgetShare} onChange={(event) => onBudgetShare(Number(event.target.value))} /></div>
+      <div className="diet-list">{context.contributors.slice(0, 8).map((item) => <label className={excluded.has(item.id) ? "diet-row excluded" : "diet-row"} key={item.id}><input type="checkbox" checked={!excluded.has(item.id)} onChange={() => onToggle(item.id)} /><span><strong>{item.label}</strong><small>{item.category} · {formatTokens(item.tokens)}</small></span><span className="diet-bar"><i style={{ width: `${Math.max(2, item.share * 100)}%` }} /></span><em>{formatPercent(item.share)}</em></label>)}</div>
+    </section>
+  );
+}
+
+function SecurityDashboard({ doctor, loading, onScan }: { doctor: DoctorReport | null; loading: boolean; onScan: () => void }) {
+  const findings = doctor?.secretOccurrences ?? 0;
+  return (
+    <section className={`panel security-dashboard ${findings ? "has-findings" : ""}`} id="security" aria-labelledby="security-heading">
+      <div className="panel-heading"><div><span className="eyebrow">Security & leaks</span><h2 id="security-heading">Secret Scanner dashboard</h2></div><button className="doctor-run" onClick={onScan} disabled={loading}>{loading ? "Scanning locally…" : doctor ? "Scan again" : "Scan for secrets"}</button></div>
+      <div className="security-hero"><div className="security-orb">{findings ? "!" : doctor ? "✓" : "?"}</div><div><strong>{findings ? `${findings} credential-shaped value(s) found` : doctor ? "No recognised credentials found" : "Scan the session before sharing it"}</strong><p>{findings ? "Values are never returned to the UI. Review the locations below and redact before exporting." : "The scan checks local model-visible records for AWS keys, tokens, .env-style values, and other known credential shapes."}</p></div></div>
+      {doctor?.secrets.length ? <div className="security-findings">{doctor.secrets.map((finding, index) => <div className="security-finding" key={`${finding.kind}-${finding.line}-${index}`}><span className="security-severity">HIGH</span><div><strong>{finding.kind}</strong><small>turn {finding.turn ?? "?"} · line {finding.line} · {finding.eventType}</small></div><em>{finding.occurrences} hit(s)</em></div>)}</div> : <div className="security-empty"><span>LOCAL ONLY</span><p>No secret values are displayed or sent anywhere. An unscanned session is not the same as a clean session.</p></div>}
+      {doctor?.unreadableRecords ? <p className="security-warning">{doctor.unreadableRecords} record(s) were unreadable, so coverage is incomplete.</p> : null}
+    </section>
+  );
+}
+
+function SpendDashboard({ cost, loading, onRun }: { cost: CostReport | null; loading: boolean; onRun: (pricing: string | null, turns: number | null) => void }) {
+  const [pricingPath, setPricingPath] = useState("");
+  const [forecastTurns, setForecastTurns] = useState("10");
+  const burn = cost?.forecast?.averageTokensPerTurn.reduce((sum, category) => sum + category.cost, 0) ?? cost?.total ?? 0;
+  return (
+    <section className="panel spend-dashboard" id="spend" aria-labelledby="spend-heading">
+      <div className="panel-heading"><div><span className="eyebrow">Cost forecast</span><h2 id="spend-heading">Spend dashboard</h2></div><span className="pricing-chip">{cost?.pricingVersion ?? "pricing not loaded"}</span></div>
+      <div className="spend-controls"><input value={pricingPath} onChange={(event) => setPricingPath(event.target.value)} placeholder="Optional pricing.json path" aria-label="Pricing file path" /><input value={forecastTurns} onChange={(event) => setForecastTurns(event.target.value)} inputMode="numeric" aria-label="Forecast turns" /><button type="button" onClick={() => onRun(pricingPath.trim() || null, Number(forecastTurns) || null)} disabled={loading}>{loading ? "Forecasting…" : "Refresh forecast"}</button></div>
+      {cost ? <><div className="spend-hero"><div><span>Burn rate</span><strong>${(burn / 1_000_000).toFixed(4)}</strong><small>per modeled turn</small></div><div><span>Projected session</span><strong>${((cost.forecast?.projectedTotal ?? cost.total) / 1_000_000).toFixed(4)}</strong><small>{cost.forecast ? `${cost.forecast.additionalTurns} additional turns` : "current evidence"}</small></div><div><span>Observed spend</span><strong>${(cost.total / 1_000_000).toFixed(4)}</strong><small>{cost.pricingSource}</small></div></div><div className="spend-bars" aria-label="Spend by context category">{cost.categories.map((category) => <div className="spend-bar-row" key={category.name}><span>{category.name}</span><div><i style={{ width: `${Math.max(3, Math.min(100, category.cost / Math.max(1, burn) * 100))}%` }} /></div><strong>${(category.cost / 1_000_000).toFixed(4)}</strong></div>)}</div>{cost.warning && <p className="spend-note">{cost.warning}</p>}</> : <div className="spend-empty"><strong>Cost telemetry is ready when you are.</strong><p>Load built-in rates or point ContextTrace at a local pricing JSON to model the burn before the next turn.</p></div>}
+    </section>
+  );
+}
+
+function SessionComparePanel({
+  current,
+  other,
+  sessions,
+  loading,
+  onSelect,
+}: {
+  current: SessionDetail;
+  other: SessionDetail | null;
+  sessions: SessionSummary[];
+  loading: boolean;
+  onSelect: (value: string) => void;
+}) {
+  const candidates = sessions.filter((session) => !(session.agent === current.session.agent && session.id === current.session.id));
+  const currentPeak = current.peakPromptTokens ?? 0;
+  const otherPeak = other?.peakPromptTokens ?? 0;
+  const tokenDelta = other ? otherPeak - currentPeak : 0;
+  return (
+    <section className="panel session-compare-panel" aria-labelledby="session-compare-heading">
+      <div className="panel-heading"><div><span className="eyebrow">A/B lab</span><h2 id="session-compare-heading">Session Compare · prompt architecture</h2></div><span className="sandbox-badge">empirical, local evidence</span></div>
+      <div className="ab-controls"><label>Compare this session with<input aria-label="Session to compare" value={other ? `${projectName(other.session.project)} · ${shortId(other.session.id)}` : ""} placeholder="Choose a second session…" readOnly /></label><div className="ab-options">{candidates.slice(0, 5).map((session) => <button type="button" key={`${session.agent}:${session.id}`} onClick={() => onSelect(JSON.stringify({ agent: session.agent, id: session.id }))}>{projectName(session.project)} · {shortId(session.id)}</button>)}</div>{loading && <Spinner label="Loading comparison…" />}</div>
+      {other ? <div className="ab-grid"><div className="ab-side"><span className="ab-label">Session A · current</span><strong>{projectName(current.session.project)}</strong><div className="ab-stat"><span>Turns</span><b>{current.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(currentPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(current.totalOutputTokens)}</b></div></div><div className="ab-arrow">→<small>{tokenDelta <= 0 ? `${formatTokens(Math.abs(tokenDelta))} fewer peak tokens` : `${formatTokens(tokenDelta)} more peak tokens`}</small></div><div className="ab-side alt"><span className="ab-label">Session B · candidate</span><strong>{projectName(other.session.project)}</strong><div className="ab-stat"><span>Turns</span><b>{other.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(otherPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(other.totalOutputTokens)}</b></div></div></div> : <div className="ab-empty"><strong>Turn prompt experiments into evidence.</strong><p>Run the same task twice, select the second session, and ContextTrace will line up turns, peak prompt size, and output volume.</p></div>}
     </section>
   );
 }
@@ -1920,6 +2199,11 @@ function SessionWorkspace({
   cost,
   costLoading,
   onRunCost,
+  otherDetail,
+  compareLoading,
+  onCompareSession,
+  liveFollow,
+  onLiveFollow,
 }: {
   detail: SessionDetail;
   context: ContextDetail | null;
@@ -1976,6 +2260,11 @@ function SessionWorkspace({
   cost: CostReport | null;
   costLoading: boolean;
   onRunCost: (pricingPath: string | null, forecastTurns: number | null) => void;
+  otherDetail: SessionDetail | null;
+  compareLoading: boolean;
+  onCompareSession: (value: string) => void;
+  liveFollow: boolean;
+  onLiveFollow: (value: boolean) => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
   const measuredTurns = growth.filter((point) => point.promptTokens != null);
@@ -1987,6 +2276,9 @@ function SessionWorkspace({
     detail.peakPromptTokens && detail.contextWindow
       ? detail.peakPromptTokens / detail.contextWindow
       : null;
+  const [playing, setPlaying] = useState(false);
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [budgetShare, setBudgetShare] = useState(50);
 
   return (
     <main className="workspace" aria-busy={contextLoading}>
@@ -2060,6 +2352,10 @@ function SessionWorkspace({
         />
       </section>
 
+      {context && <DiagnosticsRail context={context} doctor={doctor} detail={detail} />}
+      <LiveMonitor detail={detail} context={context} live={liveFollow} onLive={onLiveFollow} />
+      <ReplayControl detail={detail} currentTurn={context?.turn ?? detail.peakTurn} playing={playing} onPlaying={setPlaying} onTurn={onTurn} />
+
       <section className="panel timeline-panel" aria-labelledby="timeline-heading">
         <div className="panel-heading">
           <div>
@@ -2132,6 +2428,8 @@ function SessionWorkspace({
         loading={compactionLoading}
         onClose={onCloseCompaction}
       />
+      <ContextDiffBoard ghost={ghost} />
+      <SessionComparePanel current={detail} other={otherDetail} sessions={sessions} loading={compareLoading} onSelect={onCompareSession} />
       </div>
 
       <div id="insights" className="workspace-section">
@@ -2174,6 +2472,20 @@ function SessionWorkspace({
             loading={doctorLoading}
             onRun={onRunDoctor}
           />
+          <SecurityDashboard doctor={doctor} loading={doctorLoading} onScan={onRunDoctor} />
+          <TokenDiet
+            context={context}
+            cost={cost}
+            excluded={excluded}
+            onToggle={(id) => setExcluded((current) => {
+              const next = new Set(current);
+              if (next.has(id)) next.delete(id); else next.add(id);
+              return next;
+            })}
+            budgetShare={budgetShare}
+            onBudgetShare={setBudgetShare}
+          />
+          <SpendDashboard cost={cost} loading={costLoading} onRun={onRunCost} />
         </>
       ) : (
         <p className="empty-inline">This session has no reconstructable prompt turn.</p>
@@ -2226,6 +2538,8 @@ export default function App() {
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [memoryHits, setMemoryHits] = useState<MemoryHit[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -2273,6 +2587,9 @@ export default function App() {
   const [ghostLoading, setGhostLoading] = useState(false);
   const [cost, setCost] = useState<CostReport | null>(null);
   const [costLoading, setCostLoading] = useState(false);
+  const [liveFollow, setLiveFollow] = useState(false);
+  const [compareDetail, setCompareDetail] = useState<SessionDetail | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
@@ -2369,6 +2686,22 @@ export default function App() {
   }, [query]);
 
   useEffect(() => {
+    const memorySearch = Object.prototype.hasOwnProperty.call(api, "searchMemory") ? api.searchMemory : null;
+    if (demoData || !debouncedQuery || typeof memorySearch !== "function") {
+      setMemoryHits([]);
+      setMemoryLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setMemoryLoading(true);
+    memorySearch!(agentFilter === "all" ? undefined : agentFilter, debouncedQuery, 50)
+      .then((hits) => { if (!cancelled) setMemoryHits(hits); })
+      .catch(() => { if (!cancelled) setMemoryHits([]); })
+      .finally(() => { if (!cancelled) setMemoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [agentFilter, debouncedQuery, demoData]);
+
+  useEffect(() => {
     refreshSessions();
   }, [refreshSessions]);
 
@@ -2407,6 +2740,9 @@ export default function App() {
       setGhostLoading(false);
       setCost(null);
       setCostLoading(false);
+      setLiveFollow(false);
+      setCompareDetail(null);
+      setCompareLoading(false);
       return;
     }
     const request = ++sessionRequest.current;
@@ -2436,6 +2772,9 @@ export default function App() {
     setInstructionFilesLoading(false);
     setGhostLoading(false);
     setCostLoading(false);
+    setLiveFollow(false);
+    setCompareDetail(null);
+    setCompareLoading(false);
     // The baseline, the cross-session pick and the last export result all
     // name a specific session; carrying any of them into a newly selected one
     // would present a stale answer as though it were about the session now on
@@ -2466,6 +2805,44 @@ export default function App() {
         if (request === sessionRequest.current) setLoadingDetail(false);
       });
   }, [selected]);
+
+  useEffect(() => {
+    if (!liveFollow || !selected) return;
+    let cancelled = false;
+    const follow = async () => {
+      try {
+        await api.searchSessions(selected.agent, "", 0, 200, true);
+        const [nextDetail, nextContext] = await Promise.all([
+          api.inspectSession(selected.agent, selected.id),
+          api.getContext(selected.agent, selected.id),
+        ]);
+        if (!cancelled && sameSession(selected, { agent: selected.agent, id: selected.id })) {
+          setDetail(nextDetail);
+          setDetailFor(selected);
+          setContext(nextContext);
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(errorMessage(loadError));
+      }
+    };
+    follow();
+    const timer = window.setInterval(follow, 2500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [liveFollow, selected]);
+
+  const compareSession = useCallback(async (value: string) => {
+    if (!value) { setCompareDetail(null); return; }
+    const target = JSON.parse(value) as { agent: Agent; id: string };
+    setCompareLoading(true);
+    try {
+      setCompareDetail(await api.inspectSession(target.agent, target.id));
+    } catch (loadError) {
+      setError(errorMessage(loadError));
+      setCompareDetail(null);
+    } finally {
+      setCompareLoading(false);
+    }
+  }, []);
 
   const selectTurn = useCallback(
     async (turn: number) => {
@@ -2816,7 +3193,7 @@ export default function App() {
           <span aria-hidden="true">⌕</span>
           <input
             type="search"
-            placeholder="Find a project or session…"
+            placeholder="Search sessions, projects, or memory…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             aria-label="Search sessions"
@@ -2827,6 +3204,11 @@ export default function App() {
             </button>
           )}
         </div>
+        <MemorySearchResults
+          hits={memoryHits}
+          loading={memoryLoading}
+          onSelect={(hit) => setSelected({ agent: hit.agent, id: hit.sessionId })}
+        />
 
         <div className="filter-row" role="group" aria-label="Filter sessions by agent">
           {(["all", "codex", "claude-code"] as AgentFilter[]).map((agent) => (
@@ -2855,10 +3237,12 @@ export default function App() {
             ["overview", "Overview", "Start with the session story"],
             ["compare", "Compare", "See what changed between turns"],
             ["insights", "Context insights", "Find waste and hidden changes"],
+            ["security", "Security & leaks", "Scan credentials before sharing"],
+            ["spend", "Cost & spend", "Forecast the next API bill"],
             ["archive", "Save & export", "Keep or share the evidence"],
           ].map(([id, label, detail]) => (
             <button key={id} type="button" onClick={() => scrollToSection(id)}>
-              <span className="nav-index">{String(["overview", "compare", "insights", "archive"].indexOf(id) + 1).padStart(2, "0")}</span>
+              <span className="nav-index">{String(["overview", "compare", "insights", "security", "spend", "archive"].indexOf(id) + 1).padStart(2, "0")}</span>
               <span>
                 <strong>{label}</strong>
                 <small>{detail}</small>
@@ -3041,6 +3425,11 @@ export default function App() {
             cost={cost}
             costLoading={costLoading}
             onRunCost={runCost}
+            otherDetail={compareDetail}
+            compareLoading={compareLoading}
+            onCompareSession={compareSession}
+            liveFollow={liveFollow}
+            onLiveFollow={setLiveFollow}
           />
         ) : (
           <div className="workspace-centered empty-workspace">

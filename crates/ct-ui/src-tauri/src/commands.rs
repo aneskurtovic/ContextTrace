@@ -354,6 +354,46 @@ impl AppState {
         })
     }
 
+    fn search_memory(&self, agent: Option<String>, query: String, limit: Option<usize>) -> Result<Vec<MemoryHit>, String> {
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let parsed_agent = match agent.as_deref() {
+            Some(value) => Some(parse_agent(value)?),
+            None => None,
+        };
+        let filter = SessionFilter { agent: parsed_agent, project: None, since: None, limit: None };
+        let descriptors = match &self.archive {
+            Some(archive) => self.app.list_sessions_with_archive(&filter, archive).map_err(|error| error.to_string())?,
+            None => self.app.list_sessions(&filter),
+        };
+        let cap = limit.unwrap_or(50).clamp(1, 200);
+        let mut hits = Vec::new();
+        for descriptor in descriptors {
+            if hits.len() >= cap { break; }
+            let Ok(body) = fs::read_to_string(&descriptor.path) else { continue; };
+            let lowered = body.to_lowercase();
+            for (index, (line, line_text)) in body.lines().zip(lowered.lines()).enumerate() {
+                if !line_text.contains(&needle) { continue; }
+                let preview = line.chars().take(180).collect::<String>();
+                let turn = self.cached_session(descriptor.agent, descriptor.id.as_str(), false).ok().and_then(|cached| {
+                    cached.session.events().iter().find(|event| event.source.line_no == (index + 1) as u32).and_then(|event| event.turn.map(|value| value.get()))
+                });
+                hits.push(MemoryHit {
+                    session_id: descriptor.id.to_string(),
+                    agent: descriptor.agent.to_string(),
+                    project: descriptor.project.clone(),
+                    line: index + 1,
+                    turn,
+                    preview,
+                });
+                if hits.len() >= cap { break; }
+            }
+        }
+        Ok(hits)
+    }
+
     fn inspect_session(&self, agent: AgentKind, id: &str) -> Result<SessionDetail, String> {
         let cached = self.cached_session(agent, id, false)?;
         let session = &cached.session;
@@ -1517,6 +1557,19 @@ pub struct SessionPage {
     has_more: bool,
 }
 
+/// A bounded local content hit. The preview is a short raw-line excerpt; it
+/// is never sent over a network and the search never mutates the log.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryHit {
+    session_id: String,
+    agent: String,
+    project: Option<String>,
+    line: usize,
+    turn: Option<u32>,
+    preview: String,
+}
+
 impl From<SessionDescriptor> for SessionSummary {
     fn from(value: SessionDescriptor) -> Self {
         Self {
@@ -2106,6 +2159,16 @@ pub fn search_sessions(
     state: tauri::State<'_, AppState>,
 ) -> Result<SessionPage, String> {
     state.search_sessions(agent, query, offset, limit, refresh)
+}
+
+#[tauri::command]
+pub fn search_memory(
+    agent: Option<String>,
+    query: String,
+    limit: Option<usize>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<MemoryHit>, String> {
+    state.search_memory(agent, query, limit)
 }
 
 #[tauri::command]
