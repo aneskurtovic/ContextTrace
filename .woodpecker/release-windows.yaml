@@ -1,0 +1,31 @@
+# Windows release packaging without GitHub-hosted minutes.
+#
+# The tag-only workflow runs on the existing self-hosted Windows local agent.
+# It creates the same installer, portable CLI ZIP, and checksum manifest as the
+# GitHub Actions fallback, then leaves them under the agent's durable
+# C:/woodpecker-cache/contexttrace/release-assets/<tag> directory for download
+# or manual upload to a draft GitHub release.
+
+labels:
+  platform: windows/amd64
+  backend: local
+
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+variables:
+  - &shell powershell
+  - &release_env
+    CI: "true"
+    CARGO_TERM_COLOR: always
+    CARGO_INCREMENTAL: "0"
+    CARGO_TARGET_DIR: C:/woodpecker-cache/contexttrace/target
+    npm_config_cache: C:/woodpecker-cache/contexttrace/npm
+
+steps:
+  - name: package-windows
+    image: *shell
+    environment: *release_env
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/package-windows.ps1

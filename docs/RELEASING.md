@@ -1,15 +1,45 @@
 # Windows release procedure
 
-The release workflow packages one Windows x64 release from an existing version
-tag. Push `v<version>` or run **Release Windows artifacts** manually with that
-existing tag. The tag must exactly match `version` in
+The preferred release path packages one Windows x64 release through the
+self-hosted Woodpecker Windows agent. Push `v<version>` after the release
+pipeline is present; the tag must exactly match `version` in
 `crates/ct-ui/src-tauri/tauri.conf.json`; the workflow rejects mismatches.
+
+GitHub Actions remains available as a manual fallback through **Release Windows
+artifacts**, but it is no longer triggered automatically by tags. This avoids
+consuming GitHub-hosted minutes for the normal release path.
 
 It creates a draft GitHub release containing:
 
 - `ContextTrace-<version>-windows-x64-setup.exe` — the NSIS desktop installer;
 - `ContextTrace-<version>-windows-x64-cli.zip` — `ct.exe` and `LICENSE`;
 - `SHA256SUMS.txt` — SHA-256 hashes for both downloadable files.
+
+## Woodpecker packaging path
+
+The tag workflow is [`.woodpecker/release-windows.yaml`](../.woodpecker/release-windows.yaml).
+It uses the existing `windows/amd64` local agent and stages files on that
+machine under:
+
+```text
+C:\woodpecker-cache\contexttrace\release-assets\v0.1.0
+```
+
+Before pushing the tag, ensure the release workflow has landed on `main` and
+the Windows agent has `npm`, Rust, Tauri's Windows prerequisites, and the
+WebView2/NSIS build dependencies already used by `windows.yaml`. Then run:
+
+```powershell
+git switch main
+git pull --ff-only origin main
+git tag -a v0.1.0 -m "ContextTrace 0.1.0"
+git push origin v0.1.0
+```
+
+Watch the Woodpecker tag pipeline. When it succeeds, retrieve the three files
+from the staging directory and create a draft GitHub release manually, or use
+the Woodpecker release publisher once a GitHub token has been stored as a
+repository secret. A GitHub token is separate from the Woodpecker API token.
 
 The NSIS installer is deliberately per-user (`%LOCALAPPDATA%`) and does not
 need administrator privileges. The default Tauri WebView2 bootstrapper may

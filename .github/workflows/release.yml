@@ -1,9 +1,9 @@
 name: Release Windows artifacts
 
 on:
-  push:
-    tags:
-      - "v*"
+  # Windows release packaging is performed by the self-hosted Woodpecker
+  # tag workflow. Keep this manual fallback for a future hosted runner or an
+  # operator who explicitly chooses to spend GitHub Actions minutes.
   workflow_dispatch:
     inputs:
       tag:
