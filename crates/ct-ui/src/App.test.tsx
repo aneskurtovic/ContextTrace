@@ -16,6 +16,8 @@ import {
   demoResidual,
   demoSessions,
   demoTemporalGhost,
+  demoTranscript,
+  demoTranscriptEntry,
   demoTurnDiff,
 } from "./demo";
 import type {
@@ -33,6 +35,8 @@ vi.mock("./api", () => ({
   searchSessions: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
+  getTranscript: vi.fn(),
+  getTranscriptEntry: vi.fn(),
   runDoctor: vi.fn(),
   getLifecycle: vi.fn(),
   getResidual: vi.fn(),
@@ -86,7 +90,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function openView(name: "Overview" | "Turns" | "Diff" | "Evidence") {
+async function openView(name: "Overview" | "Turns" | "Chat" | "Diff" | "Evidence") {
   const tab = await screen.findByRole("tab", { name });
   await waitFor(() => expect(tab.hasAttribute("disabled")).toBe(false));
   fireEvent.click(tab);
@@ -102,6 +106,12 @@ beforeEach(() => {
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
   mockedApi.inspectSession.mockImplementation(async (_agent, id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
+  mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset = 0, limit = 40) =>
+    demoTranscript(offset, limit),
+  );
+  mockedApi.getTranscriptEntry.mockImplementation(async (_agent, _id, index) =>
+    demoTranscriptEntry(index),
+  );
   mockedApi.runDoctor.mockImplementation(async (_agent, _id, turn) => demoDoctor(turn));
   mockedApi.getLifecycle.mockImplementation(async (_agent, _id, item) => demoLifecycle(item));
   mockedApi.getResidual.mockImplementation(async (agent, id) => demoResidual(agent, id));
@@ -686,6 +696,65 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.keyDown(actions.at(-1)!, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull());
     expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe("conversation", () => {
+  it("reads a session back with tool results collapsed to their size", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await openView("Chat");
+
+    const entries = await screen.findAllByRole("listitem");
+    const conversation = entries.filter((entry) => entry.className.includes("transcript-entry"));
+    expect(conversation.length).toBeGreaterThan(3);
+
+    // The point of the view: a 152,480-character tool result sits between an
+    // ordinary question and an ordinary answer, and is collapsed to its size
+    // rather than pasted.
+    const result = conversation.find((entry) => entry.className.includes("toolResult"))!;
+    expect(result.textContent).toContain("152,480 chars");
+    expect(result.querySelector(".transcript-text")).toBeNull();
+    expect(result.querySelector(".transcript-collapsed")).not.toBeNull();
+
+    // A message is not machinery and arrives open.
+    const message = conversation.find((entry) => entry.className.includes("user"))!;
+    expect(message.querySelector(".transcript-text")!.textContent).toContain(
+      "losing track of the schema",
+    );
+  });
+
+  it("fetches the rest of a truncated entry only when it is expanded", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await openView("Chat");
+
+    const result = (await screen.findAllByRole("listitem")).find((entry) =>
+      entry.className.includes("toolResult"),
+    )!;
+    expect(mockedApi.getTranscriptEntry).not.toHaveBeenCalled();
+
+    fireEvent.click(result.querySelector<HTMLButtonElement>(".transcript-toggle")!);
+
+    await waitFor(() =>
+      expect(mockedApi.getTranscriptEntry).toHaveBeenCalledWith("codex", demoSessions[0].id, 4),
+    );
+    await waitFor(() =>
+      expect(result.querySelector(".transcript-text")!.textContent!.length).toBeGreaterThan(2_000),
+    );
+  });
+
+  it("moves from a message to the measurements of the turn it belongs to", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await openView("Chat");
+
+    // The link back is what makes this a transcript rather than a chat log:
+    // the reader who spots the oversized result goes straight to the turn's
+    // composition.
+    fireEvent.click((await screen.findAllByRole("button", { name: "turn 1" }))[0]);
+
+    await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith("codex", demoSessions[0].id, 1));
   });
 });
 

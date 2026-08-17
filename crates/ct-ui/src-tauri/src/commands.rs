@@ -24,6 +24,11 @@ pub mod notifications;
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
 const MAX_SESSION_PAGE_SIZE: usize = 1_000;
+/// Smaller than a page of the catalog, and for a different reason: a catalog
+/// row is a few fields, while a transcript entry carries up to
+/// [`ct_application::transcript::PAGE_TEXT_CHARS`] of text apiece.
+const DEFAULT_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const MAX_TRANSCRIPT_PAGE_SIZE: usize = 200;
 
 /// How many parsed sessions the desktop keeps warm at once.
 ///
@@ -782,6 +787,48 @@ impl AppState {
             .find(|diff| diff.source().line_no == line_no)
             .ok_or_else(|| format!("no compaction recorded at line {line_no} in this session"))?;
         Ok(CompactionDiffSummary::from(diff))
+    }
+
+    /// One window of the session's conversation.
+    ///
+    /// Paged rather than whole for the same reason the catalog is: the largest
+    /// local session is 6.8 MB, and reading a conversation must not mean
+    /// materialising one.
+    fn transcript(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> Result<TranscriptPageSummary, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+        let limit = limit
+            .unwrap_or(DEFAULT_TRANSCRIPT_PAGE_SIZE)
+            .clamp(1, MAX_TRANSCRIPT_PAGE_SIZE);
+        let page = self.app.transcript(
+            &cached.session,
+            cached.binding,
+            &raw,
+            offset.unwrap_or(0),
+            limit,
+        );
+        Ok(TranscriptPageSummary::from(page))
+    }
+
+    /// One transcript entry in full, for an entry the reader expanded.
+    fn transcript_entry(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        index: usize,
+    ) -> Result<TranscriptEntrySummary, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+        self.app
+            .transcript_entry(&cached.session, cached.binding, &raw, index)
+            .map(TranscriptEntrySummary::from)
+            .ok_or_else(|| format!("this session's transcript has no entry {index}"))
     }
 
     /// Compare two turns, which may belong to two different sessions.
@@ -1691,6 +1738,85 @@ impl From<SessionDescriptor> for SessionSummary {
             started_at: value.started_at.map(|time| time.to_rfc3339()),
             last_activity: value.last_activity.map(|time| time.to_rfc3339()),
             thread_role: value.thread_role.into(),
+        }
+    }
+}
+
+/// One entry of a session's conversation, as the desktop renders it.
+///
+/// `chars` is the entry's whole length and `text` may be a truncated prefix of
+/// it, which is the pair that lets a collapsed row state its weight honestly.
+/// The two must not be confused: a row showing 2,000 characters of a 38,000
+/// character tool result is the case this view exists to make visible.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptEntrySummary {
+    index: usize,
+    kind: &'static str,
+    turn: Option<u32>,
+    label: Option<String>,
+    text: String,
+    truncated: bool,
+    chars: Option<u32>,
+    sidechain: bool,
+    error: bool,
+    line: u32,
+    /// Whether this kind of entry is machinery a reader scrolls past rather
+    /// than reads. Decided in the application layer so the CLI and the desktop
+    /// cannot disagree about what a conversation looks like.
+    collapsed: bool,
+}
+
+impl From<ct_application::TranscriptEntry> for TranscriptEntrySummary {
+    fn from(value: ct_application::TranscriptEntry) -> Self {
+        Self {
+            index: value.index,
+            kind: transcript_kind_label(value.kind),
+            turn: value.turn,
+            label: value.label,
+            text: value.text,
+            truncated: value.truncated,
+            chars: value.chars,
+            sidechain: value.sidechain,
+            error: value.error,
+            line: value.line,
+            collapsed: value.kind.collapsed_by_default(),
+        }
+    }
+}
+
+fn transcript_kind_label(kind: ct_application::TranscriptKind) -> &'static str {
+    match kind {
+        ct_application::TranscriptKind::User => "user",
+        ct_application::TranscriptKind::Assistant => "assistant",
+        ct_application::TranscriptKind::Reasoning => "reasoning",
+        ct_application::TranscriptKind::ToolCall => "toolCall",
+        ct_application::TranscriptKind::ToolResult => "toolResult",
+        ct_application::TranscriptKind::Injection => "injection",
+        ct_application::TranscriptKind::Compaction => "compaction",
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptPageSummary {
+    entries: Vec<TranscriptEntrySummary>,
+    total: usize,
+    offset: usize,
+    has_more: bool,
+}
+
+impl From<ct_application::TranscriptPage> for TranscriptPageSummary {
+    fn from(value: ct_application::TranscriptPage) -> Self {
+        Self {
+            entries: value
+                .entries
+                .into_iter()
+                .map(TranscriptEntrySummary::from)
+                .collect(),
+            total: value.total,
+            offset: value.offset,
+            has_more: value.has_more,
         }
     }
 }
@@ -2654,6 +2780,27 @@ pub fn get_context(
     state: tauri::State<'_, AppState>,
 ) -> Result<ContextDetail, String> {
     state.context(parse_agent(&agent)?, &id, turn)
+}
+
+#[tauri::command]
+pub fn get_transcript(
+    id: String,
+    agent: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    state: tauri::State<'_, AppState>,
+) -> Result<TranscriptPageSummary, String> {
+    state.transcript(parse_agent(&agent)?, &id, offset, limit)
+}
+
+#[tauri::command]
+pub fn get_transcript_entry(
+    id: String,
+    agent: String,
+    index: usize,
+    state: tauri::State<'_, AppState>,
+) -> Result<TranscriptEntrySummary, String> {
+    state.transcript_entry(parse_agent(&agent)?, &id, index)
 }
 
 #[tauri::command]

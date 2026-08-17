@@ -835,21 +835,27 @@ pub(crate) fn is_redacted_thinking(block: &Value) -> bool {
         && block.get("signature").is_some()
 }
 
+/// Where an attachment keeps the content it injected, in priority order.
+///
+/// Shared by [`attachment_chars`] and [`attachment_text`] so that the size an
+/// entry reports and the text it shows are measurements of the same thing.
+const ATTACHMENT_CONTENT_KEYS: [&str; 8] = [
+    "content",
+    "stdout",
+    "planContent",
+    "snippet",
+    "prompt",
+    "skills",
+    "addedLines",
+    "addedBlocks",
+];
+
 /// Size of an attachment's injected content.
 fn attachment_chars(attachment: &Value) -> u32 {
     let mut total: usize = 0;
     let mut counted = false;
 
-    for key in [
-        "content",
-        "stdout",
-        "planContent",
-        "snippet",
-        "prompt",
-        "skills",
-        "addedLines",
-        "addedBlocks",
-    ] {
+    for key in ATTACHMENT_CONTENT_KEYS {
         if let Some(value) = attachment.get(key) {
             total += text_chars(value);
             counted = true;
@@ -864,6 +870,86 @@ fn attachment_chars(attachment: &Value) -> u32 {
     }
 
     total.min(u32::MAX as usize) as u32
+}
+
+/// The readable text of one raw Claude Code line.
+///
+/// Every branch renders what the model was actually shown, and describes in
+/// square brackets what it was shown that cannot be rendered -- a redacted
+/// thinking block, an inline image. A silent omission would leave a reader
+/// believing they had seen the whole turn, which is the failure this view
+/// exists to prevent; nothing derived here is ever counted.
+pub(crate) fn transcript_text(line: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    let text = match str_field(&value, "type").as_deref()? {
+        "user" | "assistant" => message_text(value.get("message")?),
+        "attachment" => attachment_text(value.get("attachment")?),
+        "system" => str_field(&value, "content").unwrap_or_default(),
+        _ => return None,
+    };
+    (!text.trim().is_empty()).then_some(text)
+}
+
+fn message_text(message: &Value) -> String {
+    match message.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(block_text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn block_text(block: &Value) -> Option<String> {
+    match block_type(block)? {
+        "text" => block
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        "thinking" => Some(match block.get("thinking").and_then(Value::as_str) {
+            // The ordinary case in the local corpus: 5,820 of 5,869 thinking
+            // blocks were written with their text stripped. The block still
+            // occupied the model's context, so the reader is told it was there.
+            Some(thinking) if !thinking.is_empty() => thinking.to_string(),
+            _ => "[thinking, recorded without its text]".into(),
+        }),
+        "tool_use" => block.get("input").map(|input| input.to_string()),
+        "tool_result" => Some(match block.get("content") {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Array(inner)) => inner
+                .iter()
+                .filter_map(block_text)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            other => other.map(Value::to_string).unwrap_or_default(),
+        }),
+        "image" => Some("[inline image]".into()),
+        _ => None,
+    }
+}
+
+/// The injected content of an attachment.
+///
+/// Reads the same keys, in the same order, as [`attachment_chars`] counts, and
+/// falls back the same way. That is the point: a reader shown nothing for an
+/// entry whose size says 3,198 characters would reasonably conclude the tool
+/// had lost the content, when what happened is that two functions disagreed
+/// about where it lives.
+fn attachment_text(attachment: &Value) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for key in ATTACHMENT_CONTENT_KEYS {
+        match attachment.get(key) {
+            Some(Value::String(text)) if !text.is_empty() => parts.push(text.clone()),
+            Some(other @ (Value::Array(_) | Value::Object(_))) => parts.push(other.to_string()),
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        return attachment.to_string();
+    }
+    parts.join("\n")
 }
 
 fn first_text(blocks: Option<&Vec<Value>>, max: usize) -> String {

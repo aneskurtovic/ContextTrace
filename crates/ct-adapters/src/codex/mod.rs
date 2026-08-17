@@ -142,6 +142,10 @@ impl AgentAdapter for CodexAdapter {
     ) -> PortResult<Vec<ct_domain::CompactionDiff>> {
         Ok(compaction::diff(session, raw, estimator))
     }
+
+    fn transcript_text(&self, raw_line: &str) -> Option<String> {
+        parse::transcript_text(raw_line)
+    }
 }
 
 /// Build a descriptor from a session file cheaply.

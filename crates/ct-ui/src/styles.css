@@ -2722,6 +2722,35 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .notification-health i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
 .notification-health i.healthy { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
 .notification-health small { margin-left: auto; color: var(--text-3); }
+/* ---- Conversation ---------------------------------------------------- */
+.transcript { display: flex; flex-direction: column; gap: 12px; }
+.transcript-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
+.transcript-header h2 { margin: 2px 0 0; font-size: 15px; }
+.transcript-header p { color: var(--text-3); font-size: 10px; white-space: nowrap; }
+.transcript-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.transcript-entry { padding: 10px 12px; border: 1px solid var(--line); border-left: 2px solid var(--line); border-radius: 6px; background: var(--surface); }
+/* The left edge is the only thing carrying speaker identity, so the eye can
+   follow one voice down a list where every row is otherwise the same shape. */
+.transcript-entry.user { border-left-color: var(--accent); }
+.transcript-entry.assistant { border-left-color: var(--ok); }
+.transcript-entry.toolCall, .transcript-entry.toolResult { border-left-color: var(--text-3); }
+.transcript-entry.injection, .transcript-entry.reasoning { border-left-color: var(--line); background: var(--raise); }
+.transcript-entry.compaction { border-left-color: var(--warn); }
+.transcript-entry.failed { border-left-color: var(--bad); }
+.transcript-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.transcript-role { color: var(--text); font-size: 10.5px; font-weight: 600; }
+.transcript-label { overflow: hidden; max-width: 46ch; color: var(--text-2); font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.transcript-flag { padding: 1px 5px; border: 1px solid var(--line); border-radius: 8px; color: var(--text-3); font-size: 8px; letter-spacing: .04em; text-transform: uppercase; }
+.transcript-flag.error { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); color: var(--bad); }
+.transcript-meta { margin-left: auto; color: var(--text-3); font-size: 9px; }
+.transcript-meta button { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.transcript-meta button:hover { text-decoration: underline; }
+.transcript-toggle { height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); color: var(--text-2); font-size: 9px; cursor: pointer; }
+.transcript-toggle:hover { border-color: var(--accent); color: var(--text); }
+.transcript-text { max-height: 420px; margin: 8px 0 0; overflow: auto; color: var(--text-2); font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.transcript-collapsed { margin: 6px 0 0; overflow: hidden; color: var(--text-3); font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.transcript-truncation { margin-top: 6px; color: var(--text-3); font-size: 9px; }
+
 .session-title .title-source { margin-left: 5px; color: var(--text-3); font-size: 9px; font-style: normal; vertical-align: baseline; }
 .session-branch { color: var(--text-2); }
 .notification-title-line em.os-delivered { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); color: var(--ok); }
@@ -2729,7 +2758,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .notification-os-reason { color: var(--bad); }
 .notification-delivery-test { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .notification-delivery-test button { align-self: flex-start; height: 27px; padding: 0 11px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); color: var(--text-2); font-size: 9.5px; cursor: pointer; }
-.notification-delivery-test button:hover:not(:disabled) { border-color: var(--accent); color: var(--text-1); }
+.notification-delivery-test button:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
 .notification-delivery-test button:disabled { opacity: .6; cursor: default; }
 .delivery-result { color: var(--ok); font-size: 9.5px; line-height: 1.4; }
 .delivery-result.failed { color: var(--bad); }

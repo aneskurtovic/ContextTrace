@@ -22,6 +22,8 @@ import type {
   SessionSummary,
   StartupSummary,
   ThreadRole,
+  TranscriptEntry,
+  TranscriptPage,
   TurnDiff,
   TurnTarget,
   TemporalGhost,
@@ -1094,5 +1096,146 @@ export function demoResidual(agent: Agent, id: string): ResidualReport {
       demoStepAt(points, 18, true),
       demoStepAt(points, 24, false),
     ],
+  };
+}
+
+/**
+ * A short fabricated conversation, arranged around the demo session's one
+ * expensive tool result.
+ *
+ * The shape matters more than the words: a request, the model's reasoning, a
+ * call, an enormous result, and the answer that followed it. That is the
+ * sequence the transcript exists to make legible -- the 38k-token entry sits
+ * between a question and an answer that both look ordinary.
+ */
+const demoTranscriptEntries: TranscriptEntry[] = [
+  {
+    index: 0,
+    kind: "injection",
+    turn: 1,
+    label: "CLAUDE.md",
+    text: "# ContextTrace\n\nLocal-first tooling. Never send session content anywhere.",
+    truncated: false,
+    chars: 1_284,
+    sidechain: false,
+    error: false,
+    line: 3,
+    collapsed: true,
+  },
+  {
+    index: 1,
+    kind: "user",
+    turn: 1,
+    label: null,
+    text: "The planner keeps losing track of the schema halfway through a run. Can you work out what is filling its context?",
+    truncated: false,
+    chars: 113,
+    sidechain: false,
+    error: false,
+    line: 7,
+    collapsed: false,
+  },
+  {
+    index: 2,
+    kind: "reasoning",
+    turn: 1,
+    label: "recorded without its text",
+    text: "[thinking, recorded without its text]",
+    truncated: false,
+    chars: 4_210,
+    sidechain: false,
+    error: false,
+    line: 8,
+    collapsed: true,
+  },
+  {
+    index: 3,
+    kind: "toolCall",
+    turn: 1,
+    label: "Read · src/planner/schema.json",
+    text: '{"file_path":"C:\\work\\ContextTrace\\src\\planner\\schema.json"}',
+    truncated: false,
+    chars: 78,
+    sidechain: false,
+    error: false,
+    line: 9,
+    collapsed: false,
+  },
+  {
+    index: 4,
+    kind: "toolResult",
+    turn: 1,
+    label: "Read",
+    // Truncated on purpose: this is the entry the whole view is built around,
+    // and a demo where the largest item printed in full would misrepresent
+    // both the cost and the interaction.
+    text: '{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"PlannerStep","type":"object",',
+    truncated: true,
+    chars: 152_480,
+    sidechain: false,
+    error: false,
+    line: 10,
+    collapsed: true,
+  },
+  {
+    index: 5,
+    kind: "assistant",
+    turn: 1,
+    label: null,
+    text: "The schema file is 152,480 characters and it is re-read on every planning turn. That single item is most of the window by turn 12.",
+    truncated: false,
+    chars: 130,
+    sidechain: false,
+    error: false,
+    line: 12,
+    collapsed: false,
+  },
+  {
+    index: 6,
+    kind: "compaction",
+    turn: 18,
+    label: "auto",
+    text: "Summary: the planner reads schema.json each turn; the user is deciding whether to cache it.",
+    truncated: false,
+    chars: 90,
+    sidechain: false,
+    error: false,
+    line: DEMO_COMPACTION_LINE_NO,
+    collapsed: false,
+  },
+  {
+    index: 7,
+    kind: "toolResult",
+    turn: 19,
+    label: "Bash",
+    text: "error: could not compile `planner` (lib) due to 1 previous error",
+    truncated: false,
+    chars: 63,
+    sidechain: false,
+    error: true,
+    line: 4_830,
+    collapsed: true,
+  },
+];
+
+export function demoTranscript(offset: number, limit: number): TranscriptPage {
+  const entries = demoTranscriptEntries.slice(offset, offset + limit);
+  return {
+    entries,
+    total: demoTranscriptEntries.length,
+    offset,
+    hasMore: offset + entries.length < demoTranscriptEntries.length,
+  };
+}
+
+/** Expanding an entry serves the whole thing, so the demo grows the one entry
+ *  that was truncated rather than returning the same text twice. */
+export function demoTranscriptEntry(index: number): TranscriptEntry {
+  const entry = demoTranscriptEntries[index] ?? demoTranscriptEntries[0];
+  if (!entry.truncated) return entry;
+  return {
+    ...entry,
+    text: `${entry.text}${'"type":"string"},'.repeat(240)}`,
+    truncated: false,
   };
 }

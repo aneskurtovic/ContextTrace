@@ -38,6 +38,8 @@ import type {
   InstructionFileReport,
   TemporalGhost,
   TestNotificationResult,
+  TranscriptEntry,
+  TranscriptPage,
   ThreadRole,
   ToolDelta,
   TurnDiff,
@@ -62,6 +64,8 @@ import {
   demoInstructionFiles,
   demoTemporalGhost,
   demoCost,
+  demoTranscript,
+  demoTranscriptEntry,
 } from "./demo";
 
 const inTauri = () =>
@@ -141,6 +145,56 @@ function isSession(value: unknown): value is SessionSummary {
     isStringOrNull(value.lastActivity) &&
     isThreadRole(value.threadRole)
   );
+}
+
+const transcriptKinds = new Set([
+  'user',
+  'assistant',
+  'reasoning',
+  'toolCall',
+  'toolResult',
+  'injection',
+  'compaction',
+]);
+
+function isTranscriptEntry(value: unknown): value is TranscriptEntry {
+  return (
+    isRecord(value) &&
+    typeof value.index === 'number' &&
+    typeof value.kind === 'string' &&
+    transcriptKinds.has(value.kind) &&
+    isNumberOrNull(value.turn) &&
+    isStringOrNull(value.label) &&
+    typeof value.text === 'string' &&
+    typeof value.truncated === 'boolean' &&
+    // `chars` and `truncated` are what a collapsed row states about the text it
+    // is not showing. A row that omitted either would be claiming a size it
+    // never measured.
+    isNumberOrNull(value.chars) &&
+    typeof value.sidechain === 'boolean' &&
+    typeof value.error === 'boolean' &&
+    typeof value.line === 'number' &&
+    typeof value.collapsed === 'boolean'
+  );
+}
+
+function asTranscriptPage(value: unknown): TranscriptPage {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.entries) ||
+    !value.entries.every(isTranscriptEntry) ||
+    typeof value.total !== 'number' ||
+    typeof value.offset !== 'number' ||
+    typeof value.hasMore !== 'boolean'
+  ) {
+    throw malformed('a session transcript');
+  }
+  return value as unknown as TranscriptPage;
+}
+
+function asTranscriptEntry(value: unknown): TranscriptEntry {
+  if (!isTranscriptEntry(value)) throw malformed('a transcript entry');
+  return value;
 }
 
 function malformed(command: string): Error {
@@ -507,6 +561,27 @@ export function inspectSession(agent: Agent, id: string): Promise<SessionDetail>
 export function getContext(agent: Agent, id: string, turn?: number): Promise<ContextDetail> {
   if (!inTauri()) return Promise.resolve(demoContext(turn));
   return invoke<unknown>("get_context", { id, agent, turn: turn ?? null }).then(asContext);
+}
+
+/** One window of a session's conversation. Paged: a session can be 6.8 MB. */
+export function getTranscript(
+  agent: Agent,
+  id: string,
+  offset = 0,
+  limit = 40,
+): Promise<TranscriptPage> {
+  if (!inTauri()) return Promise.resolve(demoTranscript(offset, limit));
+  return invoke<unknown>('get_transcript', { id, agent, offset, limit }).then(asTranscriptPage);
+}
+
+/** One entry in full, for an entry the reader expanded. */
+export function getTranscriptEntry(
+  agent: Agent,
+  id: string,
+  index: number,
+): Promise<TranscriptEntry> {
+  if (!inTauri()) return Promise.resolve(demoTranscriptEntry(index));
+  return invoke<unknown>('get_transcript_entry', { id, agent, index }).then(asTranscriptEntry);
 }
 
 export function runDoctor(agent: Agent, id: string, turn?: number): Promise<DoctorReport> {

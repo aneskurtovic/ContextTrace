@@ -20,6 +20,7 @@ pub mod instructions;
 pub mod lifecycle;
 pub mod notifications;
 pub mod secrets;
+pub mod transcript;
 
 use ct_domain::model::archive::ArchiveEntry;
 use ct_domain::ports::ArchiveStore;
@@ -63,6 +64,10 @@ pub use notifications::{
     CostBudgetObservation, NotificationEngine, NotificationEvaluation, NotificationInputs,
 };
 pub use secrets::{ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport};
+pub use transcript::{
+    entry as transcript_entry, page as transcript_page, TranscriptEntry, TranscriptKind,
+    TranscriptPage,
+};
 
 /// An agent adapter paired with the token estimator appropriate to its models.
 ///
@@ -633,6 +638,34 @@ impl ContextTrace {
         let adapter = &self.bindings[binding].adapter;
         let estimator = self.bindings[binding].estimator.as_ref();
         Ok(adapter.compaction_diffs(session, raw, estimator)?)
+    }
+
+    /// One window of a session's conversation, read back from its log.
+    ///
+    /// Raw bytes are fetched for the requested entries only, so opening a
+    /// 6.8 MB session costs a page of seeks rather than the whole file.
+    pub fn transcript(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        raw: &dyn RawEventSource,
+        offset: usize,
+        limit: usize,
+    ) -> transcript::TranscriptPage {
+        let adapter = &self.bindings[binding].adapter;
+        transcript::page(session, adapter.as_ref(), raw, offset, limit)
+    }
+
+    /// One transcript entry in full, for a reader who expanded it.
+    pub fn transcript_entry(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        raw: &dyn RawEventSource,
+        index: usize,
+    ) -> Option<transcript::TranscriptEntry> {
+        let adapter = &self.bindings[binding].adapter;
+        transcript::entry(session, adapter.as_ref(), raw, index)
     }
 
     /// Per-turn history of what the log could and could not account for.

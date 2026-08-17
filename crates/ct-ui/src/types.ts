@@ -61,6 +61,48 @@ export interface SessionSummary {
 }
 
 /**
+ * What one entry of a session's conversation is.
+ *
+ * `injection` is content the harness put in the prompt rather than anything a
+ * person or the model wrote. It appears in the transcript because the model
+ * read it: a conversation showing only the typed parts would misrepresent what
+ * was actually in the context window.
+ */
+export type TranscriptKind =
+  | 'user'
+  | 'assistant'
+  | 'reasoning'
+  | 'toolCall'
+  | 'toolResult'
+  | 'injection'
+  | 'compaction';
+
+export interface TranscriptEntry {
+  index: number;
+  kind: TranscriptKind;
+  turn: number | null;
+  label: string | null;
+  text: string;
+  /** True when `text` is a prefix of what is on disk. */
+  truncated: boolean;
+  /** The whole entry's length, which is what a collapsed row states. */
+  chars: number | null;
+  sidechain: boolean;
+  error: boolean;
+  line: number;
+  /** Whether this kind arrives collapsed. Decided by the backend so the CLI
+   *  and the desktop cannot disagree about what a conversation looks like. */
+  collapsed: boolean;
+}
+
+export interface TranscriptPage {
+  entries: TranscriptEntry[];
+  total: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+/**
  * Whether two turns' token figures may be subtracted, and how far.
  *
  * A discriminated union because these are not degrees of one claim:

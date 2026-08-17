@@ -143,6 +143,87 @@ fn authored_prompt(value: &Value) -> Option<String> {
         .then(|| ct_domain::ports::truncate_chars(&collapsed, TITLE_CHARS))
 }
 
+/// The readable text of one raw rollout line.
+///
+/// Written out case by case rather than reusing [`visit_content`] because the
+/// two want opposite things from the same payload. Counting must treat an
+/// encrypted reasoning blob and a structured tool output as opaque lengths;
+/// reading wants to *say* which one it is looking at, and to keep an inline
+/// image out of the reader's face rather than charge for it. Nothing derived
+/// here is ever counted.
+pub(crate) fn transcript_text(line: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    let payload = value.get("payload")?;
+    match str_field(&value, "type").as_deref()? {
+        "response_item" => response_item_text(payload),
+        // The summary the harness wrote in place of the discarded history.
+        // Shown because a reader scrolling past a compaction should see what
+        // survived it, not an unexplained gap.
+        "compacted" => str_field(payload, "message"),
+        _ => None,
+    }
+}
+
+/// The readable text of one content block, or `None` when it carries none.
+fn block_text(block: &Value) -> Option<String> {
+    for key in ["text", "input_text", "output_text"] {
+        if let Some(text) = block.get(key).and_then(Value::as_str) {
+            return Some(text.to_string());
+        }
+    }
+    // Naming it beats pasting a megabyte of base64 at a reader.
+    block.get("image_url").map(|_| "[inline image]".to_string())
+}
+
+fn response_item_text(payload: &Value) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(blocks) = payload.get("content").and_then(Value::as_array) {
+        parts.extend(blocks.iter().filter_map(block_text));
+    }
+
+    // Codex encodes a call's arguments as a JSON string; it is the most useful
+    // thing a tool call has to show.
+    for key in ["arguments", "input"] {
+        if let Some(text) = payload.get(key).and_then(Value::as_str) {
+            parts.push(text.to_string());
+        }
+    }
+
+    if payload.get("encrypted_content").is_some() {
+        parts.push("[encrypted reasoning]".into());
+    }
+
+    match payload.get("output") {
+        Some(Value::String(text)) => parts.push(text.clone()),
+        // Structured output is usually a list of the same text blocks a
+        // message carries, and a reader wants the text rather than the
+        // envelope around it. Its *size* is still taken from the serialized
+        // form elsewhere -- that stays a declared proxy, and this is display.
+        Some(Value::Array(blocks)) => {
+            let text = blocks
+                .iter()
+                .filter_map(block_text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(if text.trim().is_empty() {
+                Value::Array(blocks.clone()).to_string()
+            } else {
+                text
+            });
+        }
+        Some(structured @ Value::Object(_)) => parts.push(structured.to_string()),
+        _ => {}
+    }
+
+    if let Some(action) = payload.get("action") {
+        parts.push(action.to_string());
+    }
+
+    let text = parts.join("\n");
+    (!text.trim().is_empty()).then_some(text)
+}
+
 /// Derive a session's place in its thread group from the fields Codex's
 /// harness already records.
 ///

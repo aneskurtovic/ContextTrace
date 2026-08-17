@@ -147,6 +147,10 @@ impl AgentAdapter for ClaudeCodeAdapter {
     ) -> PortResult<ReconstructedContext> {
         reconstruct::reconstruct(session, turn, estimator)
     }
+
+    fn transcript_text(&self, raw_line: &str) -> Option<String> {
+        parse::transcript_text(raw_line)
+    }
 }
 
 /// Describe a session without parsing its body.

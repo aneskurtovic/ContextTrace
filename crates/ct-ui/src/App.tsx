@@ -50,19 +50,23 @@ import type {
   SessionSummary,
   StartupSummary,
   TestNotificationResult,
+  TranscriptEntry,
+  TranscriptKind,
+  TranscriptPage,
   TurnDiff,
   TurnTarget,
   TemporalGhost,
 } from "./types";
 
 type AgentFilter = "all" | Agent;
-type WorkspaceView = "overview" | "turns" | "diff" | "evidence";
+type WorkspaceView = "overview" | "turns" | "chat" | "diff" | "evidence";
 
 const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; shortcut: string }> = [
   { id: "overview", label: "Overview", shortcut: "1" },
   { id: "turns", label: "Turns", shortcut: "2" },
-  { id: "diff", label: "Diff", shortcut: "3" },
-  { id: "evidence", label: "Evidence", shortcut: "4" },
+  { id: "chat", label: "Chat", shortcut: "3" },
+  { id: "diff", label: "Diff", shortcut: "4" },
+  { id: "evidence", label: "Evidence", shortcut: "5" },
 ];
 
 /**
@@ -2340,6 +2344,185 @@ function EvidenceTools({
   );
 }
 
+const TRANSCRIPT_KIND_LABELS: Record<TranscriptKind, string> = {
+  user: "You",
+  assistant: "Agent",
+  reasoning: "Reasoning",
+  toolCall: "Tool call",
+  toolResult: "Tool result",
+  injection: "Injected",
+  compaction: "Compaction",
+};
+
+/**
+ * One entry of the conversation.
+ *
+ * Collapsed entries state their size instead of their content, which is the
+ * reading that makes an oversized tool result obvious: a row saying
+ * `152,480 chars` next to five rows saying `130 chars` is the finding. Expanding
+ * one asks the backend for the rest rather than having shipped it in the page.
+ */
+function TranscriptRow({
+  entry,
+  session,
+  onTurn,
+}: {
+  entry: TranscriptEntry;
+  session: SessionSummary;
+  onTurn: (turn: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(!entry.collapsed);
+  const [full, setFull] = useState<TranscriptEntry | null>(null);
+  const [loading, setLoading] = useState(false);
+  const shown = full ?? entry;
+  const needsFetch = expanded && entry.truncated && !full && !loading;
+
+  useEffect(() => {
+    if (!needsFetch) return;
+    setLoading(true);
+    api.getTranscriptEntry(session.agent, session.id, entry.index)
+      .then(setFull)
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, [needsFetch, session.agent, session.id, entry.index]);
+
+  return (
+    <li className={`transcript-entry ${entry.kind}${entry.error ? " failed" : ""}`}>
+      <div className="transcript-head">
+        <span className="transcript-role">{TRANSCRIPT_KIND_LABELS[entry.kind]}</span>
+        {entry.label && <span className="transcript-label" title={entry.label}>{entry.label}</span>}
+        {entry.sidechain && <span className="transcript-flag">subagent</span>}
+        {entry.error && <span className="transcript-flag error">error</span>}
+        <span className="transcript-meta">
+          {entry.chars != null && `${entry.chars.toLocaleString()} chars`}
+          {entry.turn != null && (
+            <>
+              {" · "}
+              <button type="button" onClick={() => onTurn(entry.turn!)}>
+                turn {entry.turn}
+              </button>
+            </>
+          )}
+          {" · "}line {entry.line}
+        </span>
+        <button
+          type="button"
+          className="transcript-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? "Collapse" : "Expand"}
+        </button>
+      </div>
+      {expanded ? (
+        <>
+          <pre className="transcript-text">{shown.text}</pre>
+          {loading && <Spinner label="Reading the rest of this entry…" />}
+          {shown.truncated && !loading && (
+            <p className="transcript-truncation">
+              Showing the first {shown.text.length.toLocaleString()} of{" "}
+              {shown.chars?.toLocaleString() ?? "?"} characters.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="transcript-collapsed">{entry.text.split("\n")[0].slice(0, 140) || "—"}</p>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The session, read back as the conversation it was.
+ *
+ * Fetches its own data rather than taking it from `SessionWorkspace`: the
+ * transcript is paged and independently scrolled, and threading four more
+ * pieces of state through a component that already takes fifty props would
+ * make both harder to follow.
+ */
+function TranscriptPanel({
+  session,
+  onTurn,
+}: {
+  session: SessionSummary;
+  onTurn: (turn: number) => void;
+}) {
+  const [page, setPage] = useState<TranscriptPage | null>(null);
+  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const key = `${session.agent}:${session.id}`;
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    setEntries([]);
+    setPage(null);
+    api.getTranscript(session.agent, session.id, 0)
+      .then((first) => {
+        if (!live) return;
+        setPage(first);
+        setEntries(first.entries);
+      })
+      .catch((problem: unknown) => live && setError(errorMessage(problem)))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+    // Keyed on the session, not on the objects: a re-render must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const loadMore = () => {
+    if (!page?.hasMore || loading) return;
+    setLoading(true);
+    api.getTranscript(session.agent, session.id, entries.length)
+      .then((next) => {
+        setPage(next);
+        setEntries((current) => [...current, ...next.entries]);
+      })
+      .catch((problem: unknown) => setError(errorMessage(problem)))
+      .finally(() => setLoading(false));
+  };
+
+  if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
+  if (error) return <p className="empty-inline">{error}</p>;
+  if (!entries.length) {
+    return <p className="empty-inline">This session recorded no messages.</p>;
+  }
+
+  return (
+    <section className="transcript" aria-label="Session conversation">
+      <header className="transcript-header">
+        <div>
+          <span className="eyebrow">Conversation</span>
+          <h2>{sessionName(session)}</h2>
+        </div>
+        {/* Injected content and tool results are entries here, so this count
+            is larger than the number of messages exchanged. Saying "entries"
+            rather than "messages" is the difference. */}
+        <p>{entries.length} of {page?.total ?? entries.length} entries</p>
+      </header>
+      <ol className="transcript-list">
+        {entries.map((entry) => (
+          <TranscriptRow
+            key={entry.index}
+            entry={entry}
+            session={session}
+            onTurn={onTurn}
+          />
+        ))}
+      </ol>
+      {page?.hasMore && (
+        <button type="button" className="load-more" onClick={loadMore} disabled={loading}>
+          {loading ? "Loading…" : `Load more (${(page.total - entries.length).toLocaleString()})`}
+        </button>
+      )}
+    </section>
+  );
+}
+
 function SessionWorkspace({
   activeView,
   detail,
@@ -2694,6 +2877,12 @@ function SessionWorkspace({
       ) : (
         <p className="empty-inline">This session has no reconstructable prompt turn.</p>
       )}
+      </div>
+
+      <div id="chat-panel" className="workspace-section" role="tabpanel" aria-labelledby="chat-tab" hidden={activeView !== "chat"}>
+        {/* Mounted only while selected: reading a conversation costs a page of
+            seeks per session, and every other tab would otherwise pay for it. */}
+        {activeView === "chat" && <TranscriptPanel session={detail.session} onTurn={onTurn} />}
       </div>
 
       <div id="evidence-panel" className="workspace-section" role="tabpanel" aria-labelledby="evidence-tab" hidden={activeView !== "evidence"}>

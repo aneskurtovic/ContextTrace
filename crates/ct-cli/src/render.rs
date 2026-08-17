@@ -9,7 +9,7 @@ use ct_application::{
     AppError, Comparability, ContextTrace, CostComparison, CostReport, Departure, Diagnostics,
     DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift,
     InstructionFileReport, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport,
-    SessionDiff, SessionFamily, TemporalGhost,
+    SessionDiff, SessionFamily, TemporalGhost, TranscriptKind, TranscriptPage,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -131,6 +131,102 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
         "\n{} session(s). Inspect one with: ct inspect <id>",
         list.len()
     );
+}
+
+/// Print a window of a session's conversation.
+///
+/// Entries the reader is unlikely to be scanning for -- tool results, injected
+/// context, reasoning -- print their first line and their length rather than
+/// their body. That is not hiding them: an entry stating `38,412 chars` is
+/// exactly how an oversized tool result announces itself, and `--json` carries
+/// the same text this printed from.
+pub fn transcript(page: &TranscriptPage, json: bool) {
+    if json {
+        print_json(page);
+        return;
+    }
+    if page.entries.is_empty() {
+        println!("This session's transcript has no entries in that range.");
+        return;
+    }
+
+    for entry in &page.entries {
+        let turn = entry
+            .turn
+            .map(|turn| format!("turn {turn}"))
+            .unwrap_or_else(|| "-".into());
+        let label = entry
+            .label
+            .as_deref()
+            .map(|label| format!(" {label}"))
+            .unwrap_or_default();
+        let size = entry
+            .chars
+            .map(|chars| format!("  {chars} chars"))
+            .unwrap_or_default();
+        println!(
+            "\n[{}] {}{}  ({}, line {}){}{}",
+            entry.index,
+            transcript_kind(entry.kind),
+            label,
+            turn,
+            entry.line,
+            size,
+            if entry.error { "  ERROR" } else { "" }
+        );
+
+        if entry.kind.collapsed_by_default() {
+            // One flattened line: enough to tell a stack trace from a file
+            // read without pasting either, and `ellipsize` also strips the
+            // control characters raw tool output is full of.
+            println!("  {}", ellipsize(&entry.text, 110));
+        } else {
+            // Line structure is kept here, because a prompt or an answer is
+            // written in paragraphs and flattening it makes it unreadable.
+            for line in truncate_lines(&entry.text, 1_200) {
+                println!("  {line}");
+            }
+        }
+    }
+
+    println!(
+        "\n{} of {} entries. Next window: --offset {}",
+        page.entries.len(),
+        page.total,
+        page.offset + page.entries.len()
+    );
+}
+
+/// Break text into printable lines, stopping after `max` characters.
+///
+/// Not [`ellipsize`], which replaces every control character with a space:
+/// that is right for a table cell and wrong for a message, where the line
+/// breaks are part of what was written.
+fn truncate_lines(text: &str, max: usize) -> Vec<String> {
+    let mut used = 0usize;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if used >= max {
+            out.push("[…]".into());
+            break;
+        }
+        let room = max - used;
+        used += line.chars().count() + 1;
+        out.push(ellipsize(line, room));
+    }
+    out
+}
+
+fn transcript_kind(kind: TranscriptKind) -> &'static str {
+    match kind {
+        TranscriptKind::User => "user",
+        TranscriptKind::Assistant => "assistant",
+        TranscriptKind::Reasoning => "reasoning",
+        TranscriptKind::ToolCall => "tool call",
+        TranscriptKind::ToolResult => "tool result",
+        TranscriptKind::Injection => "injected",
+        TranscriptKind::Compaction => "compaction",
+    }
 }
 
 /// Show the recorded root/subagent structure without inferring edges from
