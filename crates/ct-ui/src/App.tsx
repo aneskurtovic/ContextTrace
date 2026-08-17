@@ -34,6 +34,12 @@ import type {
   InstructionFileReport,
   LifecycleReport,
   MemoryHit,
+  NotificationDelivery,
+  NotificationPage,
+  NotificationRecord,
+  NotificationRuleId,
+  NotificationSettings,
+  NotificationStatus,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -2538,6 +2544,229 @@ function SessionWorkspace({
   );
 }
 
+const NOTIFICATION_RULES: Array<{
+  id: NotificationRuleId;
+  label: string;
+  detail: string;
+  unit?: string;
+}> = [
+  { id: 'contextPressure', label: 'Context pressure', detail: 'Context window utilization crosses a warning band.', unit: '%' },
+  { id: 'promptSpike', label: 'Prompt spike', detail: 'A measured turn grows suddenly.', unit: 'tokens' },
+  { id: 'toolErrorStreak', label: 'Tool-error streak', detail: 'The same tool and target fail repeatedly.', unit: 'failures' },
+  { id: 'secretExposure', label: 'Secret exposure', detail: 'A new potential credential enters context.' },
+  { id: 'formatDrift', label: 'Format drift', detail: 'An agent writes an event type ContextTrace has not seen.' },
+  { id: 'compaction', label: 'Compaction', detail: 'The agent compacts its context.' },
+  { id: 'contextDominance', label: 'Context dominance', detail: 'One contributor dominates the prompt.', unit: '%' },
+  { id: 'residualStep', label: 'Hidden-context change', detail: 'Unlogged context changes materially.', unit: 'tokens' },
+  { id: 'instructionDrift', label: 'Instruction drift', detail: 'Recorded instructions no longer match disk.' },
+  { id: 'contextWaste', label: 'Context waste', detail: 'Duplicate or low-information content exceeds budget.', unit: 'tokens' },
+  { id: 'costBudget', label: 'Cost budget', detail: 'Observed or projected session cost crosses the configured budget.', unit: 'USD' },
+];
+
+function NotificationCenter({
+  open,
+  settingsOpen,
+  loading,
+  page,
+  settings,
+  status,
+  error,
+  onClose,
+  onToggleSettings,
+  onSettings,
+  onSelect,
+  onReadAll,
+  onDismiss,
+  onClear,
+  onLoadMore,
+}: {
+  open: boolean;
+  settingsOpen: boolean;
+  loading: boolean;
+  page: NotificationPage | null;
+  settings: NotificationSettings | null;
+  status: NotificationStatus | null;
+  error: string | null;
+  onClose: () => void;
+  onToggleSettings: () => void;
+  onSettings: (settings: NotificationSettings) => void;
+  onSelect: (notification: NotificationRecord) => void;
+  onReadAll: () => void;
+  onDismiss: (id: string) => void;
+  onClear: () => void;
+  onLoadMore: () => void;
+}) {
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    drawerRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    return () => {
+      const previous = previousFocus.current;
+      previousFocus.current = null;
+      if (previous && document.contains(previous)) previous.focus();
+    };
+  }, [open]);
+  if (!open) return null;
+  const notifications = page?.notifications ?? [];
+  return (
+    <>
+      <button className='notification-scrim' type='button' aria-label='Close notifications' onClick={onClose} />
+      <aside ref={drawerRef} className='notification-drawer' role='dialog' aria-modal='true' aria-label='Notifications'>
+        <header className='notification-drawer-header'>
+          <div>
+            <span className='eyebrow'>Local activity</span>
+            <h2>Notifications</h2>
+          </div>
+          <div className='notification-header-actions'>
+            <button type='button' onClick={onToggleSettings} aria-pressed={settingsOpen}>Settings</button>
+            <button type='button' onClick={onClose} aria-label='Close notification drawer'>×</button>
+          </div>
+        </header>
+
+        {settingsOpen && settings ? (
+          <div className='notification-settings'>
+            <label className='notification-master-toggle'>
+              <span><strong>Monitor live sessions</strong><small>Reads changed local logs while ContextTrace is open.</small></span>
+              <input
+                type='checkbox'
+                checked={settings.enabled}
+                onChange={(event) => onSettings({ ...settings, enabled: event.target.checked, onboardingComplete: true })}
+              />
+            </label>
+            <div className='notification-health' role='status'>
+              <i className={status?.monitoring ? 'healthy' : ''} />
+              <span>{status?.monitoring ? 'Monitoring' : 'Not monitoring'}</span>
+              <small>OS: {status?.osPermission ?? 'unknown'}</small>
+            </div>
+            {status?.osPermission === 'denied' && (
+              <p className='notification-permission-note'>OS permission is denied. Feed entries will still be recorded.</p>
+            )}
+            {status?.error && <p className='notification-permission-note danger'>{status.error}</p>}
+            <label className='notification-master-toggle compact'>
+              <span><strong>Subagent OS alerts</strong><small>Subagent findings always remain available in the feed.</small></span>
+              <input
+                type='checkbox'
+                checked={settings.subagentOsNotifications}
+                onChange={(event) => onSettings({ ...settings, subagentOsNotifications: event.target.checked })}
+              />
+            </label>
+            <div className='notification-rule-list'>
+              {NOTIFICATION_RULES.map((rule) => {
+                const value = settings.rules[rule.id];
+                return (
+                  <div className='notification-rule' key={rule.id}>
+                    <div><strong>{rule.label}</strong><small>{rule.detail}</small></div>
+                    <select
+                      aria-label={`${rule.label} delivery`}
+                      value={value.delivery}
+                      onChange={(event) => onSettings({
+                        ...settings,
+                        rules: {
+                          ...settings.rules,
+                          [rule.id]: { ...value, delivery: event.target.value as NotificationDelivery },
+                        },
+                      })}
+                    >
+                      <option value='off'>Off</option>
+                      <option value='feed'>Feed</option>
+                      <option value='feedAndOs'>Feed + OS</option>
+                    </select>
+                    {rule.unit && (
+                      <label className='notification-threshold'>
+                        <input
+                          type='number'
+                          min='0'
+                          aria-label={`${rule.label} threshold`}
+                          value={rule.id === 'costBudget' ? settings.costBudgetUsd ?? '' : value.threshold ?? ''}
+                          placeholder='Not set'
+                          onChange={(event) => {
+                            const threshold = event.target.value === '' ? null : Number(event.target.value);
+                            onSettings(rule.id === 'costBudget'
+                              ? { ...settings, costBudgetUsd: threshold, rules: { ...settings.rules, costBudget: { ...value, threshold } } }
+                              : { ...settings, rules: { ...settings.rules, [rule.id]: { ...value, threshold } } });
+                          }}
+                        />
+                        <span>{rule.unit}</span>
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className='notification-feed'>
+            <div className='notification-feed-tools'>
+              <span>{page?.unreadCount ?? 0} unread</span>
+              <button type='button' onClick={onReadAll} disabled={!page?.unreadCount}>Mark all read</button>
+              <button type='button' onClick={onClear} disabled={!notifications.length}>Clear history</button>
+            </div>
+            {error && <p className='notification-feed-error' role='alert'>{error}</p>}
+            {loading && !notifications.length ? <Spinner label='Loading notifications…' /> : notifications.length ? (
+              <ol className='notification-list'>
+                {notifications.map((notification) => (
+                  <li key={notification.id} className={`${notification.severity} ${notification.readAt ? 'read' : 'unread'}`}>
+                    <button className='notification-card' type='button' onClick={() => onSelect(notification)}>
+                      <span className='notification-severity' aria-hidden='true' />
+                      <span className='notification-copy'>
+                        <span className='notification-title-line'>
+                          <strong>{notification.title}</strong>
+                          {notification.catchUp && <em>catch-up</em>}
+                        </span>
+                        <span>{notification.description}</span>
+                        <small>
+                          {projectName(notification.location.project)} · {shortId(notification.location.sessionId)}
+                          {notification.location.turn != null ? ` · turn ${notification.location.turn}` : ''}
+                          {' · '}{formatActivity(notification.occurredAt)} · {notification.confidence}
+                        </small>
+                      </span>
+                    </button>
+                    <button type='button' className='notification-dismiss' onClick={() => onDismiss(notification.id)} aria-label={`Dismiss ${notification.title}`}>×</button>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className='notification-empty'><strong>No notifications yet</strong><span>New findings from monitored sessions will appear here.</span></div>
+            )}
+            {page?.nextCursor && <button className='notification-load-more' type='button' onClick={onLoadMore} disabled={loading}>{loading ? 'Loading…' : 'Load older'}</button>}
+          </div>
+        )}
+      </aside>
+    </>
+  );
+}
+
+function NotificationOnboarding({
+  settings,
+  onDecision,
+}: {
+  settings: NotificationSettings;
+  onDecision: (enabled: boolean) => void;
+}) {
+  if (settings.onboardingComplete) return null;
+  return (
+    <div className='notification-onboarding-backdrop'>
+      <section className='notification-onboarding' role='dialog' aria-modal='true' aria-labelledby='notification-onboarding-title'>
+        <span className='notification-onboarding-icon' aria-hidden='true'>♢</span>
+        <span className='eyebrow'>Optional · local only</span>
+        <h2 id='notification-onboarding-title'>Know when a session needs attention</h2>
+        <p>ContextTrace can watch changed Codex and Claude Code logs while this app is open, keep a 30-day activity feed, and surface actionable OS alerts.</p>
+        <ul>
+          <li>Existing sessions are baselined silently.</li>
+          <li>Notification text never includes prompts, tool output, secrets, or full paths.</li>
+          <li>No network service is used.</li>
+        </ul>
+        <div>
+          <button type='button' className='primary' onClick={() => onDecision(true)}>Enable monitoring</button>
+          <button type='button' onClick={() => onDecision(false)}>Not now</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   // Without the desktop bridge every panel below is filled from `demo.ts`.
   // A tool that argues for evidence over invention cannot render invented
@@ -2612,6 +2841,14 @@ export default function App() {
   const [liveFollow, setLiveFollow] = useState(false);
   const [compareDetail, setCompareDetail] = useState<SessionDetail | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
+  const [notificationDrawerOpen, setNotificationDrawerOpen] = useState(false);
+  const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
+  const [notificationStatus, setNotificationStatus] = useState<NotificationStatus | null>(null);
+  const [notificationPage, setNotificationPage] = useState<NotificationPage | null>(null);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationError, setNotificationError] = useState<string | null>(null);
+  const [pendingNotificationTurn, setPendingNotificationTurn] = useState<number | null>(null);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
@@ -2622,6 +2859,7 @@ export default function App() {
   const catalogRequest = useRef(0);
   const archiveRequest = useRef(0);
   const evidenceRequest = useRef(0);
+  const notificationRequest = useRef(0);
   const paletteRef = useRef<HTMLElement | null>(null);
   const paletteInputRef = useRef<HTMLInputElement | null>(null);
   const paletteActionRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -2663,11 +2901,13 @@ export default function App() {
         openPalette();
       } else if (event.key === "Escape" && paletteOpen) {
         closePalette();
+      } else if (event.key === 'Escape' && notificationDrawerOpen) {
+        setNotificationDrawerOpen(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closePalette, openPalette, paletteOpen]);
+  }, [closePalette, notificationDrawerOpen, openPalette, paletteOpen]);
 
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
@@ -2746,6 +2986,119 @@ export default function App() {
 
   useEffect(() => {
     api.getStartup().then(setStartup).catch((loadError) => setError(errorMessage(loadError)));
+  }, []);
+
+  const loadNotificationPage = useCallback(async (append = false) => {
+    if (typeof api.listNotifications !== 'function') return;
+    const request = ++notificationRequest.current;
+    const cursor = append ? notificationPage?.nextCursor ?? null : null;
+    if (append && !cursor) return;
+    setNotificationLoading(true);
+    setNotificationError(null);
+    try {
+      const page = await api.listNotifications(cursor, 30, false);
+      if (request !== notificationRequest.current) return;
+      setNotificationPage((current) => append && current ? {
+        notifications: [
+          ...current.notifications,
+          ...page.notifications.filter((candidate) => !current.notifications.some((item) => item.id === candidate.id)),
+        ],
+        nextCursor: page.nextCursor,
+        unreadCount: page.unreadCount,
+      } : page);
+    } catch (loadError) {
+      if (request === notificationRequest.current) setNotificationError(errorMessage(loadError));
+    } finally {
+      if (request === notificationRequest.current) setNotificationLoading(false);
+    }
+  }, [notificationPage?.nextCursor]);
+
+  useEffect(() => {
+    if (
+      typeof api.getNotificationSettings !== 'function' ||
+      typeof api.getNotificationStatus !== 'function'
+    ) return;
+    let cancelled = false;
+    Promise.all([
+      api.getNotificationSettings(),
+      api.getNotificationStatus(),
+      typeof api.listNotifications === 'function' ? api.listNotifications(null, 30, false) : Promise.resolve(null),
+    ]).then(([settings, status, page]) => {
+      if (cancelled) return;
+      setNotificationSettings(settings);
+      setNotificationStatus(status);
+      if (page) setNotificationPage(page);
+    }).catch((loadError) => {
+      if (!cancelled) setNotificationError(errorMessage(loadError));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (typeof api.listenForNotificationUpdates !== 'function') return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    api.listenForNotificationUpdates(() => { void loadNotificationPage(false); })
+      .then((next) => { if (disposed) next(); else unlisten = next; })
+      .catch((loadError) => { if (!disposed) setNotificationError(errorMessage(loadError)); });
+    return () => { disposed = true; unlisten?.(); };
+  }, [loadNotificationPage]);
+
+  const saveNotificationSettings = useCallback(async (settings: NotificationSettings) => {
+    setNotificationSettings(settings);
+    setNotificationError(null);
+    if (typeof api.updateNotificationSettings !== 'function') return;
+    try {
+      const saved = await api.updateNotificationSettings(settings);
+      setNotificationSettings(saved);
+      if (typeof api.getNotificationStatus === 'function') {
+        setNotificationStatus(await api.getNotificationStatus());
+      }
+    } catch (saveError) {
+      setNotificationError(errorMessage(saveError));
+      if (typeof api.getNotificationSettings === 'function') {
+        try { setNotificationSettings(await api.getNotificationSettings()); } catch { /* retain the actionable save error */ }
+      }
+    }
+  }, []);
+
+  const markAllNotificationsRead = useCallback(async () => {
+    const readAt = new Date().toISOString();
+    setNotificationPage((current) => current ? {
+      ...current,
+      unreadCount: 0,
+      notifications: current.notifications.map((item) => ({ ...item, readAt: item.readAt ?? readAt })),
+    } : current);
+    try {
+      if (typeof api.markNotificationsRead === 'function') await api.markNotificationsRead(null);
+    } catch (readError) {
+      setNotificationError(errorMessage(readError));
+      await loadNotificationPage(false);
+    }
+  }, [loadNotificationPage]);
+
+  const dismissFeedNotification = useCallback(async (id: string) => {
+    setNotificationPage((current) => current ? {
+      ...current,
+      notifications: current.notifications.filter((item) => item.id !== id),
+      unreadCount: Math.max(0, current.unreadCount - (current.notifications.some((item) => item.id === id && !item.readAt) ? 1 : 0)),
+    } : current);
+    try {
+      if (typeof api.dismissNotification === 'function') await api.dismissNotification(id);
+    } catch (dismissError) {
+      setNotificationError(errorMessage(dismissError));
+      await loadNotificationPage(false);
+    }
+  }, [loadNotificationPage]);
+
+  const clearFeed = useCallback(async () => {
+    if (!window.confirm('Clear visible notification history? Monitoring baselines and deduplication will be preserved.')) return;
+    try {
+      if (typeof api.clearNotificationHistory === 'function') await api.clearNotificationHistory();
+      setNotificationPage({ notifications: [], nextCursor: null, unreadCount: 0 });
+    } catch (clearError) {
+      setNotificationError(errorMessage(clearError));
+    }
   }, []);
 
   useEffect(() => {
@@ -2877,25 +3230,30 @@ export default function App() {
   useEffect(() => {
     if (!liveFollow || !selected) return;
     let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    const session = selected;
     const follow = async () => {
       try {
-        await api.searchSessions(selected.agent, "", 0, 200, true);
         const [nextDetail, nextContext] = await Promise.all([
-          api.inspectSession(selected.agent, selected.id),
-          api.getContext(selected.agent, selected.id),
+          api.inspectSession(session.agent, session.id),
+          api.getContext(session.agent, session.id),
         ]);
-        if (!cancelled && sameSession(selected, { agent: selected.agent, id: selected.id })) {
+        if (!cancelled) {
           setDetail(nextDetail);
-          setDetailFor(selected);
+          setDetailFor(session);
           setContext(nextContext);
         }
       } catch (loadError) {
         if (!cancelled) setError(errorMessage(loadError));
       }
     };
-    follow();
-    const timer = window.setInterval(follow, 2500);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    if (typeof api.listenForSessionUpdates === 'function') {
+      api.listenForSessionUpdates((event) => {
+        if (event.agent === session.agent && event.sessionId === session.id) void follow();
+      }).then((next) => { if (cancelled) next(); else unlisten = next; })
+        .catch((loadError) => { if (!cancelled) setError(errorMessage(loadError)); });
+    }
+    return () => { cancelled = true; unlisten?.(); };
   }, [liveFollow, selected]);
 
   const compareSession = useCallback(async (value: string) => {
@@ -2944,6 +3302,37 @@ export default function App() {
     },
     [context?.turn, selected],
   );
+
+  const openFeedNotification = useCallback((notification: NotificationRecord) => {
+    const readAt = notification.readAt ?? new Date().toISOString();
+    setNotificationPage((current) => current ? {
+      ...current,
+      unreadCount: Math.max(0, current.unreadCount - (notification.readAt ? 0 : 1)),
+      notifications: current.notifications.map((item) => item.id === notification.id ? { ...item, readAt } : item),
+    } : current);
+    if (!notification.readAt && typeof api.markNotificationsRead === 'function') {
+      api.markNotificationsRead([notification.id]).catch((readError) => setNotificationError(errorMessage(readError)));
+    }
+    setNotificationDrawerOpen(false);
+    setNotificationSettingsOpen(false);
+    const destination = { agent: notification.location.agent, id: notification.location.sessionId };
+    setSelected((current) => sameSession(current, destination) ? current : destination);
+    if (notification.location.turn != null) {
+      setActiveView('turns');
+      setPendingNotificationTurn(notification.location.turn);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      pendingNotificationTurn == null ||
+      !selected ||
+      !sameSession(detailFor, selected)
+    ) return;
+    const turn = pendingNotificationTurn;
+    setPendingNotificationTurn(null);
+    void selectTurn(turn);
+  }, [detailFor, pendingNotificationTurn, selectTurn, selected]);
 
   const runDoctor = useCallback(async () => {
     if (!selected || !context) return;
@@ -3363,6 +3752,33 @@ export default function App() {
 
   return (
     <div className="app-shell" data-theme={theme}>
+      {notificationSettings && (
+        <NotificationOnboarding
+          settings={notificationSettings}
+          onDecision={(enabled) => void saveNotificationSettings({
+            ...notificationSettings,
+            enabled,
+            onboardingComplete: true,
+          })}
+        />
+      )}
+      <NotificationCenter
+        open={notificationDrawerOpen}
+        settingsOpen={notificationSettingsOpen}
+        loading={notificationLoading}
+        page={notificationPage}
+        settings={notificationSettings}
+        status={notificationStatus}
+        error={notificationError}
+        onClose={() => setNotificationDrawerOpen(false)}
+        onToggleSettings={() => setNotificationSettingsOpen((current) => !current)}
+        onSettings={(settings) => void saveNotificationSettings(settings)}
+        onSelect={openFeedNotification}
+        onReadAll={() => void markAllNotificationsRead()}
+        onDismiss={(id) => void dismissFeedNotification(id)}
+        onClear={() => void clearFeed()}
+        onLoadMore={() => void loadNotificationPage(true)}
+      />
       {paletteOpen && (
         <div className="command-backdrop" onMouseDown={closePalette}>
           <section
@@ -3434,6 +3850,20 @@ export default function App() {
           <kbd>Ctrl K</kbd>
         </button>
         <div className="topbar-actions">
+          <button
+            type='button'
+            className='notification-bell'
+            aria-label={`Notifications${notificationPage?.unreadCount ? `, ${notificationPage.unreadCount} unread` : ''}`}
+            aria-haspopup='dialog'
+            aria-expanded={notificationDrawerOpen}
+            onClick={() => {
+              setNotificationDrawerOpen((current) => !current);
+              setNotificationSettingsOpen(false);
+            }}
+          >
+            <span aria-hidden='true'>♢</span>
+            {!!notificationPage?.unreadCount && <b>{notificationPage.unreadCount > 99 ? '99+' : notificationPage.unreadCount}</b>}
+          </button>
           <span className={demoData ? "topbar-status demo" : "topbar-status"}><i />{demoData ? "Demo data" : "Local only"}</span>
           <button type="button" className="theme-toggle" onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
             {theme === "dark" ? "☾ Dark" : "☀ Light"}

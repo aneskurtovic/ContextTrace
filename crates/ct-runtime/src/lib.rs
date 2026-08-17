@@ -6,13 +6,13 @@
 
 use std::path::{Path, PathBuf};
 
-pub use ct_adapters::FileArchiveStore;
 use ct_adapters::{
     ClaudeCodeAdapter, CodexAdapter, FileRawEventSource, HeuristicEstimator, Sha256ContentHasher,
     TiktokenEstimator,
 };
+pub use ct_adapters::{FileArchiveStore, FileNotificationStore, NotificationUiPreferences};
 use ct_application::{AgentBinding, ContextTrace};
-use ct_domain::ports::TokenEstimator;
+use ct_domain::ports::{ArchiveStore, TokenEstimator};
 use ct_domain::services::DerivedRatio;
 use ct_domain::{AgentKind, AgentSession};
 
@@ -97,6 +97,17 @@ pub fn content_hasher() -> impl ct_domain::ports::ContentHasher {
 /// and not on `ct-adapters`, which is the boundary working as intended.
 pub fn archive_store() -> FileArchiveStore {
     FileArchiveStore::new()
+}
+
+/// Durable notification state, nested beneath the one ContextTrace-owned root.
+///
+/// Settings, checkpoints and feed records are user data, but adding a second
+/// top-level write location would break the startup/privacy disclosure shared
+/// by the CLI and desktop. Keeping them under the archive root preserves that
+/// single-directory contract.
+pub fn notification_store() -> FileNotificationStore {
+    let root = Path::new(&archive_store().root()).join("notifications");
+    FileNotificationStore::at(root)
 }
 
 /// Where an exported session is written, given the archive root.

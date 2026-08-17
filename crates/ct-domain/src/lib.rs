@@ -44,9 +44,16 @@ pub use model::filter::{
 pub use model::identity::{
     ContentFingerprint, ContextItemId, EventId, FileId, SessionId, TurnNumber,
 };
+pub use model::notification::{
+    ContextPressureSettings, ContributorThresholdSettings, CountThresholdSettings,
+    DeliveryRuleSettings, NotificationCandidate, NotificationDelivery, NotificationEvidence,
+    NotificationLocation, NotificationRecord, NotificationRuleId, NotificationSettings,
+    NotificationSeverity, OsDeliveryStatus, PressureBand, SessionFingerprint,
+    SessionNotificationCheckpoint, TokenThresholdSettings,
+};
 pub use model::provenance::{Confidence, Provenance, SourceRef};
 pub use model::session::{
     AgentKind, AgentSession, SessionDescriptor, SessionMetadata, ThreadRole, Turn,
 };
 pub use model::tokens::{TokenCount, TokenUsage};
-pub use ports::ContentHasher;
+pub use ports::{ContentHasher, NotificationStore};

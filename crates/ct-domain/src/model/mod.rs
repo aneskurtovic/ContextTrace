@@ -13,6 +13,7 @@ pub mod context;
 pub mod event;
 pub mod filter;
 pub mod identity;
+pub mod notification;
 pub mod provenance;
 pub mod session;
 pub mod tokens;

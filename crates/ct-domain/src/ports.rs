@@ -15,7 +15,11 @@ use crate::model::analysis::ContentMeasurement;
 use crate::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use crate::model::compaction_diff::CompactionDiff;
 use crate::model::context::{CompactionEvent, ContextItem};
-use crate::model::identity::TurnNumber;
+use crate::model::identity::{SessionId, TurnNumber};
+use crate::model::notification::{
+    NotificationCandidate, NotificationRecord, NotificationSettings, OsDeliveryStatus,
+    SessionNotificationCheckpoint,
+};
 use crate::model::provenance::SourceRef;
 use crate::model::session::{AgentKind, AgentSession, SessionDescriptor};
 use crate::model::tokens::TokenCount;
@@ -56,6 +60,32 @@ impl fmt::Display for PortError {
 impl std::error::Error for PortError {}
 
 pub type PortResult<T> = Result<T, PortError>;
+
+/// Durable notification state. Implementations own id allocation and enforce
+/// idempotency on [`NotificationCandidate::dedupe_key`].
+pub trait NotificationStore: Send + Sync {
+    fn root(&self) -> String;
+    fn settings(&self) -> PortResult<NotificationSettings>;
+    fn save_settings(&self, settings: &NotificationSettings) -> PortResult<()>;
+    fn checkpoint(
+        &self,
+        agent: AgentKind,
+        session_id: &SessionId,
+    ) -> PortResult<Option<SessionNotificationCheckpoint>>;
+    fn save_checkpoint(&self, checkpoint: &SessionNotificationCheckpoint) -> PortResult<()>;
+    fn insert(
+        &self,
+        candidate: &NotificationCandidate,
+        detected_at_ms: u64,
+        catch_up: bool,
+    ) -> PortResult<Option<NotificationRecord>>;
+    fn records(&self, before_id: Option<u64>, limit: usize) -> PortResult<Vec<NotificationRecord>>;
+    fn mark_read(&self, ids: Option<&[u64]>, read_at_ms: u64) -> PortResult<()>;
+    fn dismiss(&self, id: u64, dismissed_at_ms: u64) -> PortResult<()>;
+    /// Remove feed records while retaining settings, checkpoints and dedupe state.
+    fn clear(&self) -> PortResult<()>;
+    fn set_os_delivery(&self, id: u64, status: OsDeliveryStatus) -> PortResult<()>;
+}
 
 /// What an adapter reconstructed for one turn, before the domain balances it.
 ///

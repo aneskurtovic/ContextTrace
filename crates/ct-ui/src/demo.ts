@@ -11,6 +11,9 @@ import type {
   GrowthPoint,
   InstructionFileReport,
   LifecycleReport,
+  NotificationPage,
+  NotificationSettings,
+  NotificationStatus,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -114,6 +117,82 @@ export const demoSessions: SessionSummary[] = [
     threadRole: root,
   },
 ];
+
+export const demoNotificationSettings: NotificationSettings = {
+  enabled: false,
+  onboardingComplete: true,
+  subagentOsNotifications: false,
+  costBudgetUsd: null,
+  rules: {
+    contextPressure: { delivery: 'feedAndOs', threshold: 75 },
+    promptSpike: { delivery: 'feedAndOs', threshold: 20_000 },
+    toolErrorStreak: { delivery: 'feedAndOs', threshold: 3 },
+    secretExposure: { delivery: 'feedAndOs', threshold: null },
+    formatDrift: { delivery: 'feedAndOs', threshold: null },
+    compaction: { delivery: 'feed', threshold: null },
+    contextDominance: { delivery: 'feed', threshold: 25 },
+    residualStep: { delivery: 'feedAndOs', threshold: 5_000 },
+    instructionDrift: { delivery: 'feedAndOs', threshold: null },
+    contextWaste: { delivery: 'feed', threshold: 10_000 },
+    costBudget: { delivery: 'off', threshold: null },
+  },
+};
+
+export const demoNotificationStatus: NotificationStatus = {
+  monitoring: false,
+  osPermission: 'prompt',
+  lastSuccessfulPoll: null,
+  error: null,
+};
+
+export const demoNotificationPage: NotificationPage = {
+  unreadCount: 2,
+  nextCursor: null,
+  notifications: [
+    {
+      id: 'demo-notification-pressure',
+      ruleId: 'contextPressure',
+      severity: 'warning',
+      delivery: 'feedAndOs',
+      confidence: 'observed',
+      title: 'Context crossed 75%',
+      description: 'Context utilization reached 78% at turn 32.',
+      occurredAt: ago(0.3),
+      detectedAt: ago(0.3),
+      readAt: null,
+      dismissedAt: null,
+      catchUp: false,
+      location: {
+        agent: 'codex',
+        sessionId: demoSessions[0].id,
+        project: demoSessions[0].project,
+        turn: 32,
+        sourceLine: null,
+      },
+    },
+    {
+      id: 'demo-notification-compaction',
+      ruleId: 'compaction',
+      severity: 'info',
+      delivery: 'feed',
+      confidence: 'observed',
+      title: 'Context compacted',
+      description: 'Compaction reclaimed 18,400 tokens.',
+      occurredAt: ago(1.1),
+      detectedAt: ago(0.8),
+      readAt: null,
+      dismissedAt: null,
+      catchUp: true,
+      location: {
+        agent: 'codex',
+        sessionId: demoSessions[0].id,
+        project: demoSessions[0].project,
+        turn: 18,
+        sourceLine: DEMO_COMPACTION_LINE_NO,
+      },
+    },
+  ],
+};
 
 /** The demo sessions each residual state is attached to, so all four are
  *  reachable in the browser without a local corpus. */

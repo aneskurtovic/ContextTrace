@@ -18,6 +18,7 @@ pub mod ghost;
 pub mod growth;
 pub mod instructions;
 pub mod lifecycle;
+pub mod notifications;
 pub mod secrets;
 
 use ct_domain::model::archive::ArchiveEntry;
@@ -57,6 +58,9 @@ pub use instructions::{
     InstructionObservation,
 };
 pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, ResolveError};
+pub use notifications::{
+    CostBudgetObservation, NotificationEngine, NotificationEvaluation, NotificationInputs,
+};
 pub use secrets::{ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport};
 
 /// An agent adapter paired with the token estimator appropriate to its models.

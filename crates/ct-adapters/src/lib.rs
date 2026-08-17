@@ -34,6 +34,7 @@ pub mod claude_code;
 pub mod codex;
 mod fingerprint;
 pub mod jsonl;
+pub mod notifications;
 pub mod raw_source;
 pub mod tokenizers;
 pub mod tool_target;
@@ -43,6 +44,7 @@ pub use archive::FileArchiveStore;
 pub use claude_code::ClaudeCodeAdapter;
 pub use codex::CodexAdapter;
 pub use fingerprint::Sha256ContentHasher;
+pub use notifications::{FileNotificationStore, NotificationUiPreferences};
 pub use raw_source::FileRawEventSource;
 pub use tokenizers::{HeuristicEstimator, TiktokenEstimator};
 

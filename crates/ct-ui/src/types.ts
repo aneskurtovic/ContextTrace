@@ -258,6 +258,81 @@ export interface SessionDetail {
 
 export type Confidence = "observed" | "derived" | "estimated";
 
+/** Stable identifiers shared by the evaluator, persisted settings, and UI. */
+export type NotificationRuleId =
+  | 'contextPressure'
+  | 'promptSpike'
+  | 'toolErrorStreak'
+  | 'secretExposure'
+  | 'formatDrift'
+  | 'compaction'
+  | 'contextDominance'
+  | 'residualStep'
+  | 'instructionDrift'
+  | 'contextWaste'
+  | 'costBudget';
+
+export type NotificationSeverity = 'info' | 'warning' | 'critical';
+export type NotificationDelivery = 'off' | 'feed' | 'feedAndOs';
+export type NotificationPermission = 'granted' | 'denied' | 'prompt' | 'unsupported';
+
+export interface NotificationRuleSetting {
+  delivery: NotificationDelivery;
+  /** The rule's primary editable threshold. `null` means it is not configured. */
+  threshold: number | null;
+}
+
+export interface NotificationSettings {
+  enabled: boolean;
+  onboardingComplete: boolean;
+  subagentOsNotifications: boolean;
+  rules: Record<NotificationRuleId, NotificationRuleSetting>;
+  costBudgetUsd: number | null;
+}
+
+export interface NotificationStatus {
+  monitoring: boolean;
+  osPermission: NotificationPermission;
+  lastSuccessfulPoll: string | null;
+  error: string | null;
+}
+
+export interface NotificationLocation {
+  agent: Agent;
+  sessionId: string;
+  project: string | null;
+  turn: number | null;
+  sourceLine: number | null;
+}
+
+export interface NotificationRecord {
+  id: string;
+  ruleId: NotificationRuleId;
+  severity: NotificationSeverity;
+  delivery: NotificationDelivery;
+  confidence: Confidence;
+  title: string;
+  /** Privacy-safe summary produced by the backend; never prompt or tool content. */
+  description: string;
+  occurredAt: string;
+  detectedAt: string;
+  readAt: string | null;
+  dismissedAt: string | null;
+  catchUp: boolean;
+  location: NotificationLocation;
+}
+
+export interface NotificationPage {
+  notifications: NotificationRecord[];
+  nextCursor: string | null;
+  unreadCount: number;
+}
+
+export interface SessionUpdatedEvent {
+  agent: Agent;
+  sessionId: string;
+}
+
 export interface CategorySummary {
   category: string;
   label: string;

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   Agent,
   ArchiveEntrySummary,
@@ -17,12 +18,18 @@ import type {
   ExportOutcome,
   LifecycleReport,
   MemoryHit,
+  NotificationPage,
+  NotificationRecord,
+  NotificationRuleId,
+  NotificationSettings,
+  NotificationStatus,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
   SessionDetail,
   SessionPage,
   SessionSummary,
+  SessionUpdatedEvent,
   StartupSummary,
   InstructionFileComparison,
   InstructionFileReport,
@@ -41,6 +48,9 @@ import {
   demoDetail,
   demoDoctor,
   demoLifecycle,
+  demoNotificationPage,
+  demoNotificationSettings,
+  demoNotificationStatus,
   demoResidual,
   demoSessions,
   demoStartup,
@@ -694,6 +704,133 @@ function asCost(value: unknown): CostReport {
   return value as unknown as CostReport;
 }
 
+const notificationRuleIds: NotificationRuleId[] = [
+  'contextPressure',
+  'promptSpike',
+  'toolErrorStreak',
+  'secretExposure',
+  'formatDrift',
+  'compaction',
+  'contextDominance',
+  'residualStep',
+  'instructionDrift',
+  'contextWaste',
+  'costBudget',
+];
+const notificationRuleIdSet = new Set(notificationRuleIds);
+const notificationSeverities = new Set(['info', 'warning', 'critical']);
+const notificationDeliveries = new Set(['off', 'feed', 'feedAndOs']);
+const notificationPermissions = new Set(['granted', 'denied', 'prompt', 'unsupported']);
+
+function isNotificationRuleId(value: unknown): value is NotificationRuleId {
+  return typeof value === 'string' && notificationRuleIdSet.has(value as NotificationRuleId);
+}
+
+function isNotificationRules(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return notificationRuleIds.every((ruleId) => {
+    const setting = value[ruleId];
+    return (
+      isRecord(setting) &&
+      typeof setting.delivery === 'string' &&
+      notificationDeliveries.has(setting.delivery) &&
+      isNumberOrNull(setting.threshold)
+    );
+  });
+}
+
+function asNotificationSettings(value: unknown): NotificationSettings {
+  if (
+    !isRecord(value) ||
+    typeof value.enabled !== 'boolean' ||
+    typeof value.onboardingComplete !== 'boolean' ||
+    typeof value.subagentOsNotifications !== 'boolean' ||
+    !isNotificationRules(value.rules) ||
+    !isNumberOrNull(value.costBudgetUsd)
+  ) {
+    throw malformed('notification settings');
+  }
+  return value as unknown as NotificationSettings;
+}
+
+function asNotificationStatus(value: unknown): NotificationStatus {
+  if (
+    !isRecord(value) ||
+    typeof value.monitoring !== 'boolean' ||
+    typeof value.osPermission !== 'string' ||
+    !notificationPermissions.has(value.osPermission) ||
+    !isStringOrNull(value.lastSuccessfulPoll) ||
+    !isStringOrNull(value.error)
+  ) {
+    throw malformed('notification status');
+  }
+  return value as unknown as NotificationStatus;
+}
+
+function asNotificationRecord(value: unknown): NotificationRecord {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    !isNotificationRuleId(value.ruleId) ||
+    typeof value.severity !== 'string' ||
+    !notificationSeverities.has(value.severity) ||
+    typeof value.delivery !== 'string' ||
+    !notificationDeliveries.has(value.delivery) ||
+    !isConfidence(value.confidence) ||
+    typeof value.title !== 'string' ||
+    typeof value.description !== 'string' ||
+    typeof value.occurredAt !== 'string' ||
+    typeof value.detectedAt !== 'string' ||
+    !isStringOrNull(value.readAt) ||
+    !isStringOrNull(value.dismissedAt) ||
+    typeof value.catchUp !== 'boolean' ||
+    !isRecord(value.location) ||
+    typeof value.location.agent !== 'string' ||
+    !agents.has(value.location.agent) ||
+    typeof value.location.sessionId !== 'string' ||
+    !isStringOrNull(value.location.project) ||
+    !isNumberOrNull(value.location.turn) ||
+    !isNumberOrNull(value.location.sourceLine)
+  ) {
+    throw malformed('a notification');
+  }
+  return value as unknown as NotificationRecord;
+}
+
+function asNotificationPage(value: unknown): NotificationPage {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.notifications) ||
+    !value.notifications.every((notification) => {
+      try {
+        asNotificationRecord(notification);
+        return true;
+      } catch {
+        return false;
+      }
+    }) ||
+    !isStringOrNull(value.nextCursor) ||
+    typeof value.unreadCount !== 'number' ||
+    !Number.isInteger(value.unreadCount) ||
+    value.unreadCount < 0
+  ) {
+    throw malformed('notification history');
+  }
+  return value as unknown as NotificationPage;
+}
+
+function asSessionUpdated(value: unknown): SessionUpdatedEvent {
+  if (
+    !isRecord(value) ||
+    typeof value.agent !== 'string' ||
+    !agents.has(value.agent) ||
+    typeof value.sessionId !== 'string'
+  ) {
+    throw malformed('a session update event');
+  }
+  return value as unknown as SessionUpdatedEvent;
+}
+
 /**
  * Compare a turn against another turn -- of the same session or a different
  * one. `left`/`right` each carry their own `agent`/`id` rather than sharing
@@ -979,4 +1116,73 @@ export function verifyArchived(agent: Agent, id: string): Promise<ArchiveVerific
 export function exportSession(agent: Agent, id: string, redactSecrets: boolean): Promise<ExportOutcome> {
   if (!inTauri()) return Promise.reject(demoRefusesToWrite("Exporting a session"));
   return invoke<unknown>("export_session", { id, agent, redactSecrets }).then(asExportOutcome);
+}
+
+// ---- Notifications -------------------------------------------------------
+
+export function getNotificationSettings(): Promise<NotificationSettings> {
+  if (!inTauri()) return Promise.resolve(structuredClone(demoNotificationSettings));
+  return invoke<unknown>('get_notification_settings').then(asNotificationSettings);
+}
+
+export function updateNotificationSettings(
+  settings: NotificationSettings,
+): Promise<NotificationSettings> {
+  if (!inTauri()) return Promise.resolve(structuredClone(settings));
+  return invoke<unknown>('update_notification_settings', { settings }).then(asNotificationSettings);
+}
+
+export function getNotificationStatus(): Promise<NotificationStatus> {
+  if (!inTauri()) return Promise.resolve({ ...demoNotificationStatus });
+  return invoke<unknown>('get_notification_status').then(asNotificationStatus);
+}
+
+export function listNotifications(
+  beforeId: string | null = null,
+  limit = 30,
+  unreadOnly = false,
+): Promise<NotificationPage> {
+  if (!inTauri()) return Promise.resolve(structuredClone(demoNotificationPage));
+  return invoke<unknown>('list_notifications', { beforeId, limit, unreadOnly }).then(asNotificationPage);
+}
+
+export function markNotificationsRead(ids: string[] | null = null): Promise<void> {
+  if (!inTauri()) return Promise.resolve();
+  return invoke<void>('mark_notifications_read', { ids });
+}
+
+export function dismissNotification(id: string): Promise<void> {
+  if (!inTauri()) return Promise.resolve();
+  return invoke<void>('dismiss_notification', { id });
+}
+
+export function clearNotificationHistory(): Promise<void> {
+  if (!inTauri()) return Promise.resolve();
+  return invoke<void>('clear_notification_history');
+}
+
+/** Subscribe to durable feed changes. Commands remain authoritative; callers re-list. */
+export async function listenForNotificationUpdates(callback: () => void): Promise<UnlistenFn> {
+  if (!inTauri()) return () => undefined;
+  const notify = (payload: unknown) => {
+    asNotificationRecord(payload);
+    callback();
+  };
+  const [unlistenCreated, unlistenUpdated] = await Promise.all([
+    listen<unknown>('contexttrace://notification-created', (event) => notify(event.payload)),
+    listen<unknown>('contexttrace://notification-updated', (event) => notify(event.payload)),
+  ]);
+  return () => {
+    unlistenCreated();
+    unlistenUpdated();
+  };
+}
+
+export function listenForSessionUpdates(
+  callback: (event: SessionUpdatedEvent) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri()) return Promise.resolve(() => undefined);
+  return listen<unknown>('contexttrace://session-updated', (event) => {
+    callback(asSessionUpdated(event.payload));
+  });
 }

@@ -8,6 +8,9 @@ import {
   demoDetail,
   demoDoctor,
   demoLifecycle,
+  demoNotificationPage,
+  demoNotificationSettings,
+  demoNotificationStatus,
   demoResidual,
   demoSessions,
   demoTurnDiff,
@@ -18,6 +21,7 @@ import type {
   SessionPage,
   SessionSummary,
   StartupSummary,
+  SessionUpdatedEvent,
 } from "./types";
 
 vi.mock("./api", () => ({
@@ -35,6 +39,15 @@ vi.mock("./api", () => ({
   archiveSession: vi.fn(),
   verifyArchived: vi.fn(),
   exportSession: vi.fn(),
+  getNotificationSettings: vi.fn(),
+  updateNotificationSettings: vi.fn(),
+  getNotificationStatus: vi.fn(),
+  listNotifications: vi.fn(),
+  markNotificationsRead: vi.fn(),
+  dismissNotification: vi.fn(),
+  clearNotificationHistory: vi.fn(),
+  listenForNotificationUpdates: vi.fn(),
+  listenForSessionUpdates: vi.fn(),
 }));
 
 const startup: StartupSummary = {
@@ -88,6 +101,15 @@ beforeEach(() => {
   // Fetched unconditionally on mount, like `getStartup` -- every test needs a
   // resolved value here or the archive panel's load spins forever.
   mockedApi.archivedSessions.mockResolvedValue(demoArchiveHolding);
+  mockedApi.getNotificationSettings.mockResolvedValue({ ...demoNotificationSettings, onboardingComplete: true });
+  mockedApi.updateNotificationSettings.mockImplementation(async (settings) => settings);
+  mockedApi.getNotificationStatus.mockResolvedValue(demoNotificationStatus);
+  mockedApi.listNotifications.mockResolvedValue(demoNotificationPage);
+  mockedApi.markNotificationsRead.mockResolvedValue(undefined);
+  mockedApi.dismissNotification.mockResolvedValue(undefined);
+  mockedApi.clearNotificationHistory.mockResolvedValue(undefined);
+  mockedApi.listenForNotificationUpdates.mockResolvedValue(() => undefined);
+  mockedApi.listenForSessionUpdates.mockResolvedValue(() => undefined);
 });
 
 afterEach(() => {
@@ -601,6 +623,55 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.keyDown(actions.at(-1)!, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull());
     expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe('notifications', () => {
+  it('opens the feed, marks a finding read, and navigates to its session turn', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+
+    const bell = await screen.findByRole('button', { name: 'Notifications, 2 unread' });
+    fireEvent.click(bell);
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(drawer.textContent).toContain('2 unread');
+
+    fireEvent.click(drawer.querySelectorAll('.notification-card')[1]);
+    await waitFor(() => expect(mockedApi.markNotificationsRead).toHaveBeenCalledWith(['demo-notification-compaction']));
+    await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith('codex', demoSessions[0].id, 18));
+    expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+  });
+
+  it('requires an explicit local-monitoring onboarding decision', async () => {
+    mockedApi.getNotificationSettings.mockResolvedValue({
+      ...demoNotificationSettings,
+      onboardingComplete: false,
+      enabled: false,
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Know when a session needs attention' })).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Enable monitoring' }));
+    await waitFor(() => expect(mockedApi.updateNotificationSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true, onboardingComplete: true }),
+    ));
+  });
+
+  it('refreshes a followed session only after its matching backend event', async () => {
+    let update: ((event: SessionUpdatedEvent) => void) | undefined;
+    mockedApi.listenForSessionUpdates.mockImplementation(async (callback) => {
+      update = callback;
+      return () => undefined;
+    });
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Follow live' }));
+    await waitFor(() => expect(update).toBeDefined());
+    const before = mockedApi.inspectSession.mock.calls.length;
+    update!({ agent: 'codex', sessionId: demoSessions[0].id });
+    await waitFor(() => expect(mockedApi.inspectSession.mock.calls.length).toBe(before + 1));
+    expect(mockedApi.searchSessions.mock.calls.some((call) => call[4] === true)).toBe(false);
   });
 });
 

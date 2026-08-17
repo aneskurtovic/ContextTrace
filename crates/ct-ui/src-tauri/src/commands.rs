@@ -18,6 +18,8 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+pub mod notifications;
+
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
 const MAX_SESSION_PAGE_SIZE: usize = 1_000;
 
@@ -99,6 +101,13 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> BoundedCache<K, V> {
     fn clear(&mut self) {
         self.entries.clear();
         self.order.clear();
+    }
+
+    fn remove(&mut self, key: &K) -> Option<V> {
+        if let Some(pos) = self.order.iter().position(|existing| existing == key) {
+            self.order.remove(pos);
+        }
+        self.entries.remove(key)
     }
 
     #[cfg(test)]
@@ -195,6 +204,19 @@ impl AppState {
         self.lifecycles
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Invalidate only the session whose source file changed.
+    ///
+    /// The notification monitor watches every live descriptor. Clearing the
+    /// whole cache on each 2.5-second poll would make an unrelated session the
+    /// user is inspecting cold whenever any agent log grows. The agent-qualified
+    /// key is the same identity used by both caches, so the parsed session and
+    /// every lifecycle derived from it are discarded together.
+    pub(crate) fn invalidate_session(&self, agent: AgentKind, id: &str) {
+        let key = (agent, id.to_string());
+        self.sessions().remove(&key);
+        self.lifecycles().remove(&key);
     }
 
     /// Hand back a session handle that outlives the cache lock.
@@ -354,7 +376,12 @@ impl AppState {
         })
     }
 
-    fn search_memory(&self, agent: Option<String>, query: String, limit: Option<usize>) -> Result<Vec<MemoryHit>, String> {
+    fn search_memory(
+        &self,
+        agent: Option<String>,
+        query: String,
+        limit: Option<usize>,
+    ) -> Result<Vec<MemoryHit>, String> {
         let needle = query.trim().to_lowercase();
         if needle.is_empty() {
             return Ok(Vec::new());
@@ -363,23 +390,45 @@ impl AppState {
             Some(value) => Some(parse_agent(value)?),
             None => None,
         };
-        let filter = SessionFilter { agent: parsed_agent, project: None, since: None, limit: None };
+        let filter = SessionFilter {
+            agent: parsed_agent,
+            project: None,
+            since: None,
+            limit: None,
+        };
         let descriptors = match &self.archive {
-            Some(archive) => self.app.list_sessions_with_archive(&filter, archive).map_err(|error| error.to_string())?,
+            Some(archive) => self
+                .app
+                .list_sessions_with_archive(&filter, archive)
+                .map_err(|error| error.to_string())?,
             None => self.app.list_sessions(&filter),
         };
         let cap = limit.unwrap_or(50).clamp(1, 200);
         let mut hits = Vec::new();
         for descriptor in descriptors {
-            if hits.len() >= cap { break; }
-            let Ok(body) = fs::read_to_string(&descriptor.path) else { continue; };
+            if hits.len() >= cap {
+                break;
+            }
+            let Ok(body) = fs::read_to_string(&descriptor.path) else {
+                continue;
+            };
             let lowered = body.to_lowercase();
             for (index, (line, line_text)) in body.lines().zip(lowered.lines()).enumerate() {
-                if !line_text.contains(&needle) { continue; }
+                if !line_text.contains(&needle) {
+                    continue;
+                }
                 let preview = line.chars().take(180).collect::<String>();
-                let turn = self.cached_session(descriptor.agent, descriptor.id.as_str(), false).ok().and_then(|cached| {
-                    cached.session.events().iter().find(|event| event.source.line_no == (index + 1) as u32).and_then(|event| event.turn.map(|value| value.get()))
-                });
+                let turn = self
+                    .cached_session(descriptor.agent, descriptor.id.as_str(), false)
+                    .ok()
+                    .and_then(|cached| {
+                        cached
+                            .session
+                            .events()
+                            .iter()
+                            .find(|event| event.source.line_no == (index + 1) as u32)
+                            .and_then(|event| event.turn.map(|value| value.get()))
+                    });
                 hits.push(MemoryHit {
                     session_id: descriptor.id.to_string(),
                     agent: descriptor.agent.to_string(),
@@ -388,7 +437,9 @@ impl AppState {
                     turn,
                     preview,
                 });
-                if hits.len() >= cap { break; }
+                if hits.len() >= cap {
+                    break;
+                }
             }
         }
         Ok(hits)
@@ -2857,6 +2908,14 @@ mod tests {
         assert!(cache.get(&2).is_none(), "the untouched entry was evicted");
         assert_eq!(cache.get(&1), Some(100), "the touched entry survived");
         assert_eq!(cache.get(&4), Some(400), "the newest entry survived");
+
+        assert_eq!(cache.remove(&1), Some(100));
+        assert!(
+            cache.get(&1).is_none(),
+            "a targeted invalidation removes the value"
+        );
+        cache.insert(5, 500);
+        assert_eq!(cache.len(), 3, "removing a key also removes its LRU entry");
     }
 
     #[test]

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+const { invoke, listen } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock('@tauri-apps/api/event', () => ({ listen }));
 
 import {
   archivedSessions,
@@ -11,10 +12,16 @@ import {
   getCompactionDiff,
   getContext,
   getLifecycle,
+  getNotificationSettings,
+  getNotificationStatus,
   getResidual,
   getStartup,
   getTurnDiff,
   inspectSession,
+  listNotifications,
+  listenForNotificationUpdates,
+  listenForSessionUpdates,
+  markNotificationsRead,
   runDoctor,
   searchSessions,
   verifyArchived,
@@ -25,6 +32,9 @@ import {
   demoCompactionDiff,
   demoDetail,
   demoDoctor,
+  demoNotificationPage,
+  demoNotificationSettings,
+  demoNotificationStatus,
   demoResidual,
   demoSessions,
   demoTurnDiff,
@@ -33,6 +43,58 @@ import {
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   invoke.mockReset();
+  listen.mockReset();
+});
+
+describe('notification IPC contracts', () => {
+  it('validates complete settings, status, and history payloads', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValueOnce(demoNotificationSettings);
+    await expect(getNotificationSettings()).resolves.toEqual(demoNotificationSettings);
+    invoke.mockResolvedValueOnce(demoNotificationStatus);
+    await expect(getNotificationStatus()).resolves.toEqual(demoNotificationStatus);
+    invoke.mockResolvedValueOnce(demoNotificationPage);
+    await expect(listNotifications(null, 30, false)).resolves.toEqual(demoNotificationPage);
+    expect(invoke).toHaveBeenLastCalledWith('list_notifications', {
+      beforeId: null,
+      limit: 30,
+      unreadOnly: false,
+    });
+  });
+
+  it('rejects a settings payload that omits any stable rule', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { contextPressure: _missing, ...rules } = demoNotificationSettings.rules;
+    invoke.mockResolvedValue({ ...demoNotificationSettings, rules });
+    await expect(getNotificationSettings()).rejects.toThrow('invalid response from notification settings');
+  });
+
+  it('uses null to mark every notification read', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue(undefined);
+    await markNotificationsRead();
+    expect(invoke).toHaveBeenCalledWith('mark_notifications_read', { ids: null });
+  });
+
+  it('validates notification and session event payloads before dispatch', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const handlers = new Map<string, (event: { payload: unknown }) => void>();
+    listen.mockImplementation(async (name, callback) => {
+      handlers.set(name, callback);
+      return () => undefined;
+    });
+    const notificationCallback = vi.fn();
+    const sessionCallback = vi.fn();
+    await listenForNotificationUpdates(notificationCallback);
+    await listenForSessionUpdates(sessionCallback);
+
+    handlers.get('contexttrace://notification-created')!({ payload: demoNotificationPage.notifications[0] });
+    expect(notificationCallback).toHaveBeenCalledOnce();
+    handlers.get('contexttrace://session-updated')!({ payload: { agent: 'codex', sessionId: 'abc' } });
+    expect(sessionCallback).toHaveBeenCalledWith({ agent: 'codex', sessionId: 'abc' });
+    expect(() => handlers.get('contexttrace://notification-updated')!({ payload: { id: 'unsafe-partial' } }))
+      .toThrow('invalid response from a notification');
+  });
 });
 
 describe("desktop IPC response validation", () => {

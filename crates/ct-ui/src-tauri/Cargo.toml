@@ -31,7 +31,9 @@ serde.workspace = true
 # wire shape in a file that does not own it, under a schema version that
 # promises it will not drift.
 serde_json.workspace = true
+chrono.workspace = true
 tauri = { version = "2.11.5", features = [] }
+tauri-plugin-notification = "2"
 
 [dev-dependencies]
 ct-adapters.workspace = true
