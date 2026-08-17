@@ -1451,15 +1451,22 @@ h2 {
   padding: 8px 0;
 }
 
+/* Wraps rather than clipping, and breaks anywhere so a long path can. This is
+   the view someone opened *because* the ranked row above it was truncated, and
+   real labels are absolute paths whose identity lives in the last segment --
+   clipping the tail here would hide the one part that distinguishes five
+   otherwise identical `Read C:\...\scratchpad\...` rows from each other. Two
+   lines keeps the list scannable; the full string is still on the title. */
 .composition-item-label {
-  display: flex;
+  display: -webkit-box;
   min-width: 0;
-  align-items: center;
   overflow: hidden;
   color: var(--text);
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .composition-item-number {
