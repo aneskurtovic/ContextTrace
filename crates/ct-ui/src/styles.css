@@ -2722,6 +2722,17 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .notification-health i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
 .notification-health i.healthy { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
 .notification-health small { margin-left: auto; color: var(--text-3); }
+.session-title .title-source { margin-left: 5px; color: var(--text-3); font-size: 9px; font-style: normal; vertical-align: baseline; }
+.session-branch { color: var(--text-2); }
+.notification-title-line em.os-delivered { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); color: var(--ok); }
+.notification-title-line em.os-failed { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); color: var(--bad); }
+.notification-os-reason { color: var(--bad); }
+.notification-delivery-test { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.notification-delivery-test button { align-self: flex-start; height: 27px; padding: 0 11px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); color: var(--text-2); font-size: 9.5px; cursor: pointer; }
+.notification-delivery-test button:hover:not(:disabled) { border-color: var(--accent); color: var(--text-1); }
+.notification-delivery-test button:disabled { opacity: .6; cursor: default; }
+.delivery-result { color: var(--ok); font-size: 9.5px; line-height: 1.4; }
+.delivery-result.failed { color: var(--bad); }
 .notification-rule-list { margin-top: 12px; border: 1px solid var(--line); border-radius: 7px; }
 .notification-rule { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 7px 10px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line-soft); }
 .notification-rule:last-child { border-bottom: 0; }

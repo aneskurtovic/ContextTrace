@@ -64,6 +64,45 @@ pub enum ThreadRole {
     Subagent { parent: SessionId },
 }
 
+/// Where a session's display name came from.
+///
+/// Recorded rather than dropped because the two are not the same claim. An
+/// agent-written title is a description of the session; a first prompt is
+/// whatever the user happened to type first, which on Codex may be an injected
+/// instruction blob rather than a request. A list that renders both identically
+/// invites the reader to trust the weaker one as much as the stronger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TitleSource {
+    /// The agent generated a title for this session and wrote it to the log.
+    AgentGenerated,
+    /// Derived from the session's first user message.
+    FirstPrompt,
+}
+
+/// A name for a session that a person can recognise, and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTitle {
+    pub text: String,
+    pub source: TitleSource,
+}
+
+impl SessionTitle {
+    pub fn agent_generated(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            source: TitleSource::AgentGenerated,
+        }
+    }
+
+    pub fn first_prompt(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            source: TitleSource::FirstPrompt,
+        }
+    }
+}
+
 /// Everything known about a session without parsing its body.
 ///
 /// Discovery produces these cheaply, from filenames and directory structure, so
@@ -80,6 +119,17 @@ pub struct SessionDescriptor {
     pub size_bytes: u64,
     /// Project or working directory the session ran in.
     pub project: Option<String>,
+    /// A recognisable name for this session, where the log offers one.
+    ///
+    /// The project alone does not identify a session: a week of work in one
+    /// repository produces dozens of rows that differ only by an opaque id.
+    /// `None` stays a real answer -- an untitled session is listed by what is
+    /// known about it, not given an invented name.
+    #[serde(default)]
+    pub title: Option<SessionTitle>,
+    /// The branch the session ran on, where the agent recorded it.
+    #[serde(default)]
+    pub git_branch: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub last_activity: Option<DateTime<Utc>>,
     /// This session's place in its thread group. `Root` for every agent that

@@ -35,6 +35,15 @@ chrono.workspace = true
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-notification = "2"
 
+# The toast API `tauri-plugin-notification` already builds on, named directly
+# because the plugin's own `show()` spawns the send and discards its `Result`.
+# That made every recorded delivery an assumption; calling this synchronously is
+# what lets the desktop report what Windows actually said. Already in the
+# compiled graph beneath the plugin, so this adds an edge, not a crate. Target
+# scoped because it is the Windows delivery path and nothing else.
+[target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "0.7.3"
+
 [dev-dependencies]
 ct-adapters.workspace = true
 

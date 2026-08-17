@@ -1023,6 +1023,8 @@ mod tests {
             path: format!("/tmp/{id}.jsonl"),
             size_bytes: 100,
             project: Some(project.into()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: Some(Utc.with_ymd_and_hms(2026, 7, day, 0, 0, 0).unwrap()),
             thread_role: ThreadRole::Root,

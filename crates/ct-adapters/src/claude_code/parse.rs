@@ -22,10 +22,51 @@ use std::path::Path;
 /// session answers both questions below within a few kilobytes.
 const PRELUDE_BYTES: u64 = 1024 * 1024;
 
+/// How far to keep reading for a session's own title, once the questions above
+/// are answered.
+///
+/// Claude Code writes `{"type":"ai-title","aiTitle":…}` some way into the file
+/// rather than at its head. Across the eight local sessions that carry one, the
+/// line begins at byte 30,286 / 34,714 / 35,438 / 38,438 / 40,263 / 43,414 /
+/// 62,705 / 277,954. This budget takes the seven and leaves the outlier to the
+/// first-prompt fallback, because discovery re-runs on every catalog refresh
+/// and a budget that covered the last case would multiply that cost by four
+/// for every *untitled* session -- which is what the budget is actually spent
+/// on, since a titled one stops as soon as it finds its title.
+const TITLE_BYTES: u64 = 64 * 1024;
+
+/// The longest title kept. Long enough for a descriptive sentence, short
+/// enough that a pasted wall of text cannot become a row's name.
+const TITLE_CHARS: usize = 120;
+
+/// The shortest prompt worth naming a session after.
+///
+/// Sessions genuinely open with `continue`, `Yes`, `Yes please`. Those are real
+/// messages and useless as names -- a list of eleven rows called "continue"
+/// identifies nothing, which is the problem this field exists to solve. Below
+/// this length the scan keeps looking, still bounded by [`TITLE_BYTES`], and a
+/// session whose every early prompt is that short ends up untitled rather than
+/// mislabelled.
+const MIN_TITLE_CHARS: usize = 16;
+
 #[derive(Default)]
 pub struct Header {
     pub cwd: Option<String>,
     pub timestamp: Option<DateTime<Utc>>,
+    /// The title Claude Code generated for this session, if it wrote one.
+    pub ai_title: Option<String>,
+    /// The first user message that is a prompt rather than harness scaffolding.
+    pub first_prompt: Option<String>,
+    /// The same, from the sidechain half of the log.
+    ///
+    /// Kept apart rather than merged because the two answer different
+    /// questions. In a main session a sidechain message is a subagent's brief
+    /// and naming the session after it would be wrong; in a subagent
+    /// transcript, where every line is a sidechain, that brief is exactly what
+    /// the file is. Which one applies is a property of the file, which
+    /// [`super::describe`] knows and this reader does not.
+    pub first_sidechain_prompt: Option<String>,
+    pub git_branch: Option<String>,
     /// Whether any line in the prelude carries a `uuid`.
     ///
     /// The test for "is this a session transcript at all". A Claude Code
@@ -46,9 +87,9 @@ pub struct Header {
 /// is taken from the first line that has it. Since the file is append-only,
 /// that is also the earliest such line.
 ///
-/// The scan stops as soon as all three are answered, so the ordinary session —
-/// whose first line is a `user` event carrying all of them — still costs one
-/// `read_line`.
+/// The scan stops as soon as all three are answered *and* the title question is
+/// settled, so the ordinary titled session stops at its `ai-title` line and an
+/// untitled one stops at [`TITLE_BYTES`].
 pub fn read_header(path: &Path) -> PortResult<Header> {
     let file = File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
     let mut reader = BufReader::new(file.take(PRELUDE_BYTES));
@@ -58,7 +99,16 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
     let mut consumed: u64 = 0;
     let mut line = String::new();
 
-    while !(header.has_conversation && header.cwd.is_some() && header.timestamp.is_some()) {
+    loop {
+        let identified =
+            header.has_conversation && header.cwd.is_some() && header.timestamp.is_some();
+        // An agent-written title ends the search; a first prompt does not,
+        // because a title found later is the better of the two and this is the
+        // only pass that will look for it.
+        let titled = header.ai_title.is_some() || consumed >= TITLE_BYTES;
+        if identified && titled {
+            break;
+        }
         line.clear();
         match reader.read_line(&mut line).map_err(io)? {
             0 => break,
@@ -75,6 +125,25 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
         if header.timestamp.is_none() {
             header.timestamp = parse_time(value.get("timestamp"));
         }
+        if header.git_branch.is_none() {
+            header.git_branch = str_field(&value, "gitBranch");
+        }
+        if str_field(&value, "type").as_deref() == Some("ai-title") {
+            header.ai_title = str_field(&value, "aiTitle");
+        } else if str_field(&value, "type").as_deref() == Some("user") {
+            let sidechain = value
+                .get("isSidechain")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let slot = if sidechain {
+                &mut header.first_sidechain_prompt
+            } else {
+                &mut header.first_prompt
+            };
+            if slot.is_none() {
+                *slot = authored_prompt(&value);
+            }
+        }
         header.has_conversation |= value.get("uuid").is_some();
     }
 
@@ -85,6 +154,64 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
     // journals.
     header.has_conversation |= consumed >= PRELUDE_BYTES;
     Ok(header)
+}
+
+/// Wrappers the harness writes as `user` lines that no person typed.
+///
+/// Claude Code replays slash commands, hook output and injected reminders
+/// through the same `type: "user"` envelope as a real prompt, and they sort
+/// *before* it: this very repository's sessions open with a `/clear` caveat and
+/// a `<command-name>` line. Naming a session after one of those would be worse
+/// than leaving it untitled, because it looks like a title and is not.
+///
+/// Matched at the start of the trimmed text only. These markers are opening
+/// tags of blocks the harness emits, so a prompt that merely *mentions* one --
+/// as any conversation about this code eventually does -- keeps its title.
+const HARNESS_PROMPT_MARKERS: [&str; 6] = [
+    "<local-command-caveat>",
+    "<local-command-stdout>",
+    "<command-name>",
+    "<command-message>",
+    "<system-reminder>",
+    "<user-prompt-submit-hook>",
+];
+
+/// The text of a `user` line, when it reads as something a person wrote.
+///
+/// `None` for a tool result carried in the user envelope, for harness
+/// scaffolding, and for anything too short to name a session by.
+fn authored_prompt(value: &Value) -> Option<String> {
+    let content = value.get("message")?.get("content")?;
+    let text = match content {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => {
+            if blocks
+                .iter()
+                .any(|block| block_type(block) == Some("tool_result"))
+            {
+                return None;
+            }
+            blocks
+                .iter()
+                .filter(|block| block_type(block) == Some("text"))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => return None,
+    };
+    let trimmed = text.trim();
+    if HARNESS_PROMPT_MARKERS
+        .iter()
+        .any(|marker| trimmed.starts_with(marker))
+    {
+        return None;
+    }
+    // Collapsed to one line before truncation: a prompt's first line is often a
+    // heading, and a row that renders raw newlines is not a title.
+    let collapsed = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    (collapsed.chars().count() >= MIN_TITLE_CHARS)
+        .then(|| ct_domain::ports::truncate_chars(&collapsed, TITLE_CHARS))
 }
 
 /// Parse a full Claude Code session.

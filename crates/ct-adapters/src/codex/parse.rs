@@ -33,33 +33,114 @@ pub struct Header {
     pub thread_source: Option<String>,
     pub cwd: Option<String>,
     pub timestamp: Option<DateTime<Utc>>,
+    pub git_branch: Option<String>,
+    /// The first user message that reads as a request rather than injected
+    /// harness text. Codex writes no title of its own, so this is the only
+    /// name a rollout file offers.
+    pub first_prompt: Option<String>,
 }
 
-/// Read only the `session_meta` header line.
+/// How far past the header to look for the session's first real prompt.
+///
+/// Codex's `session_meta` line alone can run to tens of kilobytes -- it embeds
+/// the entire base instructions -- and the opening user messages that follow
+/// are frequently injected `AGENTS.md` and orchestration blocks rather than
+/// anything typed. This budget is what bounds that search; a rollout whose
+/// first authored message lands beyond it is listed without a title rather
+/// than titled from a guess.
+const PROMPT_BYTES: u64 = 256 * 1024;
+
+/// The longest title kept, matching the Claude Code adapter's limit.
+const TITLE_CHARS: usize = 120;
+
+/// The shortest prompt worth naming a session after. See the Claude Code
+/// adapter's constant of the same name: sessions really do open with `Yes`,
+/// `continue`, `Yes please`, and a catalog full of those identifies nothing.
+const MIN_TITLE_CHARS: usize = 16;
+
+/// Read the `session_meta` header line, and enough after it to name the
+/// session.
 pub fn read_header(path: &Path) -> PortResult<Header> {
     let file = File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
+    // The cap goes on the `File` so the `BufReader` wrapping it still offers
+    // `read_line`. It also protects against a corrupt file with no newlines at
+    // all, where a single `read_line` would otherwise pull in the whole file.
+    let mut reader = BufReader::new(file.take(PROMPT_BYTES));
+    let io = |e: std::io::Error| PortError::Io(format!("{}: {e}", path.display()));
+
     let mut line = String::new();
-    // 1 MiB cap: a header line is tiny, and refusing to read an unbounded first
-    // line protects against a corrupt file with no newlines at all. The cap goes
-    // on the `File` so the `BufReader` wrapping it still offers `read_line`.
-    let mut reader = BufReader::new(file.take(1024 * 1024));
-    reader
-        .read_line(&mut line)
-        .map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
+    reader.read_line(&mut line).map_err(io)?;
 
     let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
         return Ok(Header::default());
     };
     let payload = value.get("payload").unwrap_or(&Value::Null);
+    let git = payload.get("git").unwrap_or(&Value::Null);
 
-    Ok(Header {
+    let mut header = Header {
         id: str_field(payload, "id"),
         session_id: str_field(payload, "session_id"),
         parent_thread_id: str_field(payload, "parent_thread_id"),
         thread_source: str_field(payload, "thread_source"),
         cwd: str_field(payload, "cwd"),
         timestamp: parse_time(value.get("timestamp")),
-    })
+        git_branch: str_field(git, "branch"),
+        first_prompt: None,
+    };
+
+    while header.first_prompt.is_none() {
+        line.clear();
+        if reader.read_line(&mut line).map_err(io)? == 0 {
+            break;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        header.first_prompt = authored_prompt(&value);
+    }
+    Ok(header)
+}
+
+/// Blocks Codex's harness injects through the user role.
+///
+/// A rollout's opening user messages are routinely an `AGENTS.md` copy, a
+/// tool-mode directive or an orchestration brief -- none of them typed by the
+/// person whose session this is. Matched at the start of the trimmed text,
+/// so a message that merely quotes one still names its session.
+const INJECTED_PROMPT_MARKERS: [&str; 7] = [
+    "# AGENTS.md instructions for",
+    "<user_instructions>",
+    "<environment_context>",
+    "<multi_agent_mode>",
+    "<INSTRUCTIONS>",
+    "<recommended_plugins>",
+    // The harness's own template when a run is asked to assess another
+    // agent's request. Observed opening seven local rollouts.
+    "The following is the Codex agent history",
+];
+
+/// The text of a user message a person plausibly wrote, or `None`.
+fn authored_prompt(value: &Value) -> Option<String> {
+    if str_field(value, "type").as_deref() != Some("response_item") {
+        return None;
+    }
+    let payload = value.get("payload")?;
+    if str_field(payload, "type").as_deref() != Some("message")
+        || str_field(payload, "role").as_deref() != Some("user")
+    {
+        return None;
+    }
+    let text = content_text(payload)?;
+    let trimmed = text.trim();
+    if INJECTED_PROMPT_MARKERS
+        .iter()
+        .any(|marker| trimmed.starts_with(marker))
+    {
+        return None;
+    }
+    let collapsed = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    (collapsed.chars().count() >= MIN_TITLE_CHARS)
+        .then(|| ct_domain::ports::truncate_chars(&collapsed, TITLE_CHARS))
 }
 
 /// Derive a session's place in its thread group from the fields Codex's
@@ -80,6 +161,12 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
 /// a safety net rather than the normal path. If neither field yields a usable
 /// id, the session is reported as a root rather than as a subagent with no
 /// parent to name -- that combination has no honest representation.
+///
+/// A thread that resolves to *itself* as parent is a root, not a cycle. The
+/// `session_id` fallback exists because a subagent thread writes its parent's
+/// id there; when a rollout instead writes its own -- observed once locally,
+/// where the catalog then read `[subagent of 01a00fe2]` on session `01a00fe2`
+/// -- that fallback found nothing, and saying so is the honest reading.
 pub fn thread_role(header: &Header) -> ThreadRole {
     if header.thread_source.as_deref() != Some("subagent") {
         return ThreadRole::Root;
@@ -88,6 +175,7 @@ pub fn thread_role(header: &Header) -> ThreadRole {
         .parent_thread_id
         .clone()
         .or_else(|| header.session_id.clone())
+        .filter(|parent| Some(parent) != header.id.as_ref())
         .and_then(|parent| SessionId::new(parent).ok())
         .map(|parent| ThreadRole::Subagent { parent })
         .unwrap_or(ThreadRole::Root)
@@ -1486,6 +1574,40 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn a_rollout_is_named_by_its_first_typed_message_not_its_injected_ones() {
+        // Codex writes no title of its own, and its opening user messages are
+        // routinely an AGENTS.md copy or an orchestration brief. Naming a
+        // session after one of those would make every session in a repository
+        // share the same name -- exactly the failure a title is meant to fix.
+        // `Yes` is real and useless; the scan keeps going.
+        let meta = r#"{"timestamp":"2026-08-17T14:56:40.465Z","type":"session_meta","payload":{"id":"01a01039","cwd":"C:\\work","git":{"branch":"feat/naming"}}}"#;
+        // `r##` rather than `r#`: the payload itself contains `"#`, which would
+        // otherwise close the literal mid-string.
+        let injected = r##"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for C:\\work"}]}}"##;
+        let terse = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Yes"}]}}"#;
+        let assistant = r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Reviewing the notification pipeline now"}]}}"#;
+        let typed = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Review\tthe   toast delivery path"}]}}"#;
+
+        let path =
+            std::env::temp_dir().join(format!("ct-codex-title-{}.jsonl", std::process::id()));
+        fs::write(
+            &path,
+            format!("{meta}\n{injected}\n{terse}\n{assistant}\n{typed}\n"),
+        )
+        .unwrap();
+        let header = read_header(&path).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(
+            header.first_prompt.as_deref(),
+            Some("Review the toast delivery path"),
+            "an assistant message is not a prompt, and whitespace collapses"
+        );
+        assert_eq!(header.git_branch.as_deref(), Some("feat/naming"));
+        assert_eq!(header.cwd.as_deref(), Some("C:\\work"));
+    }
+
+    #[test]
     fn a_session_with_no_thread_source_is_a_root() {
         // Every rollout file written before the harness recorded this field
         // at all. `thread_source` absent must mean "not a subagent", not
@@ -1497,6 +1619,7 @@ mod tests {
             thread_source: None,
             cwd: None,
             timestamp: None,
+            ..Header::default()
         };
         assert_eq!(thread_role(&header), ThreadRole::Root);
     }
@@ -1510,6 +1633,7 @@ mod tests {
             thread_source: Some("subagent".into()),
             cwd: None,
             timestamp: None,
+            ..Header::default()
         };
         assert_eq!(
             thread_role(&header),
@@ -1531,6 +1655,7 @@ mod tests {
             thread_source: Some("subagent".into()),
             cwd: None,
             timestamp: None,
+            ..Header::default()
         };
         assert_eq!(
             thread_role(&header),
@@ -1553,6 +1678,24 @@ mod tests {
             thread_source: Some("user".into()),
             cwd: None,
             timestamp: None,
+            ..Header::default()
+        };
+        assert_eq!(thread_role(&header), ThreadRole::Root);
+    }
+
+    #[test]
+    fn a_thread_naming_itself_as_its_parent_is_a_root() {
+        // Observed once in the local corpus, where `ct sessions` printed
+        // `[subagent of 01a00fe2]` on session `01a00fe2`. The `session_id`
+        // fallback is only meaningful when it holds someone else's id.
+        let header = Header {
+            id: Some("01a00fe2".into()),
+            session_id: Some("01a00fe2".into()),
+            parent_thread_id: None,
+            thread_source: Some("subagent".into()),
+            cwd: None,
+            timestamp: None,
+            ..Header::default()
         };
         assert_eq!(thread_role(&header), ThreadRole::Root);
     }
@@ -1569,6 +1712,7 @@ mod tests {
             thread_source: Some("subagent".into()),
             cwd: None,
             timestamp: None,
+            ..Header::default()
         };
         assert_eq!(thread_role(&header), ThreadRole::Root);
     }

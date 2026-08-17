@@ -60,7 +60,9 @@ mod reconstruct;
 use crate::home_dir;
 use crate::walk::{find_files, has_extension};
 use ct_domain::ports::{AgentAdapter, PortError, PortResult, ReconstructedContext, TokenEstimator};
-use ct_domain::{AgentKind, AgentSession, SessionDescriptor, SessionId, ThreadRole, TurnNumber};
+use ct_domain::{
+    AgentKind, AgentSession, SessionDescriptor, SessionId, SessionTitle, ThreadRole, TurnNumber,
+};
 use std::path::{Path, PathBuf};
 
 /// Reads Claude Code sessions.
@@ -179,12 +181,11 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
         });
     }
 
-    let project = header.cwd.clone().or_else(|| {
-        path.parent()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .map(unslug)
-    });
+    let project = header
+        .cwd
+        .clone()
+        .or_else(|| project_slug(path).map(unslug));
+    let role = thread_role(path);
 
     Ok(SessionDescriptor {
         id: SessionId::new(stem).map_err(|e| PortError::Malformed {
@@ -195,18 +196,80 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
         path: path.display().to_string(),
         size_bytes: metadata.len(),
         project,
+        // A subagent transcript is entirely sidechain, and the brief it opens
+        // with is what that file is; a main session's sidechain messages are
+        // briefs it *handed out*, and naming it after one would describe the
+        // wrong conversation. Which applies is settled by the role, so it is
+        // chosen here rather than inside the reader.
+        title: header
+            .ai_title
+            .map(SessionTitle::agent_generated)
+            .or_else(|| {
+                match role {
+                    ThreadRole::Subagent { .. } => header.first_sidechain_prompt,
+                    ThreadRole::Root => header.first_prompt,
+                }
+                .map(SessionTitle::first_prompt)
+            }),
+        git_branch: header.git_branch,
         started_at: header.timestamp,
         last_activity: metadata
             .modified()
             .ok()
             .map(chrono::DateTime::<chrono::Utc>::from),
-        // Claude Code's subagent activity (CT-015's sidechains) is per-event
-        // within one file, not a relationship between separate session
-        // files -- there is no Claude Code equivalent of Codex's
-        // `parent_thread_id`/`thread_source` to read here, so every
-        // discovered Claude Code session is reported as a root.
-        thread_role: ThreadRole::Root,
+        thread_role: role,
     })
+}
+
+/// The slugified project directory a session file sits under.
+///
+/// A main session is `<project>/<id>.jsonl`, so its parent is the project. A
+/// subagent transcript is `<project>/<parent-id>/subagents/agent-<hex>.jsonl`,
+/// where the same reading gives `subagents` -- which was shown as the project
+/// name for every subagent whose log did not happen to record a `cwd`. Two
+/// levels are skipped when the file is in a `subagents` directory, and the
+/// caller only reaches this at all when the log itself said nothing.
+fn project_slug(path: &Path) -> Option<&str> {
+    let parent = path.parent()?;
+    let dir = if parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("subagents"))
+    {
+        parent.parent()?.parent()?
+    } else {
+        parent
+    };
+    dir.file_name().and_then(|name| name.to_str())
+}
+
+/// Read a session's place in its thread group out of where the file sits.
+///
+/// Claude Code's *in-session* subagent activity is per-event (CT-015's
+/// sidechains) and has no separate file. Its *spawned* subagents do: the
+/// harness writes them to
+/// `<project>/<parent-session-id>/subagents/agent-<hex>.jsonl`, and every one
+/// of the 24 local transcripts follows that layout exactly. So the parent this
+/// adapter once reported as unknowable is in the path -- not inferred from it,
+/// but named by the directory the harness chose.
+///
+/// Anything not under a `subagents` directory is a root, and a `subagents`
+/// directory whose grandparent is not a usable session id is a root too: a
+/// subagent that cannot name its parent has no honest representation here (see
+/// [`ThreadRole`]).
+fn thread_role(path: &Path) -> ThreadRole {
+    let subagents = path.parent().filter(|dir| {
+        dir.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("subagents"))
+    });
+    subagents
+        .and_then(Path::parent)
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .and_then(|parent| SessionId::new(parent).ok())
+        .map(|parent| ThreadRole::Subagent { parent })
+        .unwrap_or(ThreadRole::Root)
 }
 
 /// Best-effort reversal of Claude Code's directory slugification.
@@ -231,6 +294,7 @@ fn unslug(slug: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ct_domain::TitleSource;
     use std::io::Write;
 
     fn temp_session(name: &str, contents: &str) -> PathBuf {
@@ -314,6 +378,123 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert!(described.is_ok(), "got {described:?}");
+    }
+
+    /// A session file nested the way the harness nests a subagent transcript.
+    fn temp_subagent(project: &str, parent: &str, name: &str, contents: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join("ct-discovery-subagents")
+            .join(project)
+            .join(parent)
+            .join("subagents");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{name}.jsonl"));
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(contents.as_bytes())
+            .unwrap();
+        path
+    }
+
+    #[test]
+    fn a_session_is_named_by_the_title_the_agent_wrote_for_it() {
+        // The `ai-title` line sits some way into the file -- 30 to 63 KiB in
+        // the seven local sessions this budget covers -- so a first-line read
+        // would never see it. It outranks the prompt below it.
+        let path = temp_session(
+            "titled",
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"cwd\":\"C:\\\\src\",\"gitBranch\":\"feat/naming\",\
+               \"timestamp\":\"2026-08-17T09:15:00.000Z\",\
+               \"message\":{\"content\":\"Rename every session in the catalog\"}}\n\
+             {\"type\":\"ai-title\",\"aiTitle\":\"Organize features and improve session naming\"}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        let d = described.expect("this is a session");
+        let title = d.title.expect("a titled session");
+        assert_eq!(title.text, "Organize features and improve session naming");
+        assert_eq!(title.source, TitleSource::AgentGenerated);
+        assert_eq!(d.git_branch.as_deref(), Some("feat/naming"));
+    }
+
+    #[test]
+    fn an_untitled_session_falls_back_to_its_first_real_prompt() {
+        // Every line before the prompt is something the harness wrote through
+        // the user role. Naming a session `<command-name>/clear` would look
+        // like a title while identifying nothing -- worse than no title.
+        let path = temp_session(
+            "scaffolding",
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"cwd\":\"C:\\\\src\",\
+               \"message\":{\"content\":\"<local-command-caveat>Caveat: the messages below\"}}\n\
+             {\"type\":\"user\",\"uuid\":\"u2\",\"message\":{\"content\":\"<command-name>/clear</command-name>\"}}\n\
+             {\"type\":\"user\",\"uuid\":\"u3\",\"message\":{\"content\":\"continue\"}}\n\
+             {\"type\":\"user\",\"uuid\":\"u4\",\
+               \"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Fix the toast\\ndelivery status\"}]}}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        let title = described.expect("a session").title.expect("a title");
+        assert_eq!(
+            title.text, "Fix the toast delivery status",
+            "scaffolding and one-word prompts are skipped, and newlines collapse"
+        );
+        assert_eq!(title.source, TitleSource::FirstPrompt);
+    }
+
+    #[test]
+    fn a_subagent_transcript_names_its_parent_and_itself() {
+        // The claim this replaces was that Claude Code records no parent link
+        // between session files. It records it in the path: all 24 local
+        // subagent transcripts live under `<parent-id>/subagents/`. Their own
+        // brief is a sidechain message, which is exactly what such a file is.
+        let parent = "da2d970a-526f-435e-b8fa-050b778d4270";
+        let path = temp_subagent(
+            "C--Users-anes-src",
+            parent,
+            "agent-a2356c6d94cfaa975",
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"isSidechain\":true,\
+               \"message\":{\"content\":\"You are editing exactly ONE file and no other\"}}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        let d = described.expect("a session");
+        assert_eq!(
+            d.thread_role,
+            ThreadRole::Subagent {
+                parent: SessionId::new(parent).unwrap()
+            }
+        );
+        assert_eq!(
+            d.title.expect("a title").text,
+            "You are editing exactly ONE file and no other"
+        );
+        assert_eq!(
+            d.project.as_deref(),
+            Some("C:\\Users\\anes\\src"),
+            "the project is the slug two levels up, never the `subagents` directory"
+        );
+    }
+
+    #[test]
+    fn a_main_session_is_not_named_after_a_brief_it_handed_out() {
+        // The mirror of the case above. A sidechain message inside a main
+        // session is work it delegated, and titling the session with it would
+        // describe the wrong conversation.
+        let path = temp_session(
+            "delegating",
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"isSidechain\":true,\
+               \"message\":{\"content\":\"You are a subagent. Do the thing.\"}}\n",
+        );
+        let described = describe(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            described.expect("a session").title.is_none(),
+            "an untitled session stays untitled rather than borrowing a subagent's brief"
+        );
     }
 
     #[test]

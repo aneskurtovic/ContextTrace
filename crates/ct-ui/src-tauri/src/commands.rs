@@ -1623,9 +1623,33 @@ pub struct SessionSummary {
     path: String,
     size_bytes: u64,
     project: Option<String>,
+    /// A recognisable name for the session, with the provenance of that name
+    /// beside it -- an agent's own title and a first prompt are different
+    /// claims and the row says which it is showing.
+    title: Option<SessionTitleSummary>,
+    git_branch: Option<String>,
     started_at: Option<String>,
     last_activity: Option<String>,
     thread_role: ThreadRoleSummary,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTitleSummary {
+    text: String,
+    source: &'static str,
+}
+
+impl From<ct_domain::SessionTitle> for SessionTitleSummary {
+    fn from(value: ct_domain::SessionTitle) -> Self {
+        Self {
+            text: value.text,
+            source: match value.source {
+                ct_domain::TitleSource::AgentGenerated => "agentGenerated",
+                ct_domain::TitleSource::FirstPrompt => "firstPrompt",
+            },
+        }
+    }
 }
 
 /// A bounded, searchable page of locally discovered sessions.
@@ -1662,6 +1686,8 @@ impl From<SessionDescriptor> for SessionSummary {
             path: value.path,
             size_bytes: value.size_bytes,
             project: value.project,
+            title: value.title.map(SessionTitleSummary::from),
+            git_branch: value.git_branch,
             started_at: value.started_at.map(|time| time.to_rfc3339()),
             last_activity: value.last_activity.map(|time| time.to_rfc3339()),
             thread_role: value.thread_role.into(),
@@ -2777,10 +2803,19 @@ fn session_matches_query(descriptor: &SessionDescriptor, query: Option<&str>) ->
         AgentKind::Codex => "codex",
         AgentKind::ClaudeCode => "claude-code",
     };
+    // The title is searched alongside the id, project and path. It is what the
+    // row is now labelled with, so a catalog that showed a name it could not
+    // then find would be a worse search than the id-only one it replaced.
     let matches = [
         descriptor.id.as_str(),
         descriptor.project.as_deref().unwrap_or_default(),
         descriptor.path.as_str(),
+        descriptor
+            .title
+            .as_ref()
+            .map(|title| title.text.as_str())
+            .unwrap_or_default(),
+        descriptor.git_branch.as_deref().unwrap_or_default(),
         agent,
     ]
     .into_iter()
@@ -3025,6 +3060,8 @@ mod tests {
             path: format!("C:/catalog/session-{index:04}.jsonl"),
             size_bytes: 1,
             project: Some(project.to_string()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Root,
@@ -3233,6 +3270,8 @@ mod tests {
             path: "session.jsonl".to_string(),
             size_bytes: 42,
             project: Some("ContextTrace".to_string()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Root,
@@ -3254,6 +3293,8 @@ mod tests {
             path: "session.jsonl".to_string(),
             size_bytes: 42,
             project: Some("ContextTrace".to_string()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Subagent {

@@ -29,7 +29,9 @@ use ct_domain::ports::{
     AgentAdapter, ExactRecount, PortError, PortResult, RawEventSource, ReconstructedContext,
     TokenEstimator,
 };
-use ct_domain::{AgentKind, AgentSession, ContextItem, SessionDescriptor, SessionId, TurnNumber};
+use ct_domain::{
+    AgentKind, AgentSession, ContextItem, SessionDescriptor, SessionId, SessionTitle, TurnNumber,
+};
 use std::path::{Path, PathBuf};
 
 /// Reads Codex CLI sessions.
@@ -178,6 +180,10 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
         path: path.display().to_string(),
         size_bytes: metadata.len(),
         project: header.cwd.clone(),
+        // Codex writes no title of its own, so a first prompt is the only
+        // candidate and its weaker provenance travels with it.
+        title: header.first_prompt.clone().map(SessionTitle::first_prompt),
+        git_branch: header.git_branch.clone(),
         started_at: header.timestamp,
         last_activity: header.timestamp,
         thread_role: parse::thread_role(&header),

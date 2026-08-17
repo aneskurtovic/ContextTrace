@@ -31,12 +31,30 @@ export type ThreadRole =
   | { kind: "root"; parent: null }
   | { kind: "subagent"; parent: string };
 
+/**
+ * Where a session's name came from.
+ *
+ * `agentGenerated` is the agent's own summary of the session.
+ * `firstPrompt` is the first thing the user typed, which describes the session
+ * only as well as an opening request ever does. Rendered differently for that
+ * reason: the two are not equally strong claims about what a session is.
+ */
+export type TitleSource = 'agentGenerated' | 'firstPrompt';
+
+export interface SessionTitle {
+  text: string;
+  source: TitleSource;
+}
+
 export interface SessionSummary {
   id: string;
   agent: Agent;
   path: string;
   sizeBytes: number;
   project: string | null;
+  /** `null` when the log offered no name; the row falls back to its project. */
+  title: SessionTitle | null;
+  gitBranch: string | null;
   startedAt: string | null;
   lastActivity: string | null;
   threadRole: ThreadRole;
@@ -313,12 +331,45 @@ export interface NotificationSettings {
   costBudgetUsd: number | null;
 }
 
+/**
+ * Whether a toast sent from this build can reach the Windows shell.
+ *
+ * Separate from `osPermission`, which the notification plugin answers
+ * `granted` unconditionally on Windows and so cannot be read as a promise that
+ * anything will appear. This is the observation that can come back negative.
+ */
+export type Deliverability =
+  | { state: 'ready'; appId: string }
+  | { state: 'unregistered'; appId: string; exeDir: string | null }
+  | { state: 'unsupported' };
+
 export interface NotificationStatus {
   monitoring: boolean;
   osPermission: NotificationPermission;
   lastSuccessfulPoll: string | null;
   error: string | null;
+  deliverability: Deliverability;
+  /** The one-line reason OS delivery cannot work, or `null` when it can. */
+  obstacle: string | null;
 }
+
+/** The result of the toast the user asked for, reported as it happened. */
+export interface TestNotificationResult {
+  delivered: boolean;
+  reason: string | null;
+  deliverability: Deliverability;
+}
+
+/**
+ * What became of a record's OS toast.
+ *
+ * `notRequested` covers both a feed-only rule and a record caught up after the
+ * fact; `failed` carries what Windows said, or why this build never asked it.
+ */
+export type OsDelivery =
+  | { status: 'notRequested' }
+  | { status: 'delivered' }
+  | { status: 'failed'; reason: string };
 
 export interface NotificationLocation {
   agent: Agent;
@@ -343,6 +394,7 @@ export interface NotificationRecord {
   dismissedAt: string | null;
   catchUp: boolean;
   location: NotificationLocation;
+  osDelivery: OsDelivery;
 }
 
 export interface NotificationPage {

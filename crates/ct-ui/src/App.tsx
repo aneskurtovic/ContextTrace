@@ -49,6 +49,7 @@ import type {
   SessionDetail,
   SessionSummary,
   StartupSummary,
+  TestNotificationResult,
   TurnDiff,
   TurnTarget,
   TemporalGhost,
@@ -126,6 +127,19 @@ function Metric({
   );
 }
 
+/**
+ * What to call a session in the catalog.
+ *
+ * The project alone was the label, and it is not an identity: a week of work
+ * in one repository produced a column of rows reading `contexttrace` that
+ * differed only by an opaque id. The name the log offers leads when there is
+ * one, and the project moves down to the line that says *where* — which is a
+ * different question from *what*.
+ */
+function sessionName(session: SessionSummary): string {
+  return session.title?.text ?? projectName(session.project);
+}
+
 function SessionListItem({
   session,
   selected,
@@ -138,20 +152,34 @@ function SessionListItem({
   // Narrowed through the value itself rather than a boolean alias, so the
   // union tells the compiler `parent` is a string in this branch.
   const role = session.threadRole;
+  const name = sessionName(session);
   return (
     <button
       className={`session-row ${selected ? "selected" : ""}`}
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
-      aria-label={`${agentLabel(session.agent)} session: ${projectName(session.project)}, ${shortId(session.id)}${
+      aria-label={`${agentLabel(session.agent)} session: ${name}, ${projectName(session.project)}, ${shortId(session.id)}${
         role.kind === "subagent" ? `, subagent of ${shortId(role.parent)}` : ""
       }`}
     >
       <AgentMark agent={session.agent} />
       <span className="session-copy">
-        <span className="session-title">{projectName(session.project)}</span>
+        <span className="session-title" title={session.title?.text ?? undefined}>
+          {name}
+          {/* A first prompt describes a session only as well as an opening
+              request does, and an agent's own title is a summary of the whole
+              thing. The mark is what keeps the reader from reading the weaker
+              one as the stronger. */}
+          {session.title?.source === "firstPrompt" && (
+            <i className="title-source" title="Named after this session's first prompt">
+              ›
+            </i>
+          )}
+        </span>
         <span className="session-meta">
-          {shortId(session.id)} · {formatBytes(session.sizeBytes)}
+          {projectName(session.project)}
+          {session.gitBranch && <> · <span className="session-branch">{session.gitBranch}</span></>}
+          {" · "}{shortId(session.id)} · {formatBytes(session.sizeBytes)}
           {role.kind === "subagent" && (
             <span className="thread-marker"> · subagent of {shortId(role.parent)}</span>
           )}
@@ -277,7 +305,7 @@ function CrossSessionPicker({
               key={`${session.agent}:${session.id}`}
               value={JSON.stringify({ agent: session.agent, id: session.id })}
             >
-              {agentLabel(session.agent)} · {projectName(session.project)} · {shortId(session.id)}
+              {agentLabel(session.agent)} · {sessionName(session)} · {shortId(session.id)}
             </option>
           ))}
         </select>
@@ -1296,8 +1324,8 @@ function SessionComparePanel({
   return (
     <section className="panel session-compare-panel" aria-labelledby="session-compare-heading">
       <div className="panel-heading"><div><span className="eyebrow">A/B lab</span><h2 id="session-compare-heading">Session Compare · prompt architecture</h2></div><span className="sandbox-badge">empirical, local evidence</span></div>
-      <div className="ab-controls"><label>Compare this session with<input aria-label="Session to compare" value={other ? `${projectName(other.session.project)} · ${shortId(other.session.id)}` : ""} placeholder="Choose a second session…" readOnly /></label><div className="ab-options">{candidates.slice(0, 5).map((session) => <button type="button" key={`${session.agent}:${session.id}`} onClick={() => onSelect(JSON.stringify({ agent: session.agent, id: session.id }))}>{projectName(session.project)} · {shortId(session.id)}</button>)}</div>{loading && <Spinner label="Loading comparison…" />}</div>
-      {other ? <div className="ab-grid"><div className="ab-side"><span className="ab-label">Session A · current</span><strong>{projectName(current.session.project)}</strong><div className="ab-stat"><span>Turns</span><b>{current.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(currentPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(current.totalOutputTokens)}</b></div></div><div className="ab-arrow">→<small>{tokenDelta <= 0 ? `${formatTokens(Math.abs(tokenDelta))} fewer peak tokens` : `${formatTokens(tokenDelta)} more peak tokens`}</small></div><div className="ab-side alt"><span className="ab-label">Session B · candidate</span><strong>{projectName(other.session.project)}</strong><div className="ab-stat"><span>Turns</span><b>{other.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(otherPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(other.totalOutputTokens)}</b></div></div></div> : <div className="ab-empty"><strong>Turn prompt experiments into evidence.</strong><p>Run the same task twice, select the second session, and ContextTrace will line up turns, peak prompt size, and output volume.</p></div>}
+      <div className="ab-controls"><label>Compare this session with<input aria-label="Session to compare" value={other ? `${sessionName(other.session)} · ${shortId(other.session.id)}` : ""} placeholder="Choose a second session…" readOnly /></label><div className="ab-options">{candidates.slice(0, 5).map((session) => <button type="button" key={`${session.agent}:${session.id}`} onClick={() => onSelect(JSON.stringify({ agent: session.agent, id: session.id }))}>{sessionName(session)} · {shortId(session.id)}</button>)}</div>{loading && <Spinner label="Loading comparison…" />}</div>
+      {other ? <div className="ab-grid"><div className="ab-side"><span className="ab-label">Session A · current</span><strong>{sessionName(current.session)}</strong><div className="ab-stat"><span>Turns</span><b>{current.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(currentPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(current.totalOutputTokens)}</b></div></div><div className="ab-arrow">→<small>{tokenDelta <= 0 ? `${formatTokens(Math.abs(tokenDelta))} fewer peak tokens` : `${formatTokens(tokenDelta)} more peak tokens`}</small></div><div className="ab-side alt"><span className="ab-label">Session B · candidate</span><strong>{sessionName(other.session)}</strong><div className="ab-stat"><span>Turns</span><b>{other.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(otherPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(other.totalOutputTokens)}</b></div></div></div> : <div className="ab-empty"><strong>Turn prompt experiments into evidence.</strong><p>Run the same task twice, select the second session, and ContextTrace will line up turns, peak prompt size, and output volume.</p></div>}
     </section>
   );
 }
@@ -2458,8 +2486,12 @@ function SessionWorkspace({
         <div>
           <div className="title-line">
             <AgentMark agent={detail.session.agent} />
-            <h1>{projectName(detail.session.project)}</h1>
+            <h1>{sessionName(detail.session)}</h1>
           </div>
+          {/* The heading is the session; the line under it is where it ran.
+              While the heading *was* the project these said the same thing
+              twice, which is how a workspace could be open on the wrong
+              session without anything on screen contradicting you. */}
           <p className="path" title={detail.session.project ?? detail.session.path}>
             {detail.session.project ?? detail.session.path}
           </p>
@@ -2712,6 +2744,67 @@ const NOTIFICATION_RULES: Array<{
   { id: 'costBudget', label: 'Cost budget', detail: 'Observed or projected session cost crosses the configured budget.', unit: 'USD' },
 ];
 
+/**
+ * What to say about OS delivery in one line.
+ *
+ * Not the raw permission: the notification plugin answers `granted` on Windows
+ * whatever the truth is, so showing it alone told every user their toasts were
+ * fine. Deliverability is the half of the answer that can be negative, so it
+ * leads whenever it is.
+ */
+function osDeliveryLabel(status: NotificationStatus): string {
+  switch (status.deliverability.state) {
+    case 'ready':
+      return status.osPermission === 'denied' ? 'denied' : 'ready';
+    case 'unregistered':
+      return 'app not installed';
+    case 'unsupported':
+      return 'unsupported';
+  }
+}
+
+/**
+ * One toast, on demand, reported as it happened.
+ *
+ * Waiting for one of eleven rules to fire is a poor way to answer "do OS
+ * notifications reach me", and the feed could not answer it either while every
+ * send was recorded as delivered. This is the falsifiable version: press it,
+ * and either a toast appears and this says so, or it names the reason none did.
+ */
+function NotificationDeliveryTest() {
+  const [result, setResult] = useState<TestNotificationResult | null>(null);
+  const [sending, setSending] = useState(false);
+  return (
+    <div className='notification-delivery-test'>
+      <button
+        type='button'
+        disabled={sending}
+        onClick={() => {
+          setSending(true);
+          setResult(null);
+          api.sendTestNotification()
+            .then(setResult)
+            .catch((error: unknown) => setResult({
+              delivered: false,
+              reason: errorMessage(error),
+              deliverability: { state: 'unsupported' },
+            }))
+            .finally(() => setSending(false));
+        }}
+      >
+        {sending ? 'Sending…' : 'Send test notification'}
+      </button>
+      {result && (
+        <p className={result.delivered ? 'delivery-result' : 'delivery-result failed'} role='status'>
+          {result.delivered
+            ? 'Windows accepted the toast. If nothing appeared, check Windows notification settings for ContextTrace.'
+            : result.reason ?? 'No notification was sent.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function NotificationCenter({
   open,
   settingsOpen,
@@ -2787,12 +2880,18 @@ function NotificationCenter({
             <div className='notification-health' role='status'>
               <i className={status?.monitoring ? 'healthy' : ''} />
               <span>{status?.monitoring ? 'Monitoring' : 'Not monitoring'}</span>
-              <small>OS: {status?.osPermission ?? 'unknown'}</small>
+              <small>OS: {status ? osDeliveryLabel(status) : 'unknown'}</small>
             </div>
             {status?.osPermission === 'denied' && (
               <p className='notification-permission-note'>OS permission is denied. Feed entries will still be recorded.</p>
             )}
+            {status?.obstacle && (
+              <p className='notification-permission-note danger'>
+                <strong>OS notifications cannot be delivered from this build.</strong> {status.obstacle}
+              </p>
+            )}
             {status?.error && <p className='notification-permission-note danger'>{status.error}</p>}
+            <NotificationDeliveryTest />
             <label className='notification-master-toggle compact'>
               <span><strong>Subagent OS alerts</strong><small>Subagent findings always remain available in the feed.</small></span>
               <input
@@ -2863,6 +2962,10 @@ function NotificationCenter({
                         <span className='notification-title-line'>
                           <strong>{notification.title}</strong>
                           {notification.catchUp && <em>catch-up</em>}
+                          {notification.osDelivery.status === 'delivered' && <em className='os-delivered'>OS sent</em>}
+                          {notification.osDelivery.status === 'failed' && (
+                            <em className='os-failed' title={notification.osDelivery.reason}>OS failed</em>
+                          )}
                         </span>
                         <span>{notification.description}</span>
                         <small>
@@ -2870,6 +2973,9 @@ function NotificationCenter({
                           {notification.location.turn != null ? ` · turn ${notification.location.turn}` : ''}
                           {' · '}{formatActivity(notification.occurredAt)} · {notification.confidence}
                         </small>
+                        {notification.osDelivery.status === 'failed' && (
+                          <small className='notification-os-reason'>No OS notification: {notification.osDelivery.reason}</small>
+                        )}
                       </span>
                     </button>
                     <button type='button' className='notification-dismiss' onClick={() => onDismiss(notification.id)} aria-label={`Dismiss ${notification.title}`}>×</button>
@@ -3982,7 +4088,7 @@ export default function App() {
             <>
               <span className="topbar-divider" />
               <div className="breadcrumbs" aria-label="Current session">
-                <span>{projectName(visibleDetail.session.project)}</span>
+                <span>{sessionName(visibleDetail.session)}</span>
                 <i>/</i>
                 <span>{visibleDetail.session.agent === "codex" ? "codex" : "claude"}</span>
                 <i>/</i>

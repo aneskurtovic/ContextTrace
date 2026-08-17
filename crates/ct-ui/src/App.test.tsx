@@ -48,6 +48,7 @@ vi.mock("./api", () => ({
   getNotificationSettings: vi.fn(),
   updateNotificationSettings: vi.fn(),
   getNotificationStatus: vi.fn(),
+  sendTestNotification: vi.fn(),
   listNotifications: vi.fn(),
   markNotificationsRead: vi.fn(),
   dismissNotification: vi.fn(),
@@ -118,6 +119,11 @@ beforeEach(() => {
   mockedApi.getNotificationSettings.mockResolvedValue({ ...demoNotificationSettings, onboardingComplete: true });
   mockedApi.updateNotificationSettings.mockImplementation(async (settings) => settings);
   mockedApi.getNotificationStatus.mockResolvedValue(demoNotificationStatus);
+  mockedApi.sendTestNotification.mockResolvedValue({
+    delivered: true,
+    reason: null,
+    deliverability: { state: 'ready', appId: 'dev.contexttrace.desktop' },
+  });
   mockedApi.listNotifications.mockResolvedValue(demoNotificationPage);
   mockedApi.markNotificationsRead.mockResolvedValue(undefined);
   mockedApi.dismissNotification.mockResolvedValue(undefined);
@@ -197,7 +203,7 @@ describe("desktop accessibility and state handling", () => {
       "false",
     );
 
-    const session = await screen.findByRole("button", { name: /Codex session: ContextTrace/ });
+    const session = await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ });
     expect(session.getAttribute("aria-current")).toBe("true");
 
     const roots = screen.getByRole("button", { name: /Private by design/ });
@@ -221,7 +227,7 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("button", { name: /Codex session: ContextTrace/ }),
+      await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ }),
     ).not.toBeNull();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), {
       target: { value: "semantic-search" },
@@ -239,7 +245,7 @@ describe("desktop accessibility and state handling", () => {
       { timeout: 1_000 },
     );
     expect(
-      await screen.findByRole("button", { name: /Codex session: semantic-search/ }),
+      await screen.findByRole("button", { name: /Codex session: .*semantic-search/ }),
     ).not.toBeNull();
   });
 
@@ -256,7 +262,7 @@ describe("desktop accessibility and state handling", () => {
       expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 1, 200, false),
     );
     expect(
-      await screen.findByRole("button", { name: /Claude Code session: atlas-dashboard/ }),
+      await screen.findByRole("button", { name: /Claude Code session: .*atlas-dashboard/ }),
     ).not.toBeNull();
     expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
   });
@@ -280,22 +286,28 @@ describe("desktop accessibility and state handling", () => {
     await waitFor(() =>
       expect(mockedApi.inspectSession).toHaveBeenCalledWith(first.agent, first.id),
     );
-    fireEvent.click(await screen.findByRole("button", { name: /Codex session: ContextTrace/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Claude Code session: atlas-dashboard/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Claude Code session: .*atlas-dashboard/ }));
     await waitFor(() =>
       expect(mockedApi.inspectSession).toHaveBeenCalledWith(latest.agent, latest.id),
     );
+    // The workspace heading is the session's own name, so these assertions
+    // name the two sessions rather than the two projects they ran in -- which
+    // is the point of the change: two sessions in one repository used to give
+    // this heading the same text twice.
+    const firstName = first.title!.text;
+    const latestName = latest.title!.text;
     expect(await screen.findByText("Reading session…")).not.toBeNull();
-    expect(screen.queryByRole("heading", { name: "ContextTrace" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: firstName })).toBeNull();
 
     latestDetail.resolve(demoDetail(latest.id));
     latestContext.resolve(demoContext());
-    expect(await screen.findByRole("heading", { name: "atlas-dashboard" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: latestName })).not.toBeNull();
 
     firstDetail.resolve(demoDetail(first.id));
     firstContext.resolve(demoContext());
-    await waitFor(() => expect(screen.getByRole("heading", { name: "atlas-dashboard" })).not.toBeNull());
-    expect(screen.queryByRole("heading", { name: "ContextTrace" })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("heading", { name: latestName })).not.toBeNull());
+    expect(screen.queryByRole("heading", { name: firstName })).toBeNull();
   });
 
   it("keeps the latest turn context when responses arrive out of order", async () => {
@@ -455,6 +467,43 @@ describe("desktop accessibility and state handling", () => {
     );
   });
 
+  it("tells two sessions in one repository apart by name, branch and title provenance", async () => {
+    // The complaint this answers: every row in a repository read
+    // `contexttrace · a1b2c3d4`, so the catalog could not be scanned. Both
+    // sessions below share a project on purpose.
+    const [titled, untitled] = [
+      { ...demoSessions[0], id: "same-repo-one" },
+      {
+        ...demoSessions[0],
+        id: "same-repo-two",
+        title: { text: "Ship the notification delivery fix", source: "firstPrompt" as const },
+        gitBranch: "fix/toasts",
+      },
+    ];
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([titled, untitled]));
+
+    render(<App />);
+
+    const rows = await screen.findAllByRole("button", { name: /Codex session:/ });
+    expect(rows[0].textContent).toContain("Trace the 38k-token tool result in the planner");
+    expect(rows[1].textContent).toContain("Ship the notification delivery fix");
+    expect(rows[1].textContent).toContain("fix/toasts");
+    // Both name a session; only one is the agent's own summary of it, and the
+    // mark is what stops the weaker claim from reading as the stronger.
+    expect(rows[0].querySelector(".title-source")).toBeNull();
+    expect(rows[1].querySelector(".title-source")).not.toBeNull();
+  });
+
+  it("falls back to the project when a session has no name of its own", async () => {
+    const nameless: SessionSummary = { ...demoSessions[0], title: null, gitBranch: null };
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([nameless]));
+
+    render(<App />);
+
+    const row = await screen.findByRole("button", { name: /Codex session:/ });
+    expect(row.querySelector(".session-title")!.textContent).toBe("ContextTrace");
+  });
+
   it("keeps a same-id collision across agents from cross-selecting or cross-loading", async () => {
     const codexSession: SessionSummary = {
       ...demoSessions[0],
@@ -473,10 +522,10 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
 
     const codexRow = await screen.findByRole("button", {
-      name: /Codex session: collision-codex-project/,
+      name: /Codex session: .*collision-codex-project/,
     });
     const claudeRow = await screen.findByRole("button", {
-      name: /Claude Code session: collision-claude-project/,
+      name: /Claude Code session: .*collision-claude-project/,
     });
 
     // The first session in the page is selected by default; only its row
@@ -654,6 +703,43 @@ describe('notifications', () => {
     await waitFor(() => expect(mockedApi.markNotificationsRead).toHaveBeenCalledWith(['demo-notification-compaction']));
     await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith('codex', demoSessions[0].id, 18));
     expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+  });
+
+  it('says which findings reached the OS and why the others did not', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Notifications, 2 unread' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+
+    // The demo feed carries one failed OS delivery and one that was never
+    // requested. A row that says nothing at all is what let 38 undelivered
+    // toasts read as delivered, so the failure has to be on the row.
+    expect(drawer.textContent).toContain('OS failed');
+    expect(drawer.textContent).toContain('no OS notification was sent in demo mode');
+    expect(drawer.querySelectorAll('.os-delivered')).toHaveLength(0);
+  });
+
+  it('reports a real outcome for a test notification instead of assuming one', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+
+    // Deliverability, not the plugin's permission answer: on Windows that is
+    // `granted` whatever the truth is, so the obstacle is the honest half.
+    expect(drawer.querySelector('.notification-health')!.textContent).toContain('unsupported');
+    expect(screen.getByText(/OS notifications cannot be delivered from this build/)).not.toBeNull();
+
+    mockedApi.sendTestNotification.mockResolvedValue({
+      delivered: false,
+      reason: 'no installed shortcut carries the app id dev.contexttrace.desktop',
+      deliverability: { state: 'unregistered', appId: 'dev.contexttrace.desktop', exeDir: null },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
+
+    expect(await screen.findByText(/no installed shortcut carries the app id/)).not.toBeNull();
   });
 
   it('requires an explicit local-monitoring onboarding decision', async () => {

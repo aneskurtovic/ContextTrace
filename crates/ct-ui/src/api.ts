@@ -13,6 +13,7 @@ import type {
   CompactionItemDisposition,
   ContextDetail,
   CostReport,
+  Deliverability,
   GhostItem,
   DoctorReport,
   ExportOutcome,
@@ -23,17 +24,20 @@ import type {
   NotificationRuleId,
   NotificationSettings,
   NotificationStatus,
+  OsDelivery,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
   SessionDetail,
   SessionPage,
   SessionSummary,
+  SessionTitle,
   SessionUpdatedEvent,
   StartupSummary,
   InstructionFileComparison,
   InstructionFileReport,
   TemporalGhost,
+  TestNotificationResult,
   ThreadRole,
   ToolDelta,
   TurnDiff,
@@ -109,6 +113,19 @@ function isThreadRole(value: unknown): value is ThreadRole {
   );
 }
 
+const titleSources = new Set(['agentGenerated', 'firstPrompt']);
+
+/** A title must state where it came from, or the row cannot say. */
+function isTitle(value: unknown): value is SessionTitle | null {
+  return (
+    value === null ||
+    (isRecord(value) &&
+      typeof value.text === 'string' &&
+      typeof value.source === 'string' &&
+      titleSources.has(value.source))
+  );
+}
+
 function isSession(value: unknown): value is SessionSummary {
   return (
     isRecord(value) &&
@@ -118,6 +135,8 @@ function isSession(value: unknown): value is SessionSummary {
     typeof value.path === "string" &&
     typeof value.sizeBytes === "number" &&
     isStringOrNull(value.project) &&
+    isTitle(value.title) &&
+    isStringOrNull(value.gitBranch) &&
     isStringOrNull(value.startedAt) &&
     isStringOrNull(value.lastActivity) &&
     isThreadRole(value.threadRole)
@@ -768,6 +787,39 @@ function asNotificationSettings(value: unknown): NotificationSettings {
   return value as unknown as NotificationSettings;
 }
 
+/**
+ * A deliverability state must carry the app id it describes, except for
+ * `unsupported`, where there is no identity to name. Checked rather than
+ * trusted for the same reason as everything else here: the panel renders this
+ * as a claim about whether the user will ever see a toast.
+ */
+function isDeliverability(value: unknown): value is Deliverability {
+  if (!isRecord(value) || typeof value.state !== 'string') return false;
+  switch (value.state) {
+    case 'ready':
+      return typeof value.appId === 'string';
+    case 'unregistered':
+      return typeof value.appId === 'string' && isStringOrNull(value.exeDir);
+    case 'unsupported':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isOsDelivery(value: unknown): value is OsDelivery {
+  if (!isRecord(value) || typeof value.status !== 'string') return false;
+  switch (value.status) {
+    case 'notRequested':
+    case 'delivered':
+      return true;
+    case 'failed':
+      return typeof value.reason === 'string';
+    default:
+      return false;
+  }
+}
+
 function asNotificationStatus(value: unknown): NotificationStatus {
   if (
     !isRecord(value) ||
@@ -775,11 +827,25 @@ function asNotificationStatus(value: unknown): NotificationStatus {
     typeof value.osPermission !== 'string' ||
     !notificationPermissions.has(value.osPermission) ||
     !isStringOrNull(value.lastSuccessfulPoll) ||
-    !isStringOrNull(value.error)
+    !isStringOrNull(value.error) ||
+    !isDeliverability(value.deliverability) ||
+    !isStringOrNull(value.obstacle)
   ) {
     throw malformed('notification status');
   }
   return value as unknown as NotificationStatus;
+}
+
+function asTestNotificationResult(value: unknown): TestNotificationResult {
+  if (
+    !isRecord(value) ||
+    typeof value.delivered !== 'boolean' ||
+    !isStringOrNull(value.reason) ||
+    !isDeliverability(value.deliverability)
+  ) {
+    throw malformed('a test notification result');
+  }
+  return value as unknown as TestNotificationResult;
 }
 
 function asNotificationRecord(value: unknown): NotificationRecord {
@@ -799,6 +865,7 @@ function asNotificationRecord(value: unknown): NotificationRecord {
     !isStringOrNull(value.readAt) ||
     !isStringOrNull(value.dismissedAt) ||
     typeof value.catchUp !== 'boolean' ||
+    !isOsDelivery(value.osDelivery) ||
     !isRecord(value.location) ||
     typeof value.location.agent !== 'string' ||
     !agents.has(value.location.agent) ||
@@ -1150,6 +1217,24 @@ export function updateNotificationSettings(
 export function getNotificationStatus(): Promise<NotificationStatus> {
   if (!inTauri()) return Promise.resolve({ ...demoNotificationStatus });
   return invoke<unknown>('get_notification_status').then(asNotificationStatus);
+}
+
+/**
+ * Ask for one toast now and report what happened to it.
+ *
+ * Without the desktop bridge there is no OS to ask, and saying "delivered"
+ * would be the same fabrication this whole command exists to remove — so the
+ * demo path answers `unsupported`, plainly undelivered.
+ */
+export function sendTestNotification(): Promise<TestNotificationResult> {
+  if (!inTauri()) {
+    return Promise.resolve({
+      delivered: false,
+      reason: 'The desktop bridge is not available, so no notification was sent.',
+      deliverability: { state: 'unsupported' },
+    });
+  }
+  return invoke<unknown>('send_test_notification').then(asTestNotificationResult);
 }
 
 export function listNotifications(

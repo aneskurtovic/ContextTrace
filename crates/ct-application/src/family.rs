@@ -68,6 +68,8 @@ mod tests {
             path: format!("{id}.jsonl"),
             size_bytes: 1,
             project: None,
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: role,

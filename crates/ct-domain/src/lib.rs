@@ -53,7 +53,8 @@ pub use model::notification::{
 };
 pub use model::provenance::{Confidence, Provenance, SourceRef};
 pub use model::session::{
-    AgentKind, AgentSession, SessionDescriptor, SessionMetadata, ThreadRole, Turn,
+    AgentKind, AgentSession, SessionDescriptor, SessionMetadata, SessionTitle, ThreadRole,
+    TitleSource, Turn,
 };
 pub use model::tokens::{TokenCount, TokenUsage};
 pub use ports::{ContentHasher, NotificationStore};

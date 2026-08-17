@@ -496,6 +496,8 @@ mod tests {
             path: source_path.display().to_string(),
             size_bytes: 0,
             project: None,
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Root,

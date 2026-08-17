@@ -44,6 +44,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\contexttrace.jsonl",
     sizeBytes: 3_829_760,
     project: "C:\\work\\ContextTrace",
+    title: { text: "Trace the 38k-token tool result in the planner", source: "agentGenerated" },
+    gitBranch: "main",
     startedAt: ago(5),
     lastActivity: ago(0.4),
     threadRole: root,
@@ -54,6 +56,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.claude\\projects\\atlas\\session.jsonl",
     sizeBytes: 1_677_721,
     project: "C:\\work\\atlas-dashboard",
+    title: { text: "Why does the dashboard reload twice on login?", source: "firstPrompt" },
+    gitBranch: "fix/double-reload",
     startedAt: ago(30),
     lastActivity: ago(23),
     threadRole: root,
@@ -64,6 +68,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\search.jsonl",
     sizeBytes: 812_413,
     project: "C:\\work\\semantic-search",
+    title: { text: "Add hybrid ranking to the query planner", source: "agentGenerated" },
+    gitBranch: "feat/hybrid-ranking",
     startedAt: ago(51),
     lastActivity: ago(47),
     threadRole: root,
@@ -74,6 +80,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.claude\\projects\\payments\\session.jsonl",
     sizeBytes: 7_130_317,
     project: "C:\\work\\payment-service",
+    title: { text: "Refund webhook retries are duplicating charges", source: "firstPrompt" },
+    gitBranch: "main",
     startedAt: ago(76),
     lastActivity: ago(70),
     threadRole: root,
@@ -84,6 +92,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\compiler.jsonl",
     sizeBytes: 2_075_648,
     project: "C:\\work\\compiler-lab",
+    title: { text: "Constant folding pass drops side effects", source: "agentGenerated" },
+    gitBranch: "spike/const-fold",
     startedAt: ago(110),
     lastActivity: ago(99),
     threadRole: root,
@@ -99,6 +109,10 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\contexttrace-subagent.jsonl",
     sizeBytes: 214_030,
     project: "C:\\work\\ContextTrace",
+    // A subagent's name is the brief it was handed, which is why its title
+    // reads as an instruction rather than as a summary.
+    title: { text: "Read the planner's tool results and report the largest", source: "firstPrompt" },
+    gitBranch: "main",
     startedAt: ago(5),
     lastActivity: ago(4.6),
     threadRole: { kind: "subagent", parent: "0198fce2e48a7b12" },
@@ -113,6 +127,10 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.claude\\projects\\atlas\\quick-question.jsonl",
     sizeBytes: 48_216,
     project: "C:\\work\\atlas-dashboard",
+    // Untitled on purpose. A session too brief to have earned a name is a real
+    // state, and the row has to stay readable in it.
+    title: null,
+    gitBranch: null,
     startedAt: ago(2),
     lastActivity: ago(1.9),
     threadRole: root,
@@ -144,6 +162,11 @@ export const demoNotificationStatus: NotificationStatus = {
   osPermission: 'prompt',
   lastSuccessfulPoll: null,
   error: null,
+  // Without the desktop bridge there is no OS to deliver through, and the demo
+  // must not imply otherwise -- the whole point of labelling demo data is that
+  // it never poses as a working local install.
+  deliverability: { state: 'unsupported' },
+  obstacle: 'OS notifications are supported on Windows only.',
 };
 
 export const demoNotificationPage: NotificationPage = {
@@ -163,6 +186,7 @@ export const demoNotificationPage: NotificationPage = {
       readAt: null,
       dismissedAt: null,
       catchUp: false,
+      osDelivery: { status: 'failed', reason: 'no OS notification was sent in demo mode' },
       location: {
         agent: 'codex',
         sessionId: demoSessions[0].id,
@@ -184,6 +208,7 @@ export const demoNotificationPage: NotificationPage = {
       readAt: null,
       dismissedAt: null,
       catchUp: true,
+      osDelivery: { status: 'notRequested' },
       location: {
         agent: 'codex',
         sessionId: demoSessions[0].id,

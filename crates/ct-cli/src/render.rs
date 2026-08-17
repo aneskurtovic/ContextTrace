@@ -17,7 +17,7 @@ use ct_domain::services::DerivedRatio;
 use ct_domain::{
     AgentKind, AgentSession, ArchiveEntry, ArchiveIntegrity, CompactionDiff,
     CompactionItemDisposition, ContextSnapshot, Contributor, FilteredView, RedactionMode,
-    SessionDescriptor, ThreadRole, TokenCount,
+    SessionDescriptor, ThreadRole, TitleSource, TokenCount,
 };
 
 /// Every local path this build touches, split by whether it is read or written.
@@ -48,6 +48,21 @@ pub fn roots(app: &ContextTrace, archive_root: &str) {
     println!("Nothing leaves this machine either way.");
 }
 
+/// The last component of a project path, for a column narrow enough to leave
+/// room for the session's name. The full path is still one `ct inspect` away,
+/// and `--json` carries it untouched.
+fn project_leaf(project: Option<&str>) -> &str {
+    let Some(project) = project else {
+        return "-";
+    };
+    project
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|leaf| !leaf.is_empty())
+        .unwrap_or(project)
+}
+
 pub fn sessions(list: &[SessionDescriptor], json: bool) {
     if json {
         print_json(list);
@@ -59,12 +74,17 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
         return;
     }
 
+    // PROJECT is bounded so SESSION can be the free-flowing last column. The
+    // project answers "where did this run", which repeats across every row in
+    // a repository; the name answers "which one is this", which is the
+    // question a catalog is read to answer.
     println!(
-        "{}  {}  {}  {}  PROJECT",
+        "{}  {}  {}  {}  {}  SESSION",
         pad("ID", 10),
         pad("AGENT", 12),
         pad("LAST ACTIVITY", 18),
-        rpad("SIZE", 9)
+        rpad("SIZE", 9),
+        pad("PROJECT", 24)
     );
 
     for d in list {
@@ -85,13 +105,24 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
                 format!("  [subagent of {parent_short}]")
             }
         };
+        // A first prompt is marked, not silently presented as a title: it is
+        // whatever the user happened to type first, not a description of the
+        // session, and the two must not read alike.
+        let name = match &d.title {
+            Some(title) => match title.source {
+                TitleSource::AgentGenerated => ellipsize(&title.text, 70),
+                TitleSource::FirstPrompt => format!("> {}", ellipsize(&title.text, 68)),
+            },
+            None => "-".into(),
+        };
         println!(
-            "{}  {}  {}  {}  {}{}",
+            "{}  {}  {}  {}  {}  {}{}",
             pad(&short_id, 10),
             pad(d.agent.label(), 12),
             pad(&when, 18),
             rpad(&bytes(d.size_bytes), 9),
-            ellipsize(d.project.as_deref().unwrap_or("-"), 60),
+            pad(&ellipsize(project_leaf(d.project.as_deref()), 24), 24),
+            name,
             marker
         );
     }
