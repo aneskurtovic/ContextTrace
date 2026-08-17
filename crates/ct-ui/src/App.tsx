@@ -30,6 +30,8 @@ import type {
   ContextDetail,
   ContextItemSummary,
   ContributorSummary,
+  CorpusProgress,
+  CorpusReport,
   CostReport,
   DoctorReport,
   ExportOutcome,
@@ -2344,6 +2346,219 @@ function EvidenceTools({
   );
 }
 
+/** A labelled proportion bar, reusing the spend-bar shape already in the app. */
+function CorpusBars({
+  label,
+  rows,
+}: {
+  label: string;
+  rows: Array<{ name: string; value: number; note: string }>;
+}) {
+  const largest = Math.max(1, ...rows.map((row) => row.value));
+  return (
+    <div className="corpus-bars" aria-label={label}>
+      <h3>{label}</h3>
+      {rows.map((row) => (
+        <div className="corpus-bar-row" key={row.name}>
+          <span title={row.name}>{row.name}</span>
+          <div>
+            <i style={{ width: `${Math.max(2, (row.value / largest) * 100)}%` }} />
+          </div>
+          <strong>{row.note}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * What the whole local corpus adds up to.
+ *
+ * Every other view in this app is scoped to one session. This one exists for
+ * the questions a single session cannot answer -- where the month went, which
+ * tool returns the most text, how close to the ceiling these sessions run --
+ * and it states its own limits in the same breath, because a large share of
+ * any real corpus is unpriced and unmeasured.
+ */
+function CorpusPanel({ demoData }: { demoData: boolean }) {
+  const [report, setReport] = useState<CorpusReport | null>(null);
+  const [progress, setProgress] = useState<CorpusProgress | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback((refresh: boolean) => {
+    setLoading(true);
+    setError(null);
+    setProgress(null);
+    api.getCorpus(refresh)
+      .then(setReport)
+      .catch((problem: unknown) => setError(errorMessage(problem)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load(false);
+    let unlisten: (() => void) | undefined;
+    api.listenForCorpusProgress(setProgress).then((stop) => {
+      unlisten = stop;
+    });
+    return () => unlisten?.();
+  }, [load]);
+
+  if (loading && !report) {
+    return (
+      <div className="workspace-centered">
+        <Spinner
+          label={
+            progress
+              ? `Reading session ${progress.done} of ${progress.total}…`
+              : "Reading every local session…"
+          }
+        />
+      </div>
+    );
+  }
+  if (error) return <p className="empty-inline">{error}</p>;
+  if (!report) return null;
+
+  const pressure = report.pressure;
+  const measuredPressure =
+    pressure.comfortable + pressure.warming + pressure.tight + pressure.critical;
+
+  return (
+    <main className="workspace corpus" aria-busy={loading}>
+      {/* Not `.workspace-header`, which the redesign hides in favour of the
+          topbar breadcrumb -- and that breadcrumb names the selected session,
+          which is exactly what this view is not about. */}
+      <header className="corpus-header">
+        <div>
+          <span className="eyebrow">Every local session</span>
+          <h1>{report.sessions.toLocaleString()} sessions</h1>
+          <p>
+            {report.turns.toLocaleString()} turns · {report.events.toLocaleString()} events ·{" "}
+            {report.cached ? "from the last sweep" : "swept just now"}
+            {demoData && " · fabricated"}
+          </p>
+        </div>
+        <button type="button" className="corpus-refresh" onClick={() => load(true)} disabled={loading}>
+          {loading ? "Sweeping…" : "Re-sweep"}
+        </button>
+      </header>
+
+      <div className="metrics">
+        <Metric label="Output tokens" value={formatTokens(report.outputTokens)} note="billed output across every session" />
+        <Metric
+          label="Priced spend"
+          value={`$${(report.costMicros / 1_000_000).toFixed(2)}`}
+          note={
+            report.unpricedTurns
+              ? `a floor — ${report.unpricedTurns.toLocaleString()} turns had no local rate`
+              : "every turn priced"
+          }
+          accent
+        />
+        <Metric
+          label="Tool calls"
+          value={report.toolCalls.toLocaleString()}
+          note={`${report.toolErrors.toLocaleString()} reported an error`}
+        />
+        <Metric
+          label="Compactions"
+          value={report.compactions.toLocaleString()}
+          note={
+            // "reclaimed 0" and "nothing recorded a size" are different
+            // statements, and a Codex-only corpus is always the second.
+            report.compactionsMeasured
+              ? `${formatTokens(report.reclaimedTokens)} reclaimed across ${report.compactionsMeasured} measured`
+              : "none recorded a before/after size"
+          }
+        />
+      </div>
+
+      {(report.unreadable > 0 || report.unrecognisedEvents > 0) && (
+        <p className="corpus-caveat" role="status">
+          {report.unreadable > 0 &&
+            `${report.unreadable} session(s) could not be parsed and are excluded from every figure above. `}
+          {report.unrecognisedEvents > 0 &&
+            `${report.unrecognisedEvents.toLocaleString()} event(s) were not recognised by this build.`}
+        </p>
+      )}
+
+      <section className="corpus-grid">
+        <CorpusBars
+          label="Turns by project"
+          rows={report.byProject.map((project) => ({
+            name: projectName(project.project),
+            value: project.turns,
+            note: `${project.turns.toLocaleString()} turns · $${(project.costMicros / 1_000_000).toFixed(2)}`,
+          }))}
+        />
+        <CorpusBars
+          label="Text returned by tool"
+          rows={report.byTool.map((tool) => ({
+            name: tool.tool,
+            value: tool.resultChars,
+            // Characters, not tokens: no estimator ran during the sweep, and
+            // labelling these as tokens would invent precision.
+            note: `${formatTokens(tool.resultChars)} chars · ${tool.calls.toLocaleString()} calls${
+              tool.errors ? ` · ${tool.errors} failed` : ""
+            }`,
+          }))}
+        />
+        <CorpusBars
+          label="Turns per day"
+          rows={report.byDay.slice(-14).map((day) => ({
+            name: day.day,
+            value: day.turns,
+            note: `${day.turns.toLocaleString()} turns · ${day.sessions} sessions`,
+          }))}
+        />
+        <div className="corpus-bars" aria-label="Peak context pressure">
+          <h3>Peak context pressure</h3>
+          {[
+            { name: "under 50%", value: pressure.comfortable },
+            { name: "50–75%", value: pressure.warming },
+            { name: "75–90%", value: pressure.tight },
+            { name: "over 90%", value: pressure.critical },
+          ].map((band) => (
+            <div className="corpus-bar-row" key={band.name}>
+              <span>{band.name}</span>
+              <div>
+                <i style={{ width: `${Math.max(2, (band.value / Math.max(1, measuredPressure)) * 100)}%` }} />
+              </div>
+              <strong>{band.value}</strong>
+            </div>
+          ))}
+          {/* Named, not omitted: the share of a corpus this question cannot be
+              asked of is part of the answer, and it is usually large. */}
+          <p className="corpus-note">
+            {pressure.unmeasured} of {report.sessions} sessions never recorded both a prompt size
+            and a context window, so no band applies to them.
+          </p>
+        </div>
+      </section>
+
+      <section className="corpus-ranked">
+        <h3>Sessions that ran closest to their ceiling</h3>
+        <ol>
+          {report.largestSessions.map((rank) => (
+            <li key={`${rank.agent}:${rank.id}`}>
+              <AgentMark agent={rank.agent} />
+              <span>
+                <strong>{rank.title ?? projectName(rank.project)}</strong>
+                <small>
+                  {projectName(rank.project)} · {shortId(rank.id)} · {rank.turns} turns
+                </small>
+              </span>
+              <b>{formatTokens(rank.peakPromptTokens)}</b>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </main>
+  );
+}
+
 const TRANSCRIPT_KIND_LABELS: Record<TranscriptKind, string> = {
   user: "You",
   assistant: "Agent",
@@ -3256,6 +3471,8 @@ export default function App() {
   const [loadingResidual, setLoadingResidual] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
+  /** Whether the workspace is showing the corpus instead of one session. */
+  const [corpusOpen, setCorpusOpen] = useState(false);
   // Which session the turn-comparison panel's right side names, when it is
   // not the currently open session's own slider turn. `crossTurnInput` stays
   // a string rather than a number so the field can sit empty mid-edit
@@ -4319,6 +4536,19 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-caption"><span>Sessions</span><span>{sessionTotal}</span></div>
 
+        {/* The one control that leaves a single session behind. Above the
+            list rather than in the tab strip, because those tabs are all
+            views *of* the selected session and this is not. */}
+        <button
+          type="button"
+          className={corpusOpen ? "corpus-entry active" : "corpus-entry"}
+          aria-pressed={corpusOpen}
+          onClick={() => setCorpusOpen((open) => !open)}
+        >
+          <span aria-hidden="true">◫</span>
+          <span>{corpusOpen ? "Back to this session" : "All sessions at once"}</span>
+        </button>
+
         <div className="search-box">
           <span aria-hidden="true">⌕</span>
           <input
@@ -4454,6 +4684,9 @@ export default function App() {
         className={demoData ? "main-area demo-mode" : "main-area"}
         aria-busy={loadingDetail}
       >
+        {/* The tab strip names views of the selected session, so it is absent
+            while the corpus is open rather than sitting there disabled. */}
+        {!corpusOpen && (
         <nav className="workspace-tabs" aria-label="Session views" role="tablist">
           {WORKSPACE_VIEWS.map((view) => (
             <button
@@ -4477,6 +4710,7 @@ export default function App() {
             <button type="button" onClick={() => stepTurn(1)} disabled={!canStepForward} aria-label="Next measured turn">›</button>
           </div>
         </nav>
+        )}
 
         {demoData && (
           <div className="demo-banner" role="status">
@@ -4499,7 +4733,9 @@ export default function App() {
         {startup?.warnings.map((warning) => (
           <div className="warning-banner" key={warning} role="status">{warning}</div>
         ))}
-        {loadingDetail && !visibleDetail ? (
+        {corpusOpen ? (
+          <CorpusPanel demoData={demoData} />
+        ) : loadingDetail && !visibleDetail ? (
           <div className="workspace-centered">
             <Spinner label="Reading session…" />
           </div>

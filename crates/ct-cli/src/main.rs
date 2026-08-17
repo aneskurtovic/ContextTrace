@@ -137,6 +137,18 @@ enum Command {
         json: bool,
     },
 
+    /// Summarise every local session at once
+    ///
+    /// Parses the whole corpus in one pass -- totals, per-project and per-day
+    /// activity, context-pressure bands, the tools returning the most text,
+    /// and the sessions that ran closest to their window. Cost is summed from
+    /// the turns a local rate could price, and the rest are reported as
+    /// unpriced rather than dropped.
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Read a session back as the conversation it was
     ///
     /// Shows what the model actually read, in log order: messages, reasoning,
@@ -710,6 +722,11 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         } => {
             let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             render::inspect(&session, &resolved, limit, raw, json)?;
+        }
+
+        Command::Stats { json } => {
+            let report = app.sweep_corpus(|_done, _total| {});
+            render::stats(&report, json);
         }
 
         Command::Transcript {

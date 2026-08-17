@@ -19,6 +19,7 @@ use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tauri::{AppHandle, Emitter};
 
 pub mod notifications;
 
@@ -137,6 +138,18 @@ pub struct AppState {
     archive: Option<ct_runtime::FileArchiveStore>,
     sessions: Mutex<BoundedCache<SessionKey, Arc<CachedSession>>>,
     lifecycles: Mutex<BoundedCache<SessionKey, Arc<LifecycleSweep>>>,
+    /// The last corpus sweep, beside the corpus it was computed from.
+    ///
+    /// One entry, not a bounded cache: there is exactly one local corpus, and
+    /// a sweep of it takes seconds. Re-running that every time the view is
+    /// opened is the difference between a summary people check and one they
+    /// avoid.
+    corpus: Mutex<
+        Option<(
+            Vec<ct_domain::SessionFingerprint>,
+            ct_application::CorpusReport,
+        )>,
+    >,
 }
 
 struct CachedSession {
@@ -191,6 +204,7 @@ impl AppState {
             archive,
             sessions: Mutex::new(BoundedCache::new(SESSION_CACHE_CAPACITY)),
             lifecycles: Mutex::new(BoundedCache::new(LIFECYCLE_CACHE_CAPACITY)),
+            corpus: Mutex::new(None),
         }
     }
 
@@ -787,6 +801,64 @@ impl AppState {
             .find(|diff| diff.source().line_no == line_no)
             .ok_or_else(|| format!("no compaction recorded at line {line_no} in this session"))?;
         Ok(CompactionDiffSummary::from(diff))
+    }
+
+    /// Summarise the whole local corpus, reusing the last sweep when nothing
+    /// on disk has changed.
+    ///
+    /// The cache is keyed by a fingerprint of every discovered session --
+    /// path, size and last activity -- rather than by a timestamp. Discovery
+    /// is the cheap half of the sweep (a `stat` and a short read per file), so
+    /// re-running it to decide whether the expensive half is still valid costs
+    /// a fraction of what it saves, and it notices a session that changed
+    /// without growing.
+    fn corpus(&self, refresh: bool, app: &AppHandle) -> Result<CorpusSummary, String> {
+        let fingerprint = self.corpus_fingerprint();
+        if !refresh {
+            if let Some(cached) = self
+                .corpus
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref()
+                .filter(|(seen, _)| *seen == fingerprint)
+            {
+                return Ok(CorpusSummary::from_cached(&cached.1, true));
+            }
+        }
+
+        let report = self.app.sweep_corpus(|done, total| {
+            let _ = app.emit(
+                "contexttrace://corpus-progress",
+                CorpusProgress { done, total },
+            );
+        });
+        let summary = CorpusSummary::from_cached(&report, false);
+        *self
+            .corpus
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
+        Ok(summary)
+    }
+
+    /// What the corpus looked like when a sweep ran.
+    fn corpus_fingerprint(&self) -> Vec<ct_domain::SessionFingerprint> {
+        let mut fingerprints: Vec<_> = self
+            .app
+            .list_sessions(&SessionFilter {
+                agent: None,
+                project: None,
+                since: None,
+                limit: None,
+            })
+            .into_iter()
+            .map(|descriptor| ct_domain::SessionFingerprint {
+                path: descriptor.path,
+                size_bytes: descriptor.size_bytes,
+                last_activity: descriptor.last_activity,
+            })
+            .collect();
+        fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+        fingerprints
     }
 
     /// One window of the session's conversation.
@@ -1738,6 +1810,35 @@ impl From<SessionDescriptor> for SessionSummary {
             started_at: value.started_at.map(|time| time.to_rfc3339()),
             last_activity: value.last_activity.map(|time| time.to_rfc3339()),
             thread_role: value.thread_role.into(),
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CorpusProgress {
+    done: usize,
+    total: usize,
+}
+
+/// The corpus sweep, plus whether this answer came from the cache.
+///
+/// `cached` is presented rather than hidden because the two are different
+/// claims about freshness, and a summary of a corpus that changed since it was
+/// computed should say so rather than look identical to one that did not.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CorpusSummary {
+    #[serde(flatten)]
+    report: ct_application::CorpusReport,
+    cached: bool,
+}
+
+impl CorpusSummary {
+    fn from_cached(report: &ct_application::CorpusReport, cached: bool) -> Self {
+        Self {
+            report: report.clone(),
+            cached,
         }
     }
 }
@@ -2780,6 +2881,20 @@ pub fn get_context(
     state: tauri::State<'_, AppState>,
 ) -> Result<ContextDetail, String> {
     state.context(parse_agent(&agent)?, &id, turn)
+}
+
+/// Summarise every local session at once.
+///
+/// Runs on the command's own thread, which Tauri dispatches off the UI thread,
+/// and emits progress as it goes -- a sweep measured at 3.2 seconds over 134
+/// local sessions is long enough that a silent wait reads as a hang.
+#[tauri::command]
+pub fn get_corpus(
+    refresh: Option<bool>,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<CorpusSummary, String> {
+    state.corpus(refresh.unwrap_or(false), &app)
 }
 
 #[tauri::command]

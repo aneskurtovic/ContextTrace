@@ -6,6 +6,7 @@ import {
   demoCost,
   demoArchiveHolding,
   demoContext,
+  demoCorpus,
   demoDetail,
   demoDoctor,
   demoInstructionFiles,
@@ -35,6 +36,8 @@ vi.mock("./api", () => ({
   searchSessions: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
+  getCorpus: vi.fn(),
+  listenForCorpusProgress: vi.fn(),
   getTranscript: vi.fn(),
   getTranscriptEntry: vi.fn(),
   runDoctor: vi.fn(),
@@ -106,6 +109,8 @@ beforeEach(() => {
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
   mockedApi.inspectSession.mockImplementation(async (_agent, id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
+  mockedApi.getCorpus.mockResolvedValue(demoCorpus);
+  mockedApi.listenForCorpusProgress.mockResolvedValue(() => undefined);
   mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset = 0, limit = 40) =>
     demoTranscript(offset, limit),
   );
@@ -696,6 +701,42 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.keyDown(actions.at(-1)!, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull());
     expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe("corpus overview", () => {
+  it("summarises every session and states what it could not measure", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /All sessions at once/ }));
+
+    expect(await screen.findByRole("heading", { name: "134 sessions" })).not.toBeNull();
+    // A cost total without its unpriced count reads as complete when it is a
+    // floor, and a corpus with no measured compaction is not a corpus where
+    // compaction freed nothing. Both caveats have to be on screen.
+    expect(screen.getByText(/2,046 turns had no local rate/)).not.toBeNull();
+    expect(screen.getByText(/none recorded a before\/after size/)).not.toBeNull();
+    expect(
+      screen.getByText(/53 of 134 sessions never recorded both a prompt size/),
+    ).not.toBeNull();
+
+    // The session-scoped tab strip is meaningless here and is gone, not
+    // disabled.
+    expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
+  });
+
+  it("reuses the last sweep until asked to re-run it", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /All sessions at once/ }));
+    await screen.findByRole("heading", { name: "134 sessions" });
+
+    expect(mockedApi.getCorpus).toHaveBeenCalledWith(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-sweep" }));
+
+    await waitFor(() => expect(mockedApi.getCorpus).toHaveBeenCalledWith(true));
   });
 });
 

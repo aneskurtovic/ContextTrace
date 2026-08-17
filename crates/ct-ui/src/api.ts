@@ -12,6 +12,8 @@ import type {
   CompactionDiffUnavailableReason,
   CompactionItemDisposition,
   ContextDetail,
+  CorpusProgress,
+  CorpusReport,
   CostReport,
   Deliverability,
   GhostItem,
@@ -51,6 +53,7 @@ import {
   demoArchiveVerification,
   demoCompactionDiff,
   demoContext,
+  demoCorpus,
   demoDetail,
   demoDoctor,
   demoLifecycle,
@@ -145,6 +148,44 @@ function isSession(value: unknown): value is SessionSummary {
     isStringOrNull(value.lastActivity) &&
     isThreadRole(value.threadRole)
   );
+}
+
+function isPressureBands(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    ['comfortable', 'warming', 'tight', 'critical', 'unmeasured'].every(
+      (band) => typeof value[band] === 'number',
+    )
+  );
+}
+
+function asCorpus(value: unknown): CorpusReport {
+  if (
+    !isRecord(value) ||
+    typeof value.sessions !== 'number' ||
+    typeof value.turns !== 'number' ||
+    typeof value.events !== 'number' ||
+    typeof value.outputTokens !== 'number' ||
+    typeof value.unreadable !== 'number' ||
+    typeof value.costMicros !== 'number' ||
+    // Checked, not assumed: a cost total that arrived without its unpriced
+    // count would render as a complete figure when it is a floor.
+    typeof value.unpricedTurns !== 'number' ||
+    typeof value.compactions !== 'number' ||
+    typeof value.compactionsMeasured !== 'number' ||
+    typeof value.cached !== 'boolean' ||
+    !isPressureBands(value.pressure) ||
+    !Array.isArray(value.byAgent) ||
+    !Array.isArray(value.byProject) ||
+    !Array.isArray(value.byDay) ||
+    !Array.isArray(value.byTool) ||
+    !Array.isArray(value.models) ||
+    !Array.isArray(value.largestSessions) ||
+    !Array.isArray(value.costliestSessions)
+  ) {
+    throw malformed('the corpus summary');
+  }
+  return value as unknown as CorpusReport;
 }
 
 const transcriptKinds = new Set([
@@ -561,6 +602,31 @@ export function inspectSession(agent: Agent, id: string): Promise<SessionDetail>
 export function getContext(agent: Agent, id: string, turn?: number): Promise<ContextDetail> {
   if (!inTauri()) return Promise.resolve(demoContext(turn));
   return invoke<unknown>("get_context", { id, agent, turn: turn ?? null }).then(asContext);
+}
+
+/**
+ * Summarise every local session at once.
+ *
+ * Seconds on a first run and instant afterwards, because the backend reuses
+ * the last sweep while the corpus fingerprint is unchanged. `refresh` forces
+ * a re-parse.
+ */
+export function getCorpus(refresh = false): Promise<CorpusReport> {
+  if (!inTauri()) return Promise.resolve(structuredClone(demoCorpus));
+  return invoke<unknown>('get_corpus', { refresh }).then(asCorpus);
+}
+
+/** Progress of a running sweep, so seconds of work are not silent. */
+export async function listenForCorpusProgress(
+  callback: (progress: CorpusProgress) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri()) return () => undefined;
+  return listen<unknown>('contexttrace://corpus-progress', (event) => {
+    const payload = event.payload;
+    if (isRecord(payload) && typeof payload.done === 'number' && typeof payload.total === 'number') {
+      callback(payload as unknown as CorpusProgress);
+    }
+  });
 }
 
 /** One window of a session's conversation. Paged: a session can be 6.8 MB. */

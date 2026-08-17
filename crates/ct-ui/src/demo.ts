@@ -7,6 +7,7 @@ import type {
   CompactionDiff,
   ContextDetail,
   ContextItemSummary,
+  CorpusReport,
   CostReport,
   DoctorReport,
   GrowthPoint,
@@ -1239,3 +1240,72 @@ export function demoTranscriptEntry(index: number): TranscriptEntry {
     truncated: false,
   };
 }
+
+/**
+ * A fabricated corpus summary.
+ *
+ * Shaped after the real sweep of this machine rather than invented from
+ * nothing: two agents, a handful of projects with one dominating, a long tail
+ * of tools where `exec` and `Read` return most of the text, and — importantly —
+ * a large `unmeasured` pressure band and a large `unpricedTurns` count. A demo
+ * where every figure was complete would misrepresent the view's whole point,
+ * which is that it says what it could not measure.
+ */
+export const demoCorpus: CorpusReport = {
+  sessions: 134,
+  turns: 5_122,
+  events: 31_354,
+  outputTokens: 1_699_968,
+  unreadable: 0,
+  unrecognisedEvents: 0,
+  compactions: 22,
+  sessionsWithCompaction: 19,
+  compactionsMeasured: 0,
+  reclaimedTokens: 0,
+  toolCalls: 4_816,
+  toolErrors: 107,
+  costMicros: 1_435_980_000,
+  unpricedTurns: 2_046,
+  pressure: { comfortable: 64, warming: 6, tight: 11, critical: 0, unmeasured: 53 },
+  byAgent: [
+    { agent: "claude-code", sessions: 52, turns: 1_872, events: 12_402, outputTokens: 780_408 },
+    { agent: "codex", sessions: 82, turns: 3_241, events: 18_952, outputTokens: 915_475 },
+  ],
+  byProject: [
+    { project: "C:\\work\\ContextTrace", sessions: 29, turns: 2_162, outputTokens: 812_004, costMicros: 692_950_000 },
+    { project: "C:\\work\\VoxMux", sessions: 31, turns: 1_520, outputTokens: 561_233, costMicros: 619_290_000 },
+    { project: "C:\\work\\Ludo.Nexus", sessions: 13, turns: 383, outputTokens: 194_820, costMicros: 78_490_000 },
+    { project: "C:\\work\\atlas-dashboard", sessions: 8, turns: 214, outputTokens: 88_115, costMicros: 41_510_000 },
+  ],
+  byDay: [
+    { day: "2026-08-11", sessions: 9, turns: 402, outputTokens: 121_884 },
+    { day: "2026-08-12", sessions: 14, turns: 651, outputTokens: 198_402 },
+    { day: "2026-08-13", sessions: 7, turns: 288, outputTokens: 96_113 },
+    { day: "2026-08-14", sessions: 18, turns: 812, outputTokens: 260_551 },
+    { day: "2026-08-15", sessions: 11, turns: 470, outputTokens: 151_290 },
+    { day: "2026-08-16", sessions: 22, turns: 985, outputTokens: 318_774 },
+    { day: "2026-08-17", sessions: 27, turns: 1_204, outputTokens: 402_663 },
+  ],
+  byTool: [
+    { tool: "exec", calls: 1_847, errors: 0, resultChars: 14_282_271 },
+    { tool: "Read", calls: 426, errors: 6, resultChars: 8_280_488 },
+    { tool: "Bash", calls: 811, errors: 23, resultChars: 904_355 },
+    { tool: "PowerShell", calls: 269, errors: 68, resultChars: 199_845 },
+    { tool: "Grep", calls: 66, errors: 1, resultChars: 76_165 },
+    { tool: "Edit", calls: 370, errors: 0, resultChars: 65_917 },
+  ],
+  models: [
+    ["gpt-5.4", 3_241],
+    ["claude-opus-4.5", 1_872],
+  ],
+  largestSessions: [
+    { id: demoSessions[0].id, agent: "codex", title: demoSessions[0].title!.text, project: demoSessions[0].project, turns: 425, peakPromptTokens: 536_766, outputTokens: 214_882, costMicros: 402_110_000 },
+    { id: demoSessions[3].id, agent: "claude-code", title: demoSessions[3].title!.text, project: demoSessions[3].project, turns: 249, peakPromptTokens: 360_770, outputTokens: 152_004, costMicros: 210_400_000 },
+    { id: demoSessions[2].id, agent: "codex", title: demoSessions[2].title!.text, project: demoSessions[2].project, turns: 131, peakPromptTokens: 260_176, outputTokens: 88_113, costMicros: 96_220_000 },
+  ],
+  costliestSessions: [
+    { id: demoSessions[0].id, agent: "codex", title: demoSessions[0].title!.text, project: demoSessions[0].project, turns: 425, peakPromptTokens: 536_766, outputTokens: 214_882, costMicros: 402_110_000 },
+    { id: demoSessions[3].id, agent: "claude-code", title: demoSessions[3].title!.text, project: demoSessions[3].project, turns: 249, peakPromptTokens: 360_770, outputTokens: 152_004, costMicros: 210_400_000 },
+  ],
+  cached: false,
+};

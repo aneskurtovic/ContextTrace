@@ -61,6 +61,101 @@ export interface SessionSummary {
 }
 
 /**
+ * How close sessions came to their context window, in bands.
+ *
+ * Bands rather than an average: an average utilization across a corpus is a
+ * number no session ever had. `unmeasured` counts sessions where either the
+ * peak or the window was never recorded — the share of the corpus the question
+ * cannot be asked of is part of the answer.
+ */
+export interface PressureBands {
+  comfortable: number;
+  warming: number;
+  tight: number;
+  critical: number;
+  unmeasured: number;
+}
+
+export interface AgentTotals {
+  agent: string;
+  sessions: number;
+  turns: number;
+  events: number;
+  outputTokens: number;
+}
+
+export interface ProjectTotals {
+  project: string;
+  sessions: number;
+  turns: number;
+  outputTokens: number;
+  costMicros: number;
+}
+
+export interface ToolTotals {
+  tool: string;
+  calls: number;
+  errors: number;
+  /** Characters, not tokens: no estimator ran during the sweep. */
+  resultChars: number;
+}
+
+export interface DayTotals {
+  day: string;
+  sessions: number;
+  turns: number;
+  outputTokens: number;
+}
+
+export interface SessionRank {
+  id: string;
+  agent: Agent;
+  title: string | null;
+  project: string | null;
+  turns: number;
+  peakPromptTokens: number | null;
+  outputTokens: number;
+  costMicros: number;
+}
+
+/** Everything one sweep of the local corpus found. */
+export interface CorpusReport {
+  sessions: number;
+  turns: number;
+  events: number;
+  outputTokens: number;
+  unreadable: number;
+  unrecognisedEvents: number;
+  compactions: number;
+  sessionsWithCompaction: number;
+  /** Compactions that recorded both a before and an after size — the
+   *  denominator for `reclaimedTokens`, and the difference between "freed
+   *  nothing" and "nothing measured it". */
+  compactionsMeasured: number;
+  reclaimedTokens: number;
+  toolCalls: number;
+  toolErrors: number;
+  costMicros: number;
+  /** Turns no local rate could price, which makes every cost above a floor. */
+  unpricedTurns: number;
+  pressure: PressureBands;
+  byAgent: AgentTotals[];
+  byProject: ProjectTotals[];
+  byDay: DayTotals[];
+  byTool: ToolTotals[];
+  models: Array<[string, number]>;
+  largestSessions: SessionRank[];
+  costliestSessions: SessionRank[];
+  /** Whether this answer was reused from the last sweep. */
+  cached: boolean;
+}
+
+export interface CorpusProgress {
+  done: number;
+  total: number;
+}
+
+/**
  * What one entry of a session's conversation is.
  *
  * `injection` is content the harness put in the prompt rather than anything a

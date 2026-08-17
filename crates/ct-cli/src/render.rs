@@ -6,8 +6,8 @@ use crate::format::{
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    AppError, Comparability, ContextTrace, CostComparison, CostReport, Departure, Diagnostics,
-    DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift,
+    AppError, Comparability, ContextTrace, CorpusReport, CostComparison, CostReport, Departure,
+    Diagnostics, DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift,
     InstructionFileReport, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport,
     SessionDiff, SessionFamily, TemporalGhost, TranscriptKind, TranscriptPage,
 };
@@ -131,6 +131,128 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
         "\n{} session(s). Inspect one with: ct inspect <id>",
         list.len()
     );
+}
+
+/// Print what the whole local corpus adds up to.
+pub fn stats(report: &CorpusReport, json: bool) {
+    if json {
+        print_json(report);
+        return;
+    }
+    if report.sessions == 0 {
+        println!("No sessions found. Run `ct roots` to see which directories were searched.");
+        return;
+    }
+
+    println!(
+        "{} sessions  {} turns  {} events",
+        report.sessions, report.turns, report.events
+    );
+    if report.unreadable > 0 {
+        println!(
+            "  {} session(s) could not be parsed and are excluded from every figure below",
+            report.unreadable
+        );
+    }
+    if report.unrecognised_events > 0 {
+        println!(
+            "  {} event(s) this build did not recognise -- run `ct doctor --dir` for the breakdown",
+            report.unrecognised_events
+        );
+    }
+    println!("  {} output tokens", report.output_tokens);
+    println!(
+        "  ${:.2} across priced turns{}",
+        report.cost_micros as f64 / 1_000_000.0,
+        if report.unpriced_turns > 0 {
+            format!(
+                ", {} turn(s) no local rate covered -- a floor, not a total",
+                report.unpriced_turns
+            )
+        } else {
+            String::new()
+        }
+    );
+    // "reclaiming 0 tokens" and "nothing recorded a size" are different
+    // statements, and every compaction in a Codex-only corpus is the second.
+    let reclaimed = if report.compactions_measured == 0 {
+        "; none recorded a before/after size, so no reclaimed total exists".to_string()
+    } else {
+        format!(
+            ", reclaiming {} tokens across the {} that recorded both sizes",
+            report.reclaimed_tokens, report.compactions_measured
+        )
+    };
+    println!(
+        "  {} compaction(s) across {} session(s){}",
+        report.compactions, report.sessions_with_compaction, reclaimed
+    );
+    println!(
+        "  {} tool call(s), {} of them reported errors",
+        report.tool_calls, report.tool_errors
+    );
+
+    let pressure = &report.pressure;
+    println!("\nPeak context pressure, by session");
+    println!(
+        "  under 50%: {}   50-75%: {}   75-90%: {}   over 90%: {}   unmeasured: {}",
+        pressure.comfortable,
+        pressure.warming,
+        pressure.tight,
+        pressure.critical,
+        pressure.unmeasured
+    );
+
+    println!("\n{}  SESSIONS  TURNS  OUTPUT", pad("AGENT", 14));
+    for agent in &report.by_agent {
+        println!(
+            "{}  {}  {}  {}",
+            pad(&agent.agent, 14),
+            rpad(&agent.sessions.to_string(), 8),
+            rpad(&agent.turns.to_string(), 5),
+            agent.output_tokens
+        );
+    }
+
+    println!("\n{}  SESSIONS  TURNS  COST", pad("PROJECT", 28));
+    for project in &report.by_project {
+        println!(
+            "{}  {}  {}  ${:.2}",
+            pad(&ellipsize(project_leaf(Some(&project.project)), 28), 28),
+            rpad(&project.sessions.to_string(), 8),
+            rpad(&project.turns.to_string(), 5),
+            project.cost_micros as f64 / 1_000_000.0
+        );
+    }
+
+    println!("\n{}  CALLS  ERRORS  RESULT CHARS", pad("TOOL", 24));
+    for tool in &report.by_tool {
+        println!(
+            "{}  {}  {}  {}",
+            pad(&ellipsize(&tool.tool, 24), 24),
+            rpad(&tool.calls.to_string(), 5),
+            rpad(&tool.errors.to_string(), 6),
+            tool.result_chars
+        );
+    }
+
+    println!("\n{}  TURNS  PEAK PROMPT  SESSION", pad("ID", 10));
+    for rank in &report.largest_sessions {
+        let short: String = rank.id.chars().take(8).collect();
+        println!(
+            "{}  {}  {}  {}",
+            pad(&short, 10),
+            rpad(&rank.turns.to_string(), 5),
+            rpad(
+                &rank
+                    .peak_prompt_tokens
+                    .map(|peak| peak.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                11
+            ),
+            ellipsize(rank.title.as_deref().unwrap_or("-"), 60)
+        );
+    }
 }
 
 /// Print a window of a session's conversation.
