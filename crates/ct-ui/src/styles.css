@@ -632,14 +632,6 @@ h2 {
   box-shadow: 0 0 8px #e0b673;
 }
 
-.metrics,
-.context-grid,
-.panel {
-  max-width: 1260px;
-  margin-right: auto;
-  margin-left: auto;
-}
-
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1325,10 +1317,27 @@ h2 {
 
 .composition-row {
   display: grid;
-  grid-template-columns: minmax(130px, .8fr) minmax(100px, 1fr) 58px;
+  grid-template-columns: minmax(130px, .8fr) minmax(100px, 1fr) 58px 16px;
   align-items: center;
   gap: 12px;
   padding: 8px 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.composition-row:hover {
+  background: rgba(79, 140, 255, .06);
+}
+
+.composition-row:focus-visible {
+  border-radius: 5px;
+  outline: 2px solid #78a7ff;
+  outline-offset: -2px;
 }
 
 .composition-label,
@@ -1401,58 +1410,86 @@ h2 {
   font-size: 9px;
 }
 
-.context-treemap {
-  display: grid;
-  grid-auto-flow: dense;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 4px;
-  margin-top: 15px;
+.composition-caret {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform .2s ease;
 }
 
-.context-treemap-cell {
+.composition-caret::before {
+  content: "▶";
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+}
+
+.composition-row.expanded .composition-caret {
+  transform: rotate(90deg);
+}
+
+/* Presence, not visibility, is what hides this: the expanded list is only
+   rendered while its row is open, so there is no collapsed copy of it in the
+   DOM for a screen reader to walk into. */
+.composition-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
+}
+
+.composition-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.composition-item-label {
   display: flex;
   min-width: 0;
-  flex-direction: column;
-  justify-content: space-between;
+  align-items: center;
   overflow: hidden;
-  padding: 8px;
-  border: 1px solid rgba(255, 255, 255, .08);
-  border-radius: 6px;
-  background: rgba(76, 142, 220, .18);
-  color: #e4ebf4;
-}
-
-.context-treemap-cell strong {
-  overflow: hidden;
+  color: var(--text);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.context-treemap-cell span {
-  color: rgba(239, 245, 252, .72);
+.composition-item-number {
+  color: var(--dim);
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  text-align: right;
+}
+
+.composition-item-meta {
+  grid-column: 1 / -1;
+  color: var(--text-3);
   font-size: 9px;
 }
 
-.context-treemap-cell.category-tool-outputs,
-.context-treemap-cell.category-tool-calls {
-  background: rgba(74, 197, 214, .22);
+.composition-item-preview {
+  grid-column: 1 / -1;
+  color: var(--text-3);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
-.context-treemap-cell.category-reasoning,
-.context-treemap-cell.category-assistant-messages {
-  background: rgba(220, 101, 177, .22);
-}
-
-.context-treemap-cell.category-file-contents,
-.context-treemap-cell.category-repository-instructions {
-  background: rgba(80, 184, 128, .22);
-}
-
-.context-treemap-cell.category-unattributed,
-.context-treemap-cell.category-system-instructions {
-  background: rgba(241, 167, 89, .22);
+.composition-items-more {
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 4px;
 }
 
 .callout {
@@ -1582,6 +1619,85 @@ h2 {
 .contributor-number span {
   color: var(--dim);
   font-size: 9px;
+}
+
+.contributor-entry {
+  display: flex;
+  flex-direction: column;
+}
+
+.contributor-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 16px;
+  margin-top: 8px;
+  border-left: 1px solid var(--line);
+}
+
+.contributor-detail-label {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.contributor-detail dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+}
+
+.contributor-detail dt {
+  color: var(--text-3);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.contributor-detail dd {
+  color: var(--text-2);
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contributor-preview {
+  color: var(--text-3);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.ghost-baseline {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--text-3);
+  font-size: 9.5px;
+}
+
+.ghost-baseline button {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.ghost-baseline button:hover:not(:disabled) {
+  border-color: var(--blue);
+  background: var(--raise);
 }
 
 .loading,
@@ -1839,7 +1955,7 @@ h2 {
   }
 
   .composition-row {
-    grid-template-columns: minmax(120px, 1fr) 80px 50px;
+    grid-template-columns: minmax(120px, 1fr) 80px 50px 16px;
   }
 
   .confidence {
@@ -2266,7 +2382,22 @@ h2 {
 .ghost-item { padding: 0.35rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cost-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin-top: 0.75rem; }
 .cost-controls label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; }
-.cost-controls input { min-width: 12rem; }
+.cost-controls input {
+  min-width: 12rem;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+}
+
+.cost-controls input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 
 /* Shared controls: native defaults were making the analysis forms look like
    unrelated browser widgets. */
@@ -2349,6 +2480,17 @@ select option {
 .button-row button:disabled,
 .cost-controls button:disabled {
   cursor: not-allowed;
+}
+
+/* Override cost-controls button styling to use tokens for both themes. */
+.cost-controls button {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.cost-controls button:hover:not(:disabled) {
+  background: var(--raise);
 }
 
 @media (max-width: 900px) {
@@ -2680,8 +2822,10 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .contributor-row,
 .doctor-row,
 .archive-entry { border-color: var(--line-soft); }
-.composition-track,
-.contributor-bar,
+/* `.composition-bar-track`, not `.composition-track`: the shorter name never
+   appeared in the markup, so the unfilled part of every composition bar kept
+   its dark fill and read as a solid black rail against the light theme. */
+.composition-bar-track,
 .spend-bar-row > div { background: var(--surface-2); }
 .legend,
 .panel-copy,
@@ -2902,4 +3046,33 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
   border-color: color-mix(in srgb, var(--pink) 32%, var(--line));
   background: color-mix(in srgb, var(--pink) 7%, var(--surface));
   color: var(--text-2);
+}
+
+/* Wide screens got a column of dead space beside the content because every
+   panel was capped and centred while the metrics row above it was full-bleed.
+   The cap is gone; past 1500px the stacked panels pair up instead of running
+   one per row, and only the panels that are genuinely wide -- charts, diffs,
+   side-by-side comparisons -- keep the whole row to themselves. */
+@media (min-width: 1500px) {
+  .workspace-section {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .metrics,
+  .context-grid,
+  .workspace-header,
+  .timeline-panel,
+  .live-monitor,
+  .replay-control,
+  .diagnostics-rail,
+  .rich-diff,
+  .diff-panel,
+  .session-compare-panel,
+  .lifecycle-panel,
+  .compaction-panel,
+  .archive-panel,
+  .export-panel {
+    grid-column: 1 / -1;
+  }
 }

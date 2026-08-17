@@ -239,6 +239,21 @@ function asContext(value: unknown): ContextDetail {
         typeof contributor.share === "number" &&
         typeof contributor.confidence === "string" &&
         confidenceLevels.has(contributor.confidence),
+    ) ||
+    !Array.isArray(value.items) ||
+    !value.items.every(
+      (item) =>
+        isRecord(item) &&
+        typeof item.id === "string" &&
+        typeof item.label === "string" &&
+        typeof item.category === "string" &&
+        typeof item.source === "string" &&
+        typeof item.tokens === "number" &&
+        typeof item.share === "number" &&
+        typeof item.confidence === "string" &&
+        confidenceLevels.has(item.confidence) &&
+        isNumberOrNull(item.firstSeenTurn) &&
+        isStringOrNull(item.preview),
     )
   ) {
     throw malformed("context reconstruction");

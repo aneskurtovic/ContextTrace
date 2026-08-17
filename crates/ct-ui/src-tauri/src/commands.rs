@@ -1,10 +1,12 @@
 use ct_application::{
-    residual_steps, timeline, AppError, Comparability, ContextTrace, Departure, ExportRedaction,
-    LifecycleSweep, ResidualPoint, SessionDiff, SessionFilter, SessionSource,
-    RESIDUAL_STEP_THRESHOLD, STEP_ATTRIBUTION_WINDOW,
+    residual_steps, timeline, AppError, Comparability, ContextTrace, CostCategory, CostForecast,
+    CostReport, CostTurn, Departure, ExportRedaction, GhostItem, InstructionFileComparison,
+    InstructionFileReport, InstructionFileStatus, LifecycleSweep, ResidualPoint, SessionDiff,
+    SessionFilter, SessionSource, TemporalGhost, UnpricedTurn, RESIDUAL_STEP_THRESHOLD,
+    STEP_ATTRIBUTION_WINDOW,
 };
 use ct_domain::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
-use ct_domain::model::context::unmeasured_content_items;
+use ct_domain::model::context::{unmeasured_content_items, ContextItem};
 use ct_domain::ports::{ArchiveStore, PortError, TokenEstimator};
 use ct_domain::{
     AgentKind, CategoryBreakdown, CompactionDiff, CompactionDiffItem, CompactionDiffUnavailable,
@@ -523,6 +525,35 @@ impl AppState {
             })
             .collect();
 
+        // The full inventory, ranked and shared by the same domain call that
+        // produces `contributors` above rather than by a second copy of the
+        // share arithmetic here -- an unbounded limit is the whole difference.
+        // Reimplementing it would put the denominator rule in two places, and
+        // the one in the domain is the one with the honesty argument attached.
+        let bodies: HashMap<&ContextItemId, &ContextItem> = snapshot
+            .items()
+            .iter()
+            .map(|item| (&item.id, item))
+            .collect();
+        let items = snapshot
+            .largest_contributors(usize::MAX)
+            .into_iter()
+            .map(|item| {
+                let body = bodies.get(&item.id);
+                ContextItemSummary {
+                    id: item.id.to_string(),
+                    label: item.label,
+                    category: item.category.slug(),
+                    source: format_source(&item.source),
+                    tokens: item.tokens,
+                    share: item.share,
+                    confidence: item.confidence,
+                    first_seen_turn: body.and_then(|body| body.first_seen_turn).map(|t| t.get()),
+                    preview: body.and_then(|body| body.preview.clone()),
+                }
+            })
+            .collect();
+
         Ok(ContextDetail {
             turn: turn.get(),
             model: snapshot.model().map(str::to_string),
@@ -538,6 +569,7 @@ impl AppState {
                 .map(CategorySummary::from)
                 .collect(),
             contributors,
+            items,
         })
     }
 
@@ -851,12 +883,11 @@ impl AppState {
         &self,
         agent: AgentKind,
         id: &str,
-    ) -> Result<ct_application::InstructionFileReport, String> {
+    ) -> Result<InstructionFileReportSummary, String> {
         let cached = self.cached_session(agent, id, true)?;
         let hasher = ct_runtime::content_hasher();
-        Ok(ct_application::compare_instruction_files(
-            &cached.session,
-            &hasher,
+        Ok(InstructionFileReportSummary::from(
+            ct_application::compare_instruction_files(&cached.session, &hasher),
         ))
     }
 
@@ -866,18 +897,20 @@ impl AppState {
         id: &str,
         pricing_path: Option<&str>,
         forecast_turns: Option<u32>,
-    ) -> Result<ct_application::CostReport, String> {
+    ) -> Result<CostReportSummary, String> {
         let cached = self.cached_session(agent, id, false)?;
         let pricing = pricing_path
             .map(ct_application::PricingOverrides::from_path)
             .transpose()?;
-        Ok(ct_application::project_cost_scenario(
-            &cached.session,
-            &ct_application::CostScenario {
-                forecast_turns,
-                pricing,
-                ..Default::default()
-            },
+        Ok(CostReportSummary::from(
+            ct_application::project_cost_scenario(
+                &cached.session,
+                &ct_application::CostScenario {
+                    forecast_turns,
+                    pricing,
+                    ..Default::default()
+                },
+            ),
         ))
     }
 
@@ -887,7 +920,7 @@ impl AppState {
         id: &str,
         left_turn: u32,
         right_turn: u32,
-    ) -> Result<ct_application::TemporalGhost, String> {
+    ) -> Result<TemporalGhostSummary, String> {
         let left_turn = TurnNumber::new(left_turn).map_err(|error| error.to_string())?;
         let right_turn = TurnNumber::new(right_turn).map_err(|error| error.to_string())?;
         let cached = self.cached_session(agent, id, false)?;
@@ -908,12 +941,12 @@ impl AppState {
             .map_err(|error| error.to_string())?;
         let instrument =
             ct_application::Instrument::new(estimator.name(), estimator.chars_per_token());
-        Ok(ct_application::temporal_ghost(
+        Ok(TemporalGhostSummary::from(ct_application::temporal_ghost(
             &left,
             instrument.clone(),
             &right,
             instrument,
-        ))
+        )))
     }
 
     /// The unlogged remainder across a session's turns: CT-072's signature
@@ -1716,6 +1749,42 @@ pub struct ContributorSummary {
     confidence: Confidence,
 }
 
+/// One context item, for the drill-down behind a category's item count and a
+/// contributor's truncated name.
+///
+/// `contributors` above is capped at the twenty largest, which is the right
+/// list to lead with and the wrong one to answer "show me the 19 tool outputs"
+/// from: a category can report a count this list cannot enumerate. This is the
+/// full inventory of the turn, so the expanded count always matches the row
+/// that offered it.
+///
+/// `category` is the **slug**, matching [`CategorySummary::category`], because
+/// that is what the drill-down joins on. [`ContributorSummary::category`] is
+/// the human label instead — the two are deliberately different, and mixing
+/// them up silently produces empty expansions.
+///
+/// `share` is a share of the whole turn, never of the category. Re-basing it
+/// on the expanded subset is the exact dishonesty `ItemFilter` was built to
+/// make unwritable: four tool outputs do not "account for 100% of the
+/// context", and the rest of the turn is what the person expanding the row
+/// needs to keep in view.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextItemSummary {
+    id: String,
+    label: String,
+    category: String,
+    source: String,
+    tokens: u32,
+    share: f32,
+    confidence: Confidence,
+    /// Turn at which this item first entered the context, when the log says.
+    first_seen_turn: Option<u32>,
+    /// Short excerpt the adapters already cap at 160 characters; absent when
+    /// the log never carried enough content to quote.
+    preview: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CategorySummary {
@@ -1753,6 +1822,7 @@ pub struct ContextDetail {
     calibration_scale: Option<f32>,
     categories: Vec<CategorySummary>,
     contributors: Vec<ContributorSummary>,
+    items: Vec<ContextItemSummary>,
 }
 
 #[derive(Serialize)]
@@ -2194,6 +2264,325 @@ pub struct ExportOutcome {
     redactions: usize,
 }
 
+/// One recorded instruction attachment, compared with the file on disk now.
+///
+/// This is a DTO rather than [`ct_application::InstructionFileComparison`] sent
+/// straight over the wire for a reason worth stating: that type is also the
+/// CLI's and the MCP server's JSON output (`ct-cli/src/mcp.rs`), where its
+/// snake_case field names are the published contract. The desktop needs
+/// camelCase. Renaming the application type to satisfy this side would quietly
+/// break the other, so the boundary converts instead -- the same thing every
+/// other DTO in this file does.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstructionFileComparisonSummary {
+    path: String,
+    turn: Option<u32>,
+    line: u32,
+    /// Re-exported unchanged: the application enum already serialises its
+    /// variants camelCase, and re-deriving it here would be a second list to
+    /// keep in step with the frontend's accepted values.
+    status: InstructionFileStatus,
+    recorded_digest: Option<String>,
+    current_digest: Option<String>,
+    recorded_chars: u32,
+    current_chars: Option<u32>,
+    comparison_basis: String,
+    detail: Option<String>,
+}
+
+impl From<InstructionFileComparison> for InstructionFileComparisonSummary {
+    fn from(value: InstructionFileComparison) -> Self {
+        Self {
+            path: value.path,
+            turn: value.turn,
+            line: value.line,
+            status: value.status,
+            recorded_digest: value.recorded_digest,
+            current_digest: value.current_digest,
+            recorded_chars: value.recorded_chars,
+            current_chars: value.current_chars,
+            comparison_basis: value.comparison_basis,
+            detail: value.detail,
+        }
+    }
+}
+
+/// The instruction-file comparison for one session.
+///
+/// `refusal_count` travels rather than being counted from `comparisons` on the
+/// far side: a refusal is a comparison this build declined to make, and the
+/// number of them is a fact about coverage that a view must be able to state
+/// without re-deriving the rule for what counts as one.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstructionFileReportSummary {
+    session_id: String,
+    project_root: Option<String>,
+    comparisons: Vec<InstructionFileComparisonSummary>,
+    refusal_count: usize,
+}
+
+impl From<InstructionFileReport> for InstructionFileReportSummary {
+    fn from(value: InstructionFileReport) -> Self {
+        Self {
+            session_id: value.session_id,
+            project_root: value.project_root,
+            comparisons: value
+                .comparisons
+                .into_iter()
+                .map(InstructionFileComparisonSummary::from)
+                .collect(),
+            refusal_count: value.refusal_count,
+        }
+    }
+}
+
+/// One category's modelled spend. `cost` is in millionths of a dollar, exactly
+/// as [`MoneyMicros`] carries it -- a newtype over `u64`, so it crosses the
+/// wire as a bare integer and the frontend divides. Money is not sent as a
+/// float and not pre-formatted into a string.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostCategorySummary {
+    name: String,
+    tokens: u64,
+    cost: u64,
+    confidence: String,
+}
+
+impl From<CostCategory> for CostCategorySummary {
+    fn from(value: CostCategory) -> Self {
+        Self {
+            name: value.name.to_string(),
+            tokens: value.tokens,
+            cost: value.cost.0,
+            confidence: value.confidence.to_string(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostTurnSummary {
+    turn: u32,
+    model: Option<String>,
+    priced: bool,
+    categories: Vec<CostCategorySummary>,
+    total: u64,
+}
+
+impl From<CostTurn> for CostTurnSummary {
+    fn from(value: CostTurn) -> Self {
+        Self {
+            turn: value.turn,
+            model: value.model,
+            priced: value.priced,
+            categories: value
+                .categories
+                .into_iter()
+                .map(CostCategorySummary::from)
+                .collect(),
+            total: value.total.0,
+        }
+    }
+}
+
+/// A turn no rate could be found for, and why.
+///
+/// Carried separately from `turns` rather than folded in with a zero cost:
+/// "this turn cost nothing" and "this turn's model is unpriced" are different
+/// claims, and summing the second into a total as though it were the first is
+/// how a spend figure comes to understate itself without saying so.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnpricedTurnSummary {
+    turn: u32,
+    model: Option<String>,
+    reason: String,
+}
+
+impl From<UnpricedTurn> for UnpricedTurnSummary {
+    fn from(value: UnpricedTurn) -> Self {
+        Self {
+            turn: value.turn,
+            model: value.model,
+            reason: value.reason.to_string(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostForecastSummary {
+    additional_turns: u32,
+    average_tokens_per_turn: Vec<CostCategorySummary>,
+    projected_additional: u64,
+    projected_total: u64,
+    assumptions: Vec<String>,
+}
+
+impl From<CostForecast> for CostForecastSummary {
+    fn from(value: CostForecast) -> Self {
+        Self {
+            additional_turns: value.additional_turns,
+            average_tokens_per_turn: value
+                .average_tokens_per_turn
+                .into_iter()
+                .map(CostCategorySummary::from)
+                .collect(),
+            projected_additional: value.projected_additional.0,
+            projected_total: value.projected_total.0,
+            assumptions: value.assumptions,
+        }
+    }
+}
+
+/// The cost report, as the desktop reads it.
+///
+/// `warning` and `pricing_source` are not decoration: every figure here is
+/// modelled from published rates against observed token counts, and the view
+/// has to be able to say which rates and what they do not cover.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostReportSummary {
+    session_id: String,
+    pricing_version: String,
+    pricing_source: String,
+    warning: String,
+    categories: Vec<CostCategorySummary>,
+    total: u64,
+    turns: Vec<CostTurnSummary>,
+    unpriced: Vec<UnpricedTurnSummary>,
+    forecast: Option<CostForecastSummary>,
+}
+
+impl From<CostReport> for CostReportSummary {
+    fn from(value: CostReport) -> Self {
+        Self {
+            session_id: value.session_id,
+            pricing_version: value.pricing_version,
+            pricing_source: value.pricing_source,
+            warning: value.warning,
+            categories: value
+                .categories
+                .into_iter()
+                .map(CostCategorySummary::from)
+                .collect(),
+            total: value.total.0,
+            turns: value.turns.into_iter().map(CostTurnSummary::from).collect(),
+            unpriced: value
+                .unpriced
+                .into_iter()
+                .map(UnpricedTurnSummary::from)
+                .collect(),
+            forecast: value.forecast.map(CostForecastSummary::from),
+        }
+    }
+}
+
+/// One item's membership and size across the two compared turns.
+///
+/// `token_delta` is `None` when only one side held the item, and
+/// `meaningful_token_delta` says whether a delta that does exist survives the
+/// instrument bound. Both travel so the view never re-derives the judgement:
+/// a number the estimator could have produced on its own must not be read as
+/// a content change.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhostItemSummary {
+    id: String,
+    label: String,
+    category: String,
+    source: String,
+    left_tokens: Option<u32>,
+    right_tokens: Option<u32>,
+    token_delta: Option<i64>,
+    meaningful_token_delta: bool,
+    confidence: Confidence,
+}
+
+impl From<GhostItem> for GhostItemSummary {
+    fn from(value: GhostItem) -> Self {
+        Self {
+            id: value.id,
+            label: value.label,
+            category: value.category.label().to_string(),
+            source: value.source,
+            left_tokens: value.left_tokens,
+            right_tokens: value.right_tokens,
+            token_delta: value.token_delta,
+            meaningful_token_delta: value.meaningful_token_delta,
+            confidence: value.confidence,
+        }
+    }
+}
+
+/// Item identity across two turns, or a refusal to claim it.
+///
+/// `rename_all` is repeated per variant deliberately, for the reason spelled
+/// out on [`ComparabilitySummary`]: on an enum it renames only the variant
+/// tag, never each struct-variant's own fields. The application type this
+/// converts from has `rename_all` on the enum alone, which is why its
+/// `left_turn` reached the frontend unrenamed and every field check failed.
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum TemporalGhostSummary {
+    #[serde(rename_all = "camelCase")]
+    Available {
+        left_turn: u32,
+        right_turn: u32,
+        comparability: ComparabilitySummary,
+        gained: Vec<GhostItemSummary>,
+        retained: Vec<GhostItemSummary>,
+        removed: Vec<GhostItemSummary>,
+        assumptions: Vec<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Unavailable {
+        left_turn: u32,
+        right_turn: u32,
+        reason: String,
+    },
+}
+
+impl From<TemporalGhost> for TemporalGhostSummary {
+    fn from(value: TemporalGhost) -> Self {
+        match value {
+            TemporalGhost::Available(available) => Self::Available {
+                left_turn: available.left_turn,
+                right_turn: available.right_turn,
+                comparability: ComparabilitySummary::from(available.comparability),
+                gained: available
+                    .gained
+                    .into_iter()
+                    .map(GhostItemSummary::from)
+                    .collect(),
+                retained: available
+                    .retained
+                    .into_iter()
+                    .map(GhostItemSummary::from)
+                    .collect(),
+                removed: available
+                    .removed
+                    .into_iter()
+                    .map(GhostItemSummary::from)
+                    .collect(),
+                assumptions: available.assumptions,
+            },
+            TemporalGhost::Unavailable {
+                left_turn,
+                right_turn,
+                reason,
+            } => Self::Unavailable {
+                left_turn,
+                right_turn,
+                reason,
+            },
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
     state.startup()
@@ -2296,7 +2685,7 @@ pub fn get_instruction_files(
     id: String,
     agent: String,
     state: tauri::State<'_, AppState>,
-) -> Result<ct_application::InstructionFileReport, String> {
+) -> Result<InstructionFileReportSummary, String> {
     state.instruction_files(parse_agent(&agent)?, &id)
 }
 
@@ -2307,7 +2696,7 @@ pub fn get_cost(
     pricing: Option<String>,
     forecast_turns: Option<u32>,
     state: tauri::State<'_, AppState>,
-) -> Result<ct_application::CostReport, String> {
+) -> Result<CostReportSummary, String> {
     state.cost(
         parse_agent(&agent)?,
         &id,
@@ -2323,7 +2712,7 @@ pub fn get_temporal_ghost(
     left_turn: u32,
     right_turn: u32,
     state: tauri::State<'_, AppState>,
-) -> Result<ct_application::TemporalGhost, String> {
+) -> Result<TemporalGhostSummary, String> {
     state.temporal_ghost(parse_agent(&agent)?, &id, left_turn, right_turn)
 }
 
@@ -2673,10 +3062,60 @@ mod tests {
         assert!(!context.contributors.is_empty());
         let item_id = context.contributors[0].id.clone();
 
+        assert!(!context.items.is_empty());
+        // The drill-down behind a category's item count is only trustworthy if
+        // it can enumerate every item that count refers to. `contributors` is
+        // capped at twenty and cannot; `items` is the whole turn.
+        //
+        // `unattributed` is the one row this does not hold for, and
+        // deliberately so: the domain reports the unlogged remainder as a
+        // single synthetic item so it keeps a share of the total, but there is
+        // no logged item behind it to enumerate. A view that expanded it into
+        // an empty list would be claiming the remainder is nothing, which is
+        // the opposite of what it measures.
+        for category in &context.categories {
+            if category.category == "unattributed" {
+                continue;
+            }
+            let listed = context
+                .items
+                .iter()
+                .filter(|item| item.category == category.category)
+                .count();
+            assert_eq!(
+                listed, category.item_count,
+                "category {} promises {} items and lists {listed}",
+                category.category, category.item_count
+            );
+        }
+
         let json = serde_json::to_value(&context).expect("context detail serializes for IPC");
         assert!(json["totalTokens"].is_number());
         assert!(json["residualIsMeaningful"].is_boolean());
         assert!(json.get("total_tokens").is_none());
+        let items = json["items"].as_array().expect("items reach the desktop");
+        assert!(!items.is_empty());
+        assert!(items[0].get("firstSeenTurn").is_some());
+        assert!(items[0].get("first_seen_turn").is_none());
+        // The join key. `CategorySummary.category` is a slug and
+        // `ContributorSummary.category` is a human label; an item carrying the
+        // label instead would silently expand to nothing on the frontend, so
+        // pin it to the value the drill-down actually looks up.
+        let slugs: Vec<&str> = json["categories"]
+            .as_array()
+            .expect("categories reach the desktop")
+            .iter()
+            .map(|category| category["category"].as_str().expect("slug is a string"))
+            .collect();
+        for item in items {
+            let category = item["category"]
+                .as_str()
+                .expect("item category is a string");
+            assert!(
+                slugs.contains(&category),
+                "item category {category:?} matches no category row {slugs:?}"
+            );
+        }
 
         let doctor = state
             .doctor(kind, id, Some(peak_turn))
@@ -2700,6 +3139,90 @@ mod tests {
         assert!(json["runs"].is_array());
         assert!(json["stillPresent"].is_boolean());
         assert!(json.get("first_present").is_none());
+    }
+
+    /// The three payloads that shipped `ct-application` types straight over
+    /// IPC, and so reached the desktop in snake_case while every runtime
+    /// validator on the other side required camelCase. Each one failed with
+    /// "ContextTrace received an invalid response from ...".
+    ///
+    /// This asserts the wire format rather than the Rust struct because the
+    /// wire format is what broke: the structs were always correct, and a
+    /// `serde` attribute is the only thing standing between them and a
+    /// regression. `rename_all` on a tagged enum renames the variant tag and
+    /// not the fields inside it, which is exactly how the temporal ghost's
+    /// `left_turn` escaped -- so that one is checked in both variants.
+    #[test]
+    fn evidence_payloads_reach_the_desktop_in_camel_case() {
+        let homes = FixtureHomes::new();
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        let id = session_id(&sessions, "codex");
+        let kind = AgentKind::Codex;
+
+        let files = state
+            .instruction_files(kind, &id)
+            .expect("compare instruction files for the fixture session");
+        let json = serde_json::to_value(&files).expect("instruction files serialize for IPC");
+        assert!(json["sessionId"].is_string());
+        assert!(json["comparisons"].is_array());
+        assert!(json["refusalCount"].is_number());
+        assert!(json.get("session_id").is_none());
+        assert!(json.get("project_root").is_none());
+        assert!(json.get("refusal_count").is_none());
+        for comparison in json["comparisons"].as_array().expect("comparisons array") {
+            assert!(comparison.get("recordedChars").is_some());
+            assert!(comparison.get("comparisonBasis").is_some());
+            assert!(comparison.get("recorded_chars").is_none());
+            assert!(comparison.get("comparison_basis").is_none());
+        }
+
+        let cost = state
+            .cost(kind, &id, None, Some(5))
+            .expect("project cost for the fixture session");
+        let json = serde_json::to_value(&cost).expect("cost report serializes for IPC");
+        assert!(json["sessionId"].is_string());
+        assert!(json["pricingVersion"].is_string());
+        assert!(json["pricingSource"].is_string());
+        // Money crosses as a bare integer count of millionths, not a float and
+        // not a pre-formatted string.
+        assert!(json["total"].is_u64());
+        assert!(json.get("pricing_version").is_none());
+        assert!(json.get("pricing_source").is_none());
+        if let Some(forecast) = json.get("forecast").filter(|value| !value.is_null()) {
+            assert!(forecast["additionalTurns"].is_number());
+            assert!(forecast["projectedTotal"].is_u64());
+            assert!(forecast["averageTokensPerTurn"].is_array());
+            assert!(forecast.get("additional_turns").is_none());
+            assert!(forecast.get("projected_total").is_none());
+        }
+
+        let detail = state.inspect_session(kind, &id).expect("inspect fixture");
+        let peak = detail.peak_turn.expect("fixture has prompt usage");
+        let ghost = state
+            .temporal_ghost(kind, &id, 1, peak)
+            .expect("reconstruct the temporal ghost across two turns");
+        let json = serde_json::to_value(&ghost).expect("temporal ghost serializes for IPC");
+        // Both variants carry the turn pair, and both must camelCase it: the
+        // frontend validates the unavailable branch just as strictly.
+        assert!(json["leftTurn"].is_number());
+        assert!(json["rightTurn"].is_number());
+        assert!(json.get("left_turn").is_none());
+        assert!(json.get("right_turn").is_none());
+        assert!(matches!(
+            json["status"].as_str(),
+            Some("available") | Some("unavailable")
+        ));
+        if json["status"] == "available" {
+            for group in ["gained", "retained", "removed"] {
+                for item in json[group].as_array().expect("ghost group is an array") {
+                    assert!(item.get("meaningfulTokenDelta").is_some());
+                    assert!(item.get("leftTokens").is_some());
+                    assert!(item.get("meaningful_token_delta").is_none());
+                    assert!(item.get("left_tokens").is_none());
+                }
+            }
+        }
     }
 
     #[test]

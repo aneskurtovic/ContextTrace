@@ -87,8 +87,8 @@ evidence that one is required for the core workflow.
 The next product queue after release validation is intentionally empty until
 the clean-machine evidence is complete. Cost projection, local pricing and
 forecasting, family trees, fidelity trends, instruction signatures and
-instruction-file comparisons, category treemap and temporal ghost views are
-implemented. Exact Codex compaction diffs (CT-027) are implemented.
+instruction-file comparisons, category composition drill-down and temporal
+ghost views are implemented. Exact Codex compaction diffs (CT-027) are implemented.
 
 ## Main risks
 

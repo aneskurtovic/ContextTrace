@@ -165,15 +165,38 @@ export interface CostForecast {
   assumptions: string[];
 }
 
+export interface CostTurn {
+  turn: number;
+  model: string | null;
+  priced: boolean;
+  categories: CostCategory[];
+  total: number;
+}
+
+/**
+ * A turn no published rate covered, and why.
+ *
+ * Kept apart from `turns` rather than folded in at zero cost: "this turn cost
+ * nothing" and "this turn's model is unpriced" are different claims, and
+ * summing the second as though it were the first is how a spend figure comes
+ * to understate itself without saying so.
+ */
+export interface UnpricedTurn {
+  turn: number;
+  model: string | null;
+  reason: string;
+}
+
 export interface CostReport {
   sessionId: string;
   pricingVersion: string;
   pricingSource: string;
   warning: string;
   categories: CostCategory[];
+  /** Millionths of a dollar, as the backend counts them. */
   total: number;
-  turns: unknown[];
-  unpriced: unknown[];
+  turns: CostTurn[];
+  unpriced: UnpricedTurn[];
   forecast: CostForecast | null;
 }
 
@@ -352,6 +375,30 @@ export interface ContributorSummary {
   confidence: Confidence;
 }
 
+/**
+ * One item behind a category's item count, or behind a contributor's
+ * truncated name.
+ *
+ * `category` is the slug, matching `CategorySummary.category` — not the human
+ * label `ContributorSummary.category` carries. The drill-down joins on this,
+ * so the two must not be swapped.
+ *
+ * `share` is a share of the whole turn, never of the category it was expanded
+ * from: three tool outputs do not account for 100% of the context, and the
+ * rest of it is exactly what someone expanding the row needs to keep in view.
+ */
+export interface ContextItemSummary {
+  id: string;
+  label: string;
+  category: string;
+  source: string;
+  tokens: number;
+  share: number;
+  confidence: Confidence;
+  firstSeenTurn: number | null;
+  preview: string | null;
+}
+
 export interface ContextDetail {
   turn: number;
   model: string | null;
@@ -362,7 +409,10 @@ export interface ContextDetail {
   utilisation: number | null;
   calibrationScale: number | null;
   categories: CategorySummary[];
+  /** The twenty largest, for the ranked panel. */
   contributors: ContributorSummary[];
+  /** Every item in the turn, largest first, for the expansions. */
+  items: ContextItemSummary[];
 }
 
 export interface DiagnosticItemSummary {
