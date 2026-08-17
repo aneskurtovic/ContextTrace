@@ -6,6 +6,7 @@ import type {
   Comparability,
   CompactionDiff,
   ContextDetail,
+  ContextItemSummary,
   CostReport,
   DoctorReport,
   GrowthPoint,
@@ -388,6 +389,116 @@ export function demoDetail(id: string): SessionDetail {
   };
 }
 
+/**
+ * Plausible item names per category, so an expanded row reads like a session
+ * rather than like "item 1, item 2".
+ */
+const demoItemLabels: Record<string, string[]> = {
+  "tool-outputs": [
+    "tool: shell_command → test output",
+    "Compilation and linker diagnostics",
+    "Workspace dependency graph",
+    "tool: shell_command → git status",
+    "tool: ripgrep → matches for `snapshot(`",
+  ],
+  "assistant-messages": [
+    "Prior assistant implementation",
+    "Explanation of the adapter boundary",
+    "Summary of the failing test",
+    "Proposed reconstruction strategy",
+  ],
+  "file-contents": [
+    "crates/ct-adapters/src/codex/reconstruct.rs",
+    "Tauri configuration reference",
+    "crates/ct-domain/src/model/context.rs",
+    "crates/ct-ui/src/api.ts",
+  ],
+  "user-messages": [
+    "Current implementation request",
+    "Follow-up on the residual figure",
+    "Correction to the earlier instruction",
+  ],
+  "system-instructions": ["Agent system prompt", "Tool definitions", "Harness safety preamble"],
+  reasoning: ["Reasoning about the parse failure", "Reasoning about token attribution"],
+};
+
+/**
+ * The provenance string for a demo item, read off its own name where the name
+ * says so.
+ *
+ * Tracing an item to its source is the feature this fixture is standing in
+ * for, so a demo that labelled every tool output `tool: shell_command`
+ * regardless of which tool produced it would be demonstrating the wrong
+ * answer.
+ */
+function demoItemSource(category: string, label: string): string {
+  if (label.startsWith("tool: ")) return label.slice(0, label.indexOf(" →")) || label;
+  switch (category) {
+    case "file-contents":
+      return "file read";
+    case "assistant-messages":
+    case "reasoning":
+      return "model output";
+    case "user-messages":
+      return "user prompt";
+    case "system-instructions":
+      return "agent system prompt";
+    default:
+      return "tool: cargo";
+  }
+}
+
+/**
+ * The per-item inventory behind each category row.
+ *
+ * Counts match `itemCount` exactly, because the drill-down is only worth
+ * having if expanding "18 items" produces eighteen of them. `unattributed` is
+ * deliberately absent: the backend reports the remainder as a category share
+ * with no logged item behind it, and inventing one here would let a fixture
+ * claim evidence the real thing never has.
+ */
+function demoItems(
+  categories: readonly (readonly [string, string, number, number, string])[],
+  scale: number,
+  sized: (tokens: number) => number,
+  total: number,
+): ContextItemSummary[] {
+  const items: ContextItemSummary[] = [];
+  for (const [category, , tokens, itemCount, confidence] of categories) {
+    if (category === "unattributed") continue;
+    // The same expression the category row reports, so the count someone
+    // clicks and the list they get are the same number by construction.
+    const count = Math.max(1, Math.round(itemCount * scale));
+    const budget = sized(tokens);
+    const labels = demoItemLabels[category] ?? [`${category} item`];
+    // A decaying split: one dominant item and a long tail, which is the shape
+    // a real turn has and the shape that makes "… N more" worth showing.
+    const weights = Array.from({ length: count }, (_, index) => 1 / (index + 1.6));
+    const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+    let spent = 0;
+    for (let index = 0; index < count; index += 1) {
+      const last = index === count - 1;
+      const itemTokens = last
+        ? Math.max(1, budget - spent)
+        : Math.max(1, Math.round((budget * weights[index]) / weightTotal));
+      spent += itemTokens;
+      const base = labels[index % labels.length];
+      items.push({
+        id: `demo-item-${category}-${index}`,
+        label: index < labels.length ? base : `${base} (${Math.floor(index / labels.length) + 1})`,
+        category,
+        source: demoItemSource(category, base),
+        tokens: itemTokens,
+        share: itemTokens / total,
+        confidence: confidence as "observed" | "derived" | "estimated",
+        firstSeenTurn: null,
+        preview: null,
+      });
+    }
+  }
+  return items.sort((left, right) => right.tokens - left.tokens);
+}
+
 export function demoContext(turn = 32): ContextDetail {
   const promptTokens = growth.find((point) => point.turn === turn)?.promptTokens ?? 121_760;
   const scale = promptTokens / 121_760;
@@ -441,6 +552,7 @@ export function demoContext(turn = 32): ContextDetail {
       share: sized(Number(tokens)) / total,
       confidence: confidence as "observed" | "derived" | "estimated",
     })),
+    items: demoItems(categories, scale, sized, total),
   };
 }
 

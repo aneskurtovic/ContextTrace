@@ -9,13 +9,16 @@ import {
   archivedSessions,
   archiveSession,
   exportSession,
+  getCost,
   getCompactionDiff,
   getContext,
+  getInstructionFiles,
   getLifecycle,
   getNotificationSettings,
   getNotificationStatus,
   getResidual,
   getStartup,
+  getTemporalGhost,
   getTurnDiff,
   inspectSession,
   listNotifications,
@@ -27,16 +30,20 @@ import {
   verifyArchived,
 } from "./api";
 import {
+  demoCost,
   demoArchiveHolding,
   demoArchiveVerification,
   demoCompactionDiff,
+  demoContext,
   demoDetail,
   demoDoctor,
+  demoInstructionFiles,
   demoNotificationPage,
   demoNotificationSettings,
   demoNotificationStatus,
   demoResidual,
   demoSessions,
+  demoTemporalGhost,
   demoTurnDiff,
 } from "./demo";
 
@@ -951,6 +958,155 @@ describe("desktop IPC response validation", () => {
       }
       expect(seenKinds).toEqual(new Set(["intact", "sourceChanged", "sourceGone", "archiveDamaged"]));
       expect(seenSourceGoneReadings).toEqual(new Set([true, false]));
+    });
+  });
+
+  describe("cost, instruction files, and temporal ghost regressions", () => {
+    it("rejects a cost report with snake_case pricingSource instead of camelCase", async () => {
+      // The Rust side shipped returning snake_case while the frontend validator
+      // required camelCase, causing "invalid response from cost report". This
+      // regression test pins the snake_case shape as the one that must fail.
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({
+        sessionId: "s1",
+        pricing_version: "v1",
+        pricing_source: "synthetic",
+        warning: "demo",
+        categories: [],
+        total: 100,
+        turns: [],
+        unpriced: [],
+        forecast: null,
+      });
+
+      await expect(getCost("codex", "s1", null, null)).rejects.toThrow(
+        "ContextTrace received an invalid response from cost report. Refresh and try again.",
+      );
+    });
+
+    it("accepts a cost report with camelCase pricingVersion and pricingSource", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const expected = demoCost("s1", 0);
+      invoke.mockResolvedValue(expected);
+
+      await expect(getCost("codex", "s1", null, null)).resolves.toEqual(expected);
+    });
+
+    it("rejects instruction files with snake_case refusalCount instead of camelCase", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({
+        sessionId: "s1",
+        projectRoot: "C:\\work",
+        comparisons: [],
+        refusal_count: 0,
+      });
+
+      await expect(getInstructionFiles("codex", "s1")).rejects.toThrow(
+        "ContextTrace received an invalid response from instruction-file comparison. Refresh and try again.",
+      );
+    });
+
+    it("accepts instruction files with camelCase refusalCount", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const expected = demoInstructionFiles("s1");
+      invoke.mockResolvedValue(expected);
+
+      await expect(getInstructionFiles("codex", "s1")).resolves.toEqual(expected);
+    });
+
+    it("rejects a temporal ghost with snake_case leftTurn instead of camelCase", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue({
+        status: "unavailable",
+        left_turn: 5,
+        right_turn: 10,
+        reason: "test reason",
+      });
+
+      await expect(getTemporalGhost("codex", "s1", 5, 10)).rejects.toThrow(
+        "ContextTrace received an invalid response from the temporal ghost. Refresh and try again.",
+      );
+    });
+
+    it("accepts a temporal ghost with camelCase leftTurn and rightTurn", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const expected = demoTemporalGhost(5, 10);
+      invoke.mockResolvedValue(expected);
+
+      await expect(getTemporalGhost("codex", "s1", 5, 10)).resolves.toEqual(expected);
+    });
+
+    it("accepts a temporal ghost's unavailable branch with camelCase fields", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const unavailableGhost = {
+        status: "unavailable",
+        leftTurn: 5,
+        rightTurn: 10,
+        reason: "reconstruction unavailable",
+      };
+      invoke.mockResolvedValue(unavailableGhost);
+
+      await expect(getTemporalGhost("codex", "s1", 5, 10)).resolves.toEqual(unavailableGhost);
+    });
+
+    it("rejects a context whose items lack firstSeenTurn or preview field", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const ctx = demoContext();
+      // Remove firstSeenTurn from one item to trigger the validation error
+      const malformedItems = ctx.items.map((item, index) =>
+        index === 0 ? { ...item, firstSeenTurn: undefined } : item
+      );
+      invoke.mockResolvedValue({ ...ctx, items: malformedItems });
+
+      await expect(getContext("codex", "s1", 32)).rejects.toThrow(
+        "ContextTrace received an invalid response from context reconstruction. Refresh and try again.",
+      );
+    });
+
+    it("rejects a context whose items carry a non-confidence string in confidence field", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const ctx = demoContext();
+      const malformedItems = ctx.items.map((item, index) =>
+        index === 0 ? { ...item, confidence: "unknown-confidence" } : item
+      );
+      invoke.mockResolvedValue({ ...ctx, items: malformedItems });
+
+      await expect(getContext("codex", "s1", 32)).rejects.toThrow(
+        "ContextTrace received an invalid response from context reconstruction. Refresh and try again.",
+      );
+    });
+
+    it("validates demoContext() against the real getContext validator", async () => {
+      // The demo context must pass the same validation as the real backend,
+      // so drifts between types.ts and demo.ts are caught before runtime.
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      invoke.mockResolvedValue(demoContext());
+
+      await expect(getContext("codex", "s1", 32)).resolves.toEqual(demoContext());
+    });
+
+    it("holds demoInstructionFiles() to the same contract as the real backend", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const demoFiles = demoInstructionFiles("s1");
+      invoke.mockResolvedValue(demoFiles);
+
+      await expect(getInstructionFiles("codex", "s1")).resolves.toEqual(demoFiles);
+    });
+
+    it("holds demoCost() to the same contract as the real backend", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const demoCostData = demoCost("s1", 5);
+      invoke.mockResolvedValue(demoCostData);
+
+      await expect(getCost("codex", "s1", null, 5)).resolves.toEqual(demoCostData);
+    });
+
+    it("holds demoTemporalGhost() to the same contract as the real backend", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const demoGhost = demoTemporalGhost(5, 10);
+      invoke.mockResolvedValue(demoGhost);
+
+      await expect(getTemporalGhost("codex", "s1", 5, 10)).resolves.toEqual(demoGhost);
     });
   });
 });

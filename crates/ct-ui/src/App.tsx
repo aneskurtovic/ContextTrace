@@ -21,12 +21,15 @@ import type {
   ArchiveEntrySummary,
   ArchiveHolding,
   ArchiveVerification,
+  CategorySummary,
   Comparability,
   CompactionDiff,
   CompactionDiffItem,
   CompactionDiffUnavailableReason,
   CompactionItemDisposition,
   ContextDetail,
+  ContextItemSummary,
+  ContributorSummary,
   CostReport,
   DoctorReport,
   ExportOutcome,
@@ -891,8 +894,65 @@ function UnloggedContext({
   );
 }
 
+/** How many items a category lists before it stops and says how many are left. */
+const COMPOSITION_ITEM_PREVIEW_LIMIT = 8;
+
+/**
+ * The items behind one category row.
+ *
+ * `unattributed` is the row this cannot enumerate, and says so rather than
+ * rendering an empty list: the remainder is measured as a share of the
+ * reported total precisely because it is *not* attributable to logged items,
+ * so "no items found" would state the opposite of what the row measures.
+ */
+function CompositionItems({
+  category,
+  items,
+}: {
+  category: CategorySummary;
+  items: ContextItemSummary[];
+}) {
+  const shown = items.slice(0, COMPOSITION_ITEM_PREVIEW_LIMIT);
+  const remaining = items.length - shown.length;
+  return (
+    <div className="composition-items" id={`composition-items-${category.category}`}>
+      {shown.length ? (
+        <>
+          {shown.map((item) => (
+            <div className="composition-item" key={item.id}>
+              <strong className="composition-item-label" title={item.label}>
+                {item.label}
+              </strong>
+              <span className="composition-item-number">
+                {formatTokens(item.tokens)} · {formatPercent(item.share)}
+              </span>
+              <span className="composition-item-meta">
+                {item.source} · {item.confidence}
+                {item.firstSeenTurn != null && ` · first seen turn ${item.firstSeenTurn}`}
+              </span>
+              {item.preview && <p className="composition-item-preview">{item.preview}</p>}
+            </div>
+          ))}
+          {remaining > 0 && (
+            <p className="composition-items-more">
+              … {remaining} smaller {remaining === 1 ? "item" : "items"} not shown
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="composition-items-more">
+          This row is the remainder of the reported total, not a logged item, so there is nothing
+          to list.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ContextComposition({ context }: { context: ContextDetail }) {
   const categories = Array.isArray(context.categories) ? context.categories : [];
+  const items = Array.isArray(context.items) ? context.items : [];
+  const [expanded, setExpanded] = useState<string | null>(null);
   return (
     <section className="panel composition-panel" aria-labelledby="composition-heading">
       <div className="panel-heading">
@@ -904,49 +964,50 @@ function ContextComposition({ context }: { context: ContextDetail }) {
       </div>
       <div className="composition-list">
         {categories.length ? (
-          categories.map((category) => (
-            <div className="composition-row" key={category.category}>
-              <div className="composition-label">
-                <span>{category.label}</span>
-                <small>
-                  {category.itemCount} {category.itemCount === 1 ? "item" : "items"} ·{" "}
-                  {category.confidence}
-                </small>
+          categories.map((category) => {
+            const open = expanded === category.category;
+            return (
+              <div className="composition-entry" key={category.category}>
+                <button
+                  type="button"
+                  className={open ? "composition-row expandable expanded" : "composition-row expandable"}
+                  aria-expanded={open}
+                  aria-controls={`composition-items-${category.category}`}
+                  title={`Show the items behind ${category.label}`}
+                  onClick={() => setExpanded((current) => (current === category.category ? null : category.category))}
+                >
+                  <div className="composition-label">
+                    <span>{category.label}</span>
+                    <small>
+                      {category.itemCount} {category.itemCount === 1 ? "item" : "items"} ·{" "}
+                      {category.confidence}
+                    </small>
+                  </div>
+                  <div className="composition-bar-track">
+                    <span
+                      className={`composition-bar category-${category.category}`}
+                      style={{ width: `${Math.max(category.share * 100, 0.8)}%` }}
+                    />
+                  </div>
+                  <div className="composition-value">
+                    <strong>{formatTokens(category.tokens)}</strong>
+                    <span>{formatPercent(category.share)}</span>
+                  </div>
+                  <span className="composition-caret" aria-hidden="true" />
+                </button>
+                {open && (
+                  <CompositionItems
+                    category={category}
+                    items={items.filter((item) => item.category === category.category)}
+                  />
+                )}
               </div>
-              <div className="composition-bar-track">
-                <span
-                  className={`composition-bar category-${category.category}`}
-                  style={{ width: `${Math.max(category.share * 100, 0.8)}%` }}
-                />
-              </div>
-              <div className="composition-value">
-                <strong>{formatTokens(category.tokens)}</strong>
-                <span>{formatPercent(category.share)}</span>
-              </div>
-            </div>
-          ))
+            );
+          })
         ) : (
           <p className="empty-inline">No context categories were reported for this turn.</p>
         )}
       </div>
-      {categories.length > 0 && (
-        <div className="context-treemap" aria-label="Context category treemap">
-          {categories.map((category) => (
-            <div
-              className={`context-treemap-cell category-${category.category}`}
-              key={`map-${category.category}`}
-              style={{
-                gridColumn: `span ${Math.max(1, Math.round(category.share * 12))}`,
-                minHeight: `${Math.max(42, Math.round(42 + category.share * 72))}px`,
-              }}
-              title={`${category.label}: ${formatTokens(category.tokens)} tokens (${formatPercent(category.share)})`}
-            >
-              <strong>{category.label}</strong>
-              <span>{formatTokens(category.tokens)} · {formatPercent(category.share)}</span>
-            </div>
-          ))}
-        </div>
-      )}
       <p className="callout">
         <span aria-hidden="true">i</span>
         Confidence labels: observed = logged, derived = reconstructed, estimated = modelled.
@@ -1251,6 +1312,7 @@ function Contributors({
   onSelect: (item: string) => void;
 }) {
   const contributors = Array.isArray(context.contributors) ? context.contributors : [];
+  const items = Array.isArray(context.items) ? context.items : [];
   return (
     <section className="panel contributors-panel" aria-labelledby="contributors-heading">
       <div className="panel-heading">
@@ -1262,37 +1324,88 @@ function Contributors({
       </div>
       <div className="contributor-list">
         {contributors.length ? (
-          contributors.map((item, index) => (
-            <button
-              type="button"
-              className={selectedItem === item.id ? "contributor-row selected" : "contributor-row"}
-              key={item.id}
-              onClick={() => onSelect(item.id)}
-              aria-expanded={selectedItem === item.id}
-              aria-controls="item-lifecycle"
-              title={`Trace ${item.label} through the session`}
-            >
-              <span className="rank">{String(index + 1).padStart(2, "0")}</span>
-              <div className="contributor-copy">
-                <strong title={item.label}>{item.label}</strong>
-                <span>
-                  {item.category} · {item.source}
-                </span>
+          contributors.map((item, index) => {
+            const selected = selectedItem === item.id;
+            return (
+              <div className="contributor-entry" key={item.id}>
+                <button
+                  type="button"
+                  className={selected ? "contributor-row selected" : "contributor-row"}
+                  onClick={() => onSelect(item.id)}
+                  aria-expanded={selected}
+                  aria-controls={`contributor-detail-${item.id}`}
+                  title={`Show ${item.label} in full and trace it through the session`}
+                >
+                  <span className="rank">{String(index + 1).padStart(2, "0")}</span>
+                  <div className="contributor-copy">
+                    <strong title={item.label}>{item.label}</strong>
+                    <span>
+                      {item.category} · {item.source}
+                    </span>
+                  </div>
+                  <span className={`confidence confidence-${item.confidence}`}>
+                    {item.confidence}
+                  </span>
+                  <div className="contributor-number">
+                    <strong>{formatTokens(item.tokens)}</strong>
+                    <span>{formatPercent(item.share)}</span>
+                  </div>
+                </button>
+                {selected && (
+                  <ContributorDetail
+                    contributor={item}
+                    item={items.find((candidate) => candidate.id === item.id) ?? null}
+                  />
+                )}
               </div>
-              <span className={`confidence confidence-${item.confidence}`}>
-                {item.confidence}
-              </span>
-              <div className="contributor-number">
-                <strong>{formatTokens(item.tokens)}</strong>
-                <span>{formatPercent(item.share)}</span>
-              </div>
-            </button>
-          ))
+            );
+          })
         ) : (
           <p className="empty-inline">No individual contributors were reported for this turn.</p>
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The selected contributor, at full length.
+ *
+ * The collapsed row ellipsis-truncates on purpose — the panel is a ranking and
+ * has to stay scannable — but most labels in a real session share a prefix
+ * (`Read(src/...`, `Bash(npm ...`), so the truncated form frequently
+ * identifies nothing. This is where the whole string lives, wrapping rather
+ * than clipping.
+ */
+function ContributorDetail({
+  contributor,
+  item,
+}: {
+  contributor: ContributorSummary;
+  item: ContextItemSummary | null;
+}) {
+  return (
+    <div className="contributor-detail" id={`contributor-detail-${contributor.id}`}>
+      <strong className="contributor-detail-label">{contributor.label}</strong>
+      <dl>
+        <dt>Source</dt>
+        <dd title={contributor.source}>{contributor.source}</dd>
+        <dt>Category</dt>
+        <dd>{contributor.category}</dd>
+        <dt>Size</dt>
+        <dd>
+          {formatTokens(contributor.tokens)} tokens · {formatPercent(contributor.share)} of the
+          turn · {contributor.confidence}
+        </dd>
+        {item?.firstSeenTurn != null && (
+          <>
+            <dt>First seen</dt>
+            <dd>turn {item.firstSeenTurn}</dd>
+          </>
+        )}
+      </dl>
+      {item?.preview && <p className="contributor-preview">{item.preview}</p>}
+    </div>
   );
 }
 
@@ -2041,6 +2154,7 @@ function EvidenceTools({
   onRunGhost,
   currentTurn,
   pinnedTurn,
+  onTogglePin,
   cost,
   costLoading,
   onRunCost,
@@ -2053,12 +2167,26 @@ function EvidenceTools({
   onRunGhost: () => void;
   currentTurn: number | null;
   pinnedTurn: number | null;
+  onTogglePin: () => void;
   cost: CostReport | null;
   costLoading: boolean;
   onRunCost: (pricingPath: string | null, forecastTurns: number | null) => void;
 }) {
   const [pricingPath, setPricingPath] = useState("");
   const [forecastTurns, setForecastTurns] = useState("");
+  // Two turns, and two *different* turns: the reconstruction compares a pinned
+  // baseline against the turn on screen, so pinning the turn you are already
+  // looking at leaves nothing to compare. Stating both conditions here is what
+  // keeps the button's disabled state and the sentence under it in agreement.
+  const ghostReady = pinnedTurn != null && currentTurn != null && pinnedTurn !== currentTurn;
+  const ghostBlocker =
+    currentTurn == null
+      ? "Open a turn first — there is nothing to compare yet."
+      : pinnedTurn == null
+        ? "Pin a baseline turn, then step to another turn to compare it against."
+        : pinnedTurn === currentTurn
+          ? `Turn ${pinnedTurn} is both the baseline and the turn on screen. Step to another turn to compare them.`
+          : null;
   return (
     <section className="panel evidence-tools" aria-labelledby="evidence-tools-heading">
       <div className="panel-heading">
@@ -2073,11 +2201,31 @@ function EvidenceTools({
           <button
             type="button"
             onClick={onRunGhost}
-            disabled={ghostLoading || pinnedTurn == null || currentTurn == null}
+            disabled={ghostLoading || !ghostReady}
+            title={ghostBlocker ?? `Compare turn ${pinnedTurn} with turn ${currentTurn}`}
           >
             {ghostLoading ? "Reconstructing…" : "Find hidden changes"}
           </button>
         </div>
+      </div>
+      {/* The baseline control lives beside the button it gates. It was
+          previously only reachable from the turn view, which left this panel
+          showing a permanently disabled button and no way to find out why. */}
+      <div className="ghost-baseline">
+        <span>
+          {pinnedTurn == null
+            ? ghostBlocker
+            : `Baseline: turn ${pinnedTurn}${ghostReady ? ` → turn ${currentTurn}` : ""}`}
+        </span>
+        {pinnedTurn != null && ghostBlocker && <span>{ghostBlocker}</span>}
+        <button
+          type="button"
+          onClick={onTogglePin}
+          disabled={currentTurn == null}
+          aria-pressed={pinnedTurn != null}
+        >
+          {pinnedTurn == null ? `Pin turn ${currentTurn ?? "—"} as baseline` : `Unpin turn ${pinnedTurn}`}
+        </button>
       </div>
       {instructionFiles && (
         <div className="evidence-result">
@@ -2467,6 +2615,7 @@ function SessionWorkspace({
         onRunGhost={onRunGhost}
         currentTurn={context?.turn ?? null}
         pinnedTurn={pinnedTurn}
+        onTogglePin={onTogglePin}
         cost={cost}
         costLoading={costLoading}
         onRunCost={onRunCost}

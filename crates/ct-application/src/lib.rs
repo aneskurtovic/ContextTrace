@@ -37,8 +37,9 @@ use std::fmt;
 pub use archive::{default_transform, RedactingTransform, VerbatimTransform};
 pub use cost::{
     compare as compare_cost, project as project_cost, project_scenario as project_cost_scenario,
-    project_with as project_cost_with, CostComparison, CostForecast, CostReport, CostScenario,
-    PricingCatalog, PricingOverrideRate, PricingOverrides,
+    project_with as project_cost_with, CostCategory, CostComparison, CostForecast, CostReport,
+    CostScenario, CostTurn, MoneyMicros, PricingCatalog, PricingOverrideRate, PricingOverrides,
+    UnpricedTurn,
 };
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};

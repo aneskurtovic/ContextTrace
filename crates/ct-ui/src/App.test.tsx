@@ -3,16 +3,19 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import App from "./App";
 import * as api from "./api";
 import {
+  demoCost,
   demoArchiveHolding,
   demoContext,
   demoDetail,
   demoDoctor,
+  demoInstructionFiles,
   demoLifecycle,
   demoNotificationPage,
   demoNotificationSettings,
   demoNotificationStatus,
   demoResidual,
   demoSessions,
+  demoTemporalGhost,
   demoTurnDiff,
 } from "./demo";
 import type {
@@ -34,7 +37,10 @@ vi.mock("./api", () => ({
   getLifecycle: vi.fn(),
   getResidual: vi.fn(),
   getTurnDiff: vi.fn(),
+  getTemporalGhost: vi.fn(),
   getCompactionDiff: vi.fn(),
+  getCost: vi.fn(),
+  getInstructionFiles: vi.fn(),
   archivedSessions: vi.fn(),
   archiveSession: vi.fn(),
   verifyArchived: vi.fn(),
@@ -98,6 +104,14 @@ beforeEach(() => {
   mockedApi.runDoctor.mockImplementation(async (_agent, _id, turn) => demoDoctor(turn));
   mockedApi.getLifecycle.mockImplementation(async (_agent, _id, item) => demoLifecycle(item));
   mockedApi.getResidual.mockImplementation(async (agent, id) => demoResidual(agent, id));
+  mockedApi.getTurnDiff.mockImplementation(async (left, right) => demoTurnDiff(left, right));
+  mockedApi.getTemporalGhost.mockImplementation(async (_agent, _id, leftTurn, rightTurn) =>
+    demoTemporalGhost(leftTurn, rightTurn),
+  );
+  mockedApi.getInstructionFiles.mockImplementation(async (_agent, id) => demoInstructionFiles(id));
+  mockedApi.getCost.mockImplementation(async (_agent, id, _pricing, forecastTurns) =>
+    demoCost(id, forecastTurns ?? 0),
+  );
   // Fetched unconditionally on mount, like `getStartup` -- every test needs a
   // resolved value here or the archive panel's load spins forever.
   mockedApi.archivedSessions.mockResolvedValue(demoArchiveHolding);
@@ -835,5 +849,229 @@ describe("comparing turns across two sessions", () => {
     // arm was unreachable from the desktop until the diff could name two
     // sessions at all.
     expect(await screen.findByText(/do not log the same things/)).not.toBeNull();
+  });
+});
+
+describe("composition items and drill-down", () => {
+  it("expands and collapses category rows, showing items on expand and hiding on collapse", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    // Find all category buttons and locate tool-outputs by looking for one with the right item count
+    const buttons = await screen.findAllByRole("button");
+    const toolOutputsButton = buttons.find((btn) => {
+      const text = btn.textContent;
+      return text && text.includes("Tool outputs") && text.includes("18");
+    });
+    expect(toolOutputsButton).not.toBeUndefined();
+
+    const categoryButton = toolOutputsButton!;
+    expect(categoryButton.getAttribute("aria-expanded")).toBe("false");
+
+    // Expand the row
+    fireEvent.click(categoryButton);
+    expect(categoryButton.getAttribute("aria-expanded")).toBe("true");
+
+    // After expanding, check that composition items are now visible
+    // The text might appear in multiple places (item list and contributor list),
+    // so check that at least one appears in a composition-items container
+    const allInstances = await screen.findAllByText(/tool: shell_command → test output/);
+    const inCompositionItems = allInstances.some((el) => el.closest(".composition-items"));
+    expect(inCompositionItems).toBe(true);
+
+    // Collapse it
+    fireEvent.click(categoryButton);
+    expect(categoryButton.getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() => {
+      const items = screen.queryAllByText(/tool: shell_command → test output/);
+      // Should only be in the contributors list now, not in composition items
+      const compositionItemsStillVisible = items.some((el) =>
+        el.closest(".composition-items")
+      );
+      expect(compositionItemsStillVisible).toBe(false);
+    });
+  });
+
+  it("opens only one category at a time, closing the previous when opening a new one", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    const buttons = await screen.findAllByRole("button");
+    const toolButton = buttons.find((btn) => {
+      const text = btn.textContent;
+      return text && text.includes("Tool outputs") && text.includes("18");
+    });
+    const assistantButton = buttons.find((btn) => {
+      const text = btn.textContent;
+      return text && text.includes("Assistant messages") && text.includes("21");
+    });
+
+    expect(toolButton).not.toBeUndefined();
+    expect(assistantButton).not.toBeUndefined();
+
+    fireEvent.click(toolButton!);
+    expect(toolButton!.getAttribute("aria-expanded")).toBe("true");
+    expect(assistantButton!.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(assistantButton!);
+    expect(assistantButton!.getAttribute("aria-expanded")).toBe("true");
+    expect(toolButton!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("shows up to 8 items and displays a truncation message when itemCount exceeds the preview limit", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    const context = demoContext();
+    const toolOutputsItems = context.items.filter((i) => i.category === "tool-outputs");
+
+    expect(toolOutputsItems.length).toBeGreaterThan(8);
+
+    // Find and click the tool-outputs category button
+    const categoryButton = screen.getByRole("button", {
+      name: (accessibleName) => accessibleName.includes("18") && accessibleName.includes("items"),
+    });
+    fireEvent.click(categoryButton);
+
+    // Check that the truncation message appears with the correct count
+    const remaining = toolOutputsItems.length - 8;
+    expect(
+      await screen.findByText(new RegExp(`… ${remaining} smaller items`)),
+    ).not.toBeNull();
+  });
+
+  it("shows the unattributed explanatory sentence instead of an empty list", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    const context = demoContext();
+    const unattributedCategory = context.categories.find(
+      (c) => c.category === "unattributed",
+    );
+    expect(unattributedCategory).not.toBeNull();
+
+    // Find the unattributed button by looking for the "Unattributed" text
+    const categoryButton = screen.getByRole("button", {
+      name: (accessibleName) => accessibleName.includes("Unattributed"),
+    });
+    fireEvent.click(categoryButton);
+
+    // The unattributed row has no items behind it, so it should show the explanatory sentence
+    expect(
+      await screen.findByText(
+        /This row is the remainder of the reported total, not a logged item, so there is nothing to list/,
+      ),
+    ).not.toBeNull();
+  });
+});
+
+describe("contributor detail panel", () => {
+  it("renders contributor detail panel and calls getLifecycle when selected", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    const context = demoContext();
+    const firstContributor = context.contributors[0];
+
+    // Find and click the first contributor button by partial label match
+    const buttons = await screen.findAllByRole("button");
+    const contributorButton = buttons.find((btn) => {
+      const text = btn.textContent;
+      return text && text.includes(firstContributor.label.substring(0, 15));
+    });
+    expect(contributorButton).not.toBeUndefined();
+
+    fireEvent.click(contributorButton!);
+
+    // Verify getLifecycle was called with the correct contributor
+    await waitFor(() =>
+      expect(mockedApi.getLifecycle).toHaveBeenCalledWith(
+        demoSessions[0].agent,
+        demoSessions[0].id,
+        firstContributor.id,
+      ),
+    );
+  });
+});
+
+describe("Find hidden changes gating and baseline controls", () => {
+  // The reconstruction needs two turns and two *different* ones. The button
+  // used to be disabled on the first condition alone, with nothing on screen
+  // saying so and the pin that satisfies it living in another panel; a turn
+  // pinned to the turn already on screen then left the button enabled and the
+  // click silently doing nothing. Each state is asserted through the button's
+  // own `disabled` and `title` rather than by locating text, because every tab
+  // panel stays in the DOM behind `hidden` and a loose text query passes from
+  // whichever view happens to hold the string.
+  const ghostButton = async () =>
+    await screen.findByRole("button", { name: "Find hidden changes" });
+
+  it("refuses to compare, and says why, until a baseline turn is pinned", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    const button = await ghostButton();
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(true));
+    expect(button.getAttribute("title")).toBe(
+      "Pin a baseline turn, then step to another turn to compare it against.",
+    );
+    expect(
+      await screen.findByRole("button", { name: /^Pin turn \d+ as baseline$/ }),
+    ).not.toBeNull();
+  });
+
+  it("stays refused when the pinned baseline is the turn already on screen", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Pin turn \d+ as baseline$/ }));
+
+    const button = await ghostButton();
+    await waitFor(() =>
+      expect(button.getAttribute("title")).toMatch(
+        /^Turn \d+ is both the baseline and the turn on screen\./,
+      ),
+    );
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(mockedApi.getTemporalGhost).not.toHaveBeenCalled();
+  });
+
+  it("compares the pinned baseline with the turn on screen once the two differ", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+    await openView("Turns");
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Pin turn \d+ as baseline$/ }));
+    const pinned = Number(
+      /Unpin turn (\d+)/.exec(
+        (await screen.findByRole("button", { name: /^Unpin turn \d+$/ })).textContent ?? "",
+      )![1],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous measured turn" }));
+
+    const button = await ghostButton();
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(button);
+
+    await waitFor(() => expect(mockedApi.getTemporalGhost).toHaveBeenCalled());
+    const [, , left, right] = mockedApi.getTemporalGhost.mock.calls.at(-1)!;
+    expect(left).toBe(pinned);
+    expect(right).not.toBe(pinned);
   });
 });
