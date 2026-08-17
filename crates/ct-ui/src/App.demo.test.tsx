@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 
 // `./api` is deliberately *not* mocked here. This file exercises the branch the
@@ -42,6 +42,9 @@ describe("desktop without the Tauri bridge", () => {
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 
     render(<App />);
+    const evidence = await screen.findByRole("tab", { name: "Evidence" });
+    await waitFor(() => expect(evidence.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(evidence);
 
     // Archiving and exporting are this app's only writes. With no bridge there
     // is no session to copy and no directory to copy it into, so the controls

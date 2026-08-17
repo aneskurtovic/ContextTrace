@@ -66,6 +66,14 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+async function openView(name: "Overview" | "Turns" | "Diff" | "Evidence") {
+  const tab = await screen.findByRole("tab", { name });
+  await waitFor(() => expect(tab.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(tab);
+  await waitFor(() => expect(tab.getAttribute("aria-selected")).toBe("true"));
+  return tab;
+}
+
 beforeEach(() => {
   // These cases are about a real desktop read; the demonstration-data path has
   // its own file, which deliberately does not mock `./api`.
@@ -351,6 +359,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
+    await openView("Turns");
 
     const analyze = await screen.findByRole("button", { name: "Analyze turn 32" });
     expect(mockedApi.runDoctor).not.toHaveBeenCalled();
@@ -369,6 +378,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
+    await openView("Turns");
 
     const contributor = await screen.findByRole("button", {
       name: /tool: shell_command → test output/,
@@ -456,6 +466,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([claudeSession]));
 
     render(<App />);
+    await openView("Turns");
 
     const run = await screen.findByRole("button", { name: "Measure this session" });
     // Selecting a session must not pay for a full-session reconstruction.
@@ -486,6 +497,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
+    await openView("Turns");
 
     fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
 
@@ -508,6 +520,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
+    await openView("Turns");
 
     fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
 
@@ -518,6 +531,77 @@ describe("desktop accessibility and state handling", () => {
     // unrecorded harness change would invent a second cause for one event.
     expect(screen.queryByText(/a tool registered, an MCP server connected/)).toBeNull();
   });
+  it("exposes the redesigned views as an accessible tab set", async () => {
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+
+    render(<App />);
+
+    const overview = await screen.findByRole("tab", { name: "Overview" });
+    await waitFor(() => expect(overview.hasAttribute("disabled")).toBe(false));
+    expect(overview.getAttribute("aria-selected")).toBe("true");
+
+    const turns = await openView("Turns");
+    expect(turns.getAttribute("aria-selected")).toBe("true");
+    expect(overview.getAttribute("aria-selected")).toBe("false");
+    expect(await screen.findByRole("button", { name: "Analyze turn 32" })).not.toBeNull();
+  });
+
+  it("opens the command palette from the keyboard and toggles the theme", async () => {
+    render(<App />);
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const palette = await screen.findByRole("dialog", { name: "Command palette" });
+    expect(palette).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to light theme" }));
+    expect(document.querySelector(".app-shell")?.getAttribute("data-theme")).toBe("light");
+    expect(screen.getByRole("button", { name: "Switch to dark theme" })).not.toBeNull();
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(await screen.findByRole("dialog", { name: "Command palette" })).not.toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+  });
+
+  it("traps focus, restores it on close, and navigates actions with arrow keys", async () => {
+    render(<App />);
+
+    const trigger = screen.getByRole("button", { name: /Search sessions, turns, actions/ });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const palette = await screen.findByRole("dialog", { name: "Command palette" });
+    const search = screen.getByRole("textbox", { name: "Command palette search" });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+
+    const actions = Array.from(
+      palette.querySelectorAll<HTMLButtonElement>(".command-results button"),
+    );
+    expect(actions.length).toBeGreaterThan(2);
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(actions[0]);
+    expect(actions[0].classList.contains("active")).toBe(true);
+
+    fireEvent.keyDown(actions[0], { key: "ArrowDown" });
+    expect(document.activeElement).toBe(actions[1]);
+
+    fireEvent.keyDown(actions[1], { key: "ArrowUp" });
+    expect(document.activeElement).toBe(actions[0]);
+
+    fireEvent.keyDown(actions[0], { key: "ArrowUp" });
+    expect(document.activeElement).toBe(actions.at(-1));
+
+    fireEvent.keyDown(actions.at(-1)!, { key: "Tab" });
+    expect(document.activeElement).toBe(search);
+
+    fireEvent.keyDown(search, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(actions.at(-1));
+
+    fireEvent.keyDown(actions.at(-1)!, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
 });
 
 describe("the two panels that write", () => {
@@ -527,6 +611,7 @@ describe("the two panels that write", () => {
     const session = demoSessions[0];
     mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
     render(<App />);
+    await openView("Evidence");
     await screen.findByRole("button", { name: /to the archive$/ });
     return session;
   }
@@ -662,6 +747,7 @@ describe("comparing turns across two sessions", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
+    await openView("Diff");
     fireEvent.change(await screen.findByRole("combobox"), {
       target: { value: JSON.stringify({ agent: claude.agent, id: claude.id }) },
     });

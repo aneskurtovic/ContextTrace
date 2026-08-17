@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import * as api from "./api";
 import {
   errorMessage,
@@ -39,6 +46,14 @@ import type {
 } from "./types";
 
 type AgentFilter = "all" | Agent;
+type WorkspaceView = "overview" | "turns" | "diff" | "evidence";
+
+const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; shortcut: string }> = [
+  { id: "overview", label: "Overview", shortcut: "1" },
+  { id: "turns", label: "Turns", shortcut: "2" },
+  { id: "diff", label: "Diff", shortcut: "3" },
+  { id: "evidence", label: "Evidence", shortcut: "4" },
+];
 
 /**
  * A session's id alone is not unique across agents, so selection, the
@@ -2144,6 +2159,7 @@ function EvidenceTools({
 }
 
 function SessionWorkspace({
+  activeView,
   detail,
   context,
   contextLoading,
@@ -2205,6 +2221,7 @@ function SessionWorkspace({
   liveFollow,
   onLiveFollow,
 }: {
+  activeView: WorkspaceView;
   detail: SessionDetail;
   context: ContextDetail | null;
   contextLoading: boolean;
@@ -2282,7 +2299,7 @@ function SessionWorkspace({
 
   return (
     <main className="workspace" aria-busy={contextLoading}>
-      <div id="overview" className="workspace-section">
+      <div id="overview-panel" className="workspace-section" role="tabpanel" aria-labelledby="overview-tab" hidden={activeView !== "overview"}>
       <header className="workspace-header">
         <div>
           <div className="title-line">
@@ -2410,7 +2427,7 @@ function SessionWorkspace({
       </section>
       </div>
 
-      <div id="compare" className="workspace-section">
+      <div id="diff-panel" className="workspace-section" role="tabpanel" aria-labelledby="diff-tab" hidden={activeView !== "diff"}>
       <TurnComparison
         diff={turnDiff}
         loading={turnDiffLoading}
@@ -2432,7 +2449,7 @@ function SessionWorkspace({
       <SessionComparePanel current={detail} other={otherDetail} sessions={sessions} loading={compareLoading} onSelect={onCompareSession} />
       </div>
 
-      <div id="insights" className="workspace-section">
+      <div id="turns-panel" className="workspace-section" role="tabpanel" aria-labelledby="turns-tab" hidden={activeView !== "turns"}>
       <UnloggedContext report={residual} loading={residualLoading} onRun={onRunResidual} />
 
       <EvidenceTools
@@ -2492,7 +2509,7 @@ function SessionWorkspace({
       )}
       </div>
 
-      <div id="archive" className="workspace-section">
+      <div id="evidence-panel" className="workspace-section" role="tabpanel" aria-labelledby="evidence-tab" hidden={activeView !== "evidence"}>
         <ArchivePanel
           holding={archive}
           loading={archiveLoading}
@@ -2535,6 +2552,11 @@ export default function App() {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [detailFor, setDetailFor] = useState<SessionKey | null>(null);
   const [context, setContext] = useState<ContextDetail | null>(null);
+  const [activeView, setActiveView] = useState<WorkspaceView>("overview");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteActiveIndex, setPaletteActiveIndex] = useState(0);
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -2600,6 +2622,52 @@ export default function App() {
   const catalogRequest = useRef(0);
   const archiveRequest = useRef(0);
   const evidenceRequest = useRef(0);
+  const paletteRef = useRef<HTMLElement | null>(null);
+  const paletteInputRef = useRef<HTMLInputElement | null>(null);
+  const paletteActionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const palettePreviousFocus = useRef<HTMLElement | null>(null);
+  const paletteWasOpen = useRef(false);
+
+  const openPalette = useCallback(() => {
+    if (!paletteOpen && document.activeElement instanceof HTMLElement) {
+      palettePreviousFocus.current = document.activeElement;
+    }
+    setPaletteOpen(true);
+    setPaletteQuery("");
+    setPaletteActiveIndex(0);
+  }, [paletteOpen]);
+
+  const closePalette = useCallback(() => {
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteActiveIndex(0);
+  }, []);
+
+  useEffect(() => {
+    if (paletteOpen) {
+      paletteWasOpen.current = true;
+      paletteInputRef.current?.focus();
+      return;
+    }
+    if (!paletteWasOpen.current) return;
+    paletteWasOpen.current = false;
+    const previous = palettePreviousFocus.current;
+    palettePreviousFocus.current = null;
+    if (previous && document.contains(previous)) previous.focus();
+  }, [paletteOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openPalette();
+      } else if (event.key === "Escape" && paletteOpen) {
+        closePalette();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [closePalette, openPalette, paletteOpen]);
 
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
@@ -3170,24 +3238,212 @@ export default function App() {
   }, [selected, exportKeepSecrets]);
 
   const visibleDetail = sameSession(detailFor, selected) ? detail : null;
-  const scrollToSection = useCallback((id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+  const availableTurns = (visibleDetail?.growth ?? []).filter((point) => point.promptTokens != null);
+  const currentTurn = context?.turn ?? visibleDetail?.peakTurn ?? null;
+  const currentTurnIndex = availableTurns.findIndex((point) => point.turn === currentTurn);
+  const canStepBack = currentTurnIndex > 0;
+  const canStepForward = currentTurnIndex >= 0 && currentTurnIndex < availableTurns.length - 1;
+  const stepTurn = (direction: -1 | 1) => {
+    if (currentTurnIndex < 0) return;
+    const next = availableTurns[currentTurnIndex + direction];
+    if (next) selectTurn(next.turn);
+  };
+  const latestCompaction = [...(visibleDetail?.growth ?? [])].reverse().find((point) => point.compaction);
+  const paletteActions = [
+    ...WORKSPACE_VIEWS.map((view) => ({
+      id: view.id,
+      label: `Go to ${view.label}`,
+      kind: "Tab",
+      shortcut: view.shortcut,
+      run: () => setActiveView(view.id),
+    })),
+    ...(visibleDetail?.peakTurn ? [{
+      id: "peak-turn",
+      label: `Jump to peak turn (${visibleDetail.peakTurn})`,
+      kind: "Turn",
+      shortcut: "",
+      run: () => { setActiveView("turns"); selectTurn(visibleDetail.peakTurn!); },
+    }] : []),
+    ...(latestCompaction?.compaction ? [{
+      id: "latest-compaction",
+      label: `Inspect compaction at turn ${latestCompaction.turn}`,
+      kind: "Turn",
+      shortcut: "",
+      run: () => {
+        setActiveView("diff");
+        selectTurn(latestCompaction.turn);
+        inspectCompaction(latestCompaction.compaction!.lineNo);
+      },
+    }] : []),
+    ...(visibleDetail ? [{
+      id: "archive",
+      label: "Archive this session…",
+      kind: "Action",
+      shortcut: "",
+      run: () => setActiveView("evidence"),
+    }, {
+      id: "export",
+      label: "Export session…",
+      kind: "Action",
+      shortcut: "",
+      run: () => setActiveView("evidence"),
+    }] : []),
+    {
+      id: "theme",
+      label: `Switch to ${theme === "dark" ? "light" : "dark"} theme`,
+      kind: "View",
+      shortcut: "",
+      run: () => setTheme((current) => current === "dark" ? "light" : "dark"),
+    },
+    {
+      id: "refresh",
+      label: "Refresh local sessions",
+      kind: "Action",
+      shortcut: "",
+      run: () => refreshSessions(true),
+    },
+  ].filter((action) => {
+    const needle = paletteQuery.trim().toLowerCase();
+    return !needle || action.label.toLowerCase().includes(needle) || action.kind.toLowerCase().includes(needle);
+  });
+  useEffect(() => {
+    paletteActionRefs.current.length = paletteActions.length;
+    setPaletteActiveIndex((current) =>
+      paletteActions.length ? Math.min(current, paletteActions.length - 1) : 0,
+    );
+  }, [paletteActions.length]);
+
+  const handlePaletteKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closePalette();
+      return;
+    }
+
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && paletteActions.length) {
+      event.preventDefault();
+      const focusedIndex = paletteActionRefs.current.findIndex(
+        (button) => button === document.activeElement,
+      );
+      const nextIndex = focusedIndex < 0
+        ? event.key === "ArrowDown" ? 0 : paletteActions.length - 1
+        : (focusedIndex + (event.key === "ArrowDown" ? 1 : -1) + paletteActions.length) % paletteActions.length;
+      setPaletteActiveIndex(nextIndex);
+      paletteActionRefs.current[nextIndex]?.focus();
+      return;
+    }
+
+    if (event.key !== "Tab" || !paletteRef.current) return;
+    const focusable = [paletteInputRef.current, ...paletteActionRefs.current]
+      .filter(
+        (element): element is HTMLInputElement | HTMLButtonElement =>
+          element != null && !element.hasAttribute("disabled"),
+      );
+    if (!focusable.length) {
+      event.preventDefault();
+      paletteRef.current.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  const runPaletteAction = (run: () => void) => {
+    run();
+    closePalette();
+  };
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme}>
+      {paletteOpen && (
+        <div className="command-backdrop" onMouseDown={closePalette}>
+          <section
+            className="command-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Command palette"
+            tabIndex={-1}
+            ref={paletteRef}
+            onKeyDown={handlePaletteKeyDown}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="command-input-row">
+              <span aria-hidden="true">⌕</span>
+              <input
+                ref={paletteInputRef}
+                value={paletteQuery}
+                onChange={(event) => {
+                  setPaletteQuery(event.target.value);
+                  setPaletteActiveIndex(0);
+                }}
+                placeholder="Jump to a tab or action…"
+                aria-label="Command palette search"
+              />
+              <kbd>Esc</kbd>
+            </div>
+            <div className="command-results">
+              {paletteActions.length ? paletteActions.map((action, index) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className={index === paletteActiveIndex ? "active" : undefined}
+                  ref={(button) => { paletteActionRefs.current[index] = button; }}
+                  onFocus={() => setPaletteActiveIndex(index)}
+                  onClick={() => runPaletteAction(action.run)}
+                >
+                  <span>{action.label}</span>
+                  <small>{action.kind}</small>
+                  <kbd>{action.shortcut}</kbd>
+                </button>
+              )) : <p>Nothing matches that.</p>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      <header className="app-topbar">
+        <div className="topbar-context">
+          <span className="compact-mark" aria-hidden="true"><i /><i /></span>
+          <strong>ContextTrace</strong>
+          {visibleDetail && (
+            <>
+              <span className="topbar-divider" />
+              <div className="breadcrumbs" aria-label="Current session">
+                <span>{projectName(visibleDetail.session.project)}</span>
+                <i>/</i>
+                <span>{visibleDetail.session.agent === "codex" ? "codex" : "claude"}</span>
+                <i>/</i>
+                <span>{shortId(visibleDetail.session.id)}</span>
+              </div>
+              <span className="topbar-tag">{visibleDetail.model ?? "model unknown"}</span>
+              {visibleDetail.contextWindow && <span className="topbar-tag">{formatTokens(visibleDetail.contextWindow)} window</span>}
+            </>
+          )}
+        </div>
+        <button className="command-trigger" type="button" onClick={openPalette} aria-haspopup="dialog">
+          <span aria-hidden="true">⌕</span>
+          <span>Search sessions, turns, actions…</span>
+          <kbd>Ctrl K</kbd>
+        </button>
+        <div className="topbar-actions">
+          <span className={demoData ? "topbar-status demo" : "topbar-status"}><i />{demoData ? "Demo data" : "Local only"}</span>
+          <button type="button" className="theme-toggle" onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
+            {theme === "dark" ? "☾ Dark" : "☀ Light"}
+          </button>
+        </div>
+      </header>
+
+      <div className="app-body">
       <aside className="sidebar">
-        <header className="brand">
-          <span className="brand-glyph">
-            <i />
-            <i />
-            <i />
-          </span>
-          <div>
-            <strong>ContextTrace</strong>
-            <span>See what fills your AI context</span>
-          </div>
-        </header>
+        <div className="sidebar-caption"><span>Sessions</span><span>{sessionTotal}</span></div>
 
         <div className="search-box">
           <span aria-hidden="true">⌕</span>
@@ -3231,25 +3487,6 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="primary-nav" aria-label="Workspace sections">
-          <span className="nav-label">Workspace</span>
-          {[
-            ["overview", "Overview", "Start with the session story"],
-            ["compare", "Compare", "See what changed between turns"],
-            ["insights", "Context insights", "Find waste and hidden changes"],
-            ["security", "Security & leaks", "Scan credentials before sharing"],
-            ["spend", "Cost & spend", "Forecast the next API bill"],
-            ["archive", "Save & export", "Keep or share the evidence"],
-          ].map(([id, label, detail]) => (
-            <button key={id} type="button" onClick={() => scrollToSection(id)}>
-              <span className="nav-index">{String(["overview", "compare", "insights", "security", "spend", "archive"].indexOf(id) + 1).padStart(2, "0")}</span>
-              <span>
-                <strong>{label}</strong>
-                <small>{detail}</small>
-              </span>
-            </button>
-          ))}
-        </nav>
 
         <div className="session-list-heading" aria-live="polite" aria-atomic="true">
           <span>{demoData ? "Demonstration sessions" : "Your sessions"}</span>
@@ -3343,6 +3580,30 @@ export default function App() {
         className={demoData ? "main-area demo-mode" : "main-area"}
         aria-busy={loadingDetail}
       >
+        <nav className="workspace-tabs" aria-label="Session views" role="tablist">
+          {WORKSPACE_VIEWS.map((view) => (
+            <button
+              key={view.id}
+              id={`${view.id}-tab`}
+              type="button"
+              role="tab"
+              aria-controls={`${view.id}-panel`}
+              aria-selected={activeView === view.id}
+              className={activeView === view.id ? "active" : ""}
+              onClick={() => setActiveView(view.id)}
+              disabled={!visibleDetail}
+            >
+              {view.label}
+            </button>
+          ))}
+          <div className="turn-stepper" aria-label="Selected turn">
+            <span>turn</span>
+            <button type="button" onClick={() => stepTurn(-1)} disabled={!canStepBack} aria-label="Previous measured turn">‹</button>
+            <output>{currentTurn == null ? "—" : String(currentTurn).padStart(2, "0")}</output>
+            <button type="button" onClick={() => stepTurn(1)} disabled={!canStepForward} aria-label="Next measured turn">›</button>
+          </div>
+        </nav>
+
         {demoData && (
           <div className="demo-banner" role="status">
             <span aria-hidden="true">◆</span>
@@ -3370,6 +3631,7 @@ export default function App() {
           </div>
         ) : visibleDetail ? (
           <SessionWorkspace
+            activeView={activeView}
             detail={visibleDetail}
             context={context}
             contextLoading={loadingContext}
@@ -3438,6 +3700,7 @@ export default function App() {
             <p>Choose a Codex or Claude Code run to see where its context went.</p>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

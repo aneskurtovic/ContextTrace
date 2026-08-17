@@ -16,11 +16,12 @@ session.
 > status](docs/MVP-STATUS.md) for the evidence, gates and distance to a public
 > release.
 
-![ContextTrace desktop app — session overview with prompt growth, context composition and largest contributors](docs/images/desktop.png)
+![ContextTrace desktop app — redesigned dark overview with prompt growth and live context monitoring](docs/images/desktop-overview-dark.png)
 
-*The desktop app's overview panel: prompt growth over the session, what
-filled the context window, and the largest contributors for the selected
-turn.*
+![ContextTrace desktop app — redesigned light overview](docs/images/desktop-overview-light.png)
+
+*The redesigned desktop app provides the same local-first measurements in
+dark and light themes, with overview, turns, diff and evidence views.*
 
 ## What it is
 
