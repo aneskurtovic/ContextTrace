@@ -3447,6 +3447,20 @@ function NotificationOnboarding({
   );
 }
 
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 620;
+const SIDEBAR_DEFAULT = 250;
+
+function storedSidebarWidth(): number {
+  const stored = Number(window.localStorage.getItem("ct.sidebarWidth"));
+  // A stored value out of range would restore a panel the reader cannot see or
+  // cannot get past, so it is discarded rather than clamped into something they
+  // never chose.
+  return Number.isFinite(stored) && stored >= SIDEBAR_MIN && stored <= SIDEBAR_MAX
+    ? stored
+    : SIDEBAR_DEFAULT;
+}
+
 export default function App() {
   // Without the desktop bridge every panel below is filled from `demo.ts`.
   // A tool that argues for evidence over invention cannot render invented
@@ -3463,6 +3477,14 @@ export default function App() {
   const [context, setContext] = useState<ContextDetail | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>("overview");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
+  const [resizing, setResizing] = useState(false);
+
+  const applySidebarWidth = useCallback((width: number) => {
+    const clamped = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
+    setSidebarWidth(clamped);
+    window.localStorage.setItem("ct.sidebarWidth", String(clamped));
+  }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActiveIndex, setPaletteActiveIndex] = useState(0);
@@ -4467,7 +4489,11 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell" data-theme={theme}>
+    <div
+      className={resizing ? "app-shell resizing" : "app-shell"}
+      data-theme={theme}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+    >
       {notificationSettings && (
         <NotificationOnboarding
           settings={notificationSettings}
@@ -4769,6 +4795,40 @@ export default function App() {
           )}
         </footer>
       </aside>
+
+      {/* A real separator rather than a styled ::after, so the panel can be
+          resized without a mouse. */}
+      <div
+        className="sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the sessions panel"
+        aria-valuenow={sidebarWidth}
+        aria-valuemin={SIDEBAR_MIN}
+        aria-valuemax={SIDEBAR_MAX}
+        tabIndex={0}
+        onDoubleClick={() => applySidebarWidth(SIDEBAR_DEFAULT)}
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setResizing(true);
+        }}
+        onPointerMove={(event) => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          applySidebarWidth(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          setResizing(false);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") applySidebarWidth(sidebarWidth - 16);
+          else if (event.key === "ArrowRight") applySidebarWidth(sidebarWidth + 16);
+          else if (event.key === "Home") applySidebarWidth(SIDEBAR_MIN);
+          else if (event.key === "End") applySidebarWidth(SIDEBAR_MAX);
+          else return;
+          event.preventDefault();
+        }}
+      />
 
       <div
         className={demoData ? "main-area demo-mode" : "main-area"}

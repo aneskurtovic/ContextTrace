@@ -154,6 +154,8 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
+afterEach(() => window.localStorage.clear());
+
 describe("desktop accessibility and state handling", () => {
   it("announces loading and renders a deterministic empty state", async () => {
     const sessions = deferred<SessionPage>();
@@ -1339,5 +1341,21 @@ describe("Find hidden changes gating and baseline controls", () => {
     const [, , left, right] = mockedApi.getTemporalGhost.mock.calls.at(-1)!;
     expect(left).toBe(pinned);
     expect(right).not.toBe(pinned);
+  });
+});
+
+describe("resizing the sessions panel", () => {
+  it('remembers a sidebar width and refuses a stored one it could not show', async () => {
+    window.localStorage.setItem('ct.sidebarWidth', '9000');
+    render(<App />);
+
+    // An out-of-range stored value must not restore a panel the user cannot see.
+    const shell = document.querySelector('.app-shell') as HTMLElement;
+    await waitFor(() => expect(shell.style.getPropertyValue('--sidebar-width')).toBe('250px'));
+
+    const separator = screen.getByRole('separator', { name: 'Resize the sessions panel' });
+    fireEvent.keyDown(separator, { key: 'ArrowRight' });
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('266px');
+    expect(window.localStorage.getItem('ct.sidebarWidth')).toBe('266');
   });
 });

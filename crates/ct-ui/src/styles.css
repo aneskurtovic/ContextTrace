@@ -363,12 +363,14 @@ button:disabled {
 }
 
 .session-title {
+  display: -webkit-box;
   overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: #d7deeb;
   font-size: 12px;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .session-meta,
@@ -2601,13 +2603,11 @@ select option {
   --pink: #7c4ddb;
 }
 
-.app-body {
-  display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
+.app-body { display: grid; grid-template-columns: var(--sidebar-width, 250px) 5px minmax(0, 1fr); flex: 1; min-width: 0; min-height: 0; }
+.sidebar-resizer { position: sticky; top: 0; height: 100vh; border-right: 1px solid transparent; background: transparent; cursor: col-resize; }
+.sidebar-resizer:hover, .sidebar-resizer:focus-visible { background: var(--accent-line); outline: none; }
+/* A fast drag over the workspace must not select the text it passes over. */
+.app-shell.resizing { cursor: col-resize; user-select: none; }
 
 .app-topbar {
   z-index: 20;
@@ -2960,7 +2960,10 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 @media (max-width: 1180px) {
   .app-topbar { grid-template-columns: minmax(230px, 1fr) minmax(220px, 360px) auto; }
   .topbar-tag:last-child { display: none; }
-  .app-body { grid-template-columns: 230px minmax(0, 1fr); }
+  /* A user-chosen width narrower than this cap is left alone; only a wider one
+     is capped, so the breakpoint stops an oversized panel from eating a
+     narrowed viewport without silently overriding a deliberate choice. */
+  .app-body { grid-template-columns: min(var(--sidebar-width, 250px), 230px) 5px minmax(0, 1fr); }
   .workspace { padding-right: 14px; padding-left: 14px; }
   .metrics { margin-right: -14px; margin-left: -14px; }
 }
@@ -2971,7 +2974,9 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
   .breadcrumbs,
   .topbar-tag,
   .topbar-status { display: none; }
-  .app-body { grid-template-columns: 210px minmax(0, 1fr); }
+  /* Same cap-not-reset reasoning as the 1180px breakpoint above, at this
+     narrower width's own ceiling. */
+  .app-body { grid-template-columns: min(var(--sidebar-width, 250px), 210px) 5px minmax(0, 1fr); }
   .sidebar { height: auto; max-height: none; }
   .session-list { max-height: none; }
   .workspace { padding: 12px 12px 28px; }
@@ -2986,6 +2991,9 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
   .command-trigger { grid-column: 1 / -1; grid-row: 2; margin-bottom: 7px; }
   .app-body { display: flex; min-height: calc(100vh - 80px); flex-direction: column; }
   .sidebar { max-height: 280px; flex: 0 0 280px; border-right: 0; border-bottom: 1px solid var(--line); }
+  /* The stacked mobile layout has no side-by-side columns to divide, so the
+     drag handle would otherwise render as a stray horizontal strip. */
+  .sidebar-resizer { display: none; }
   .main-area { overflow: visible; }
   .workspace-tabs { position: sticky; top: 80px; z-index: 10; overflow-x: auto; }
   .workspace { overflow: visible; }
