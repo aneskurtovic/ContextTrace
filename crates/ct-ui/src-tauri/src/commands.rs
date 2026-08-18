@@ -421,6 +421,12 @@ impl AppState {
     /// waited for. An explicit refresh means the caller wants to treat the
     /// cache as possibly stale (a file could have changed or disappeared on
     /// disk since it was cached), so only that case clears both caches.
+    ///
+    /// Seven parameters, not a params struct: every one of them is a wire
+    /// argument the frontend names individually when it calls this command,
+    /// so grouping them would only move the same fields behind a struct name
+    /// the caller never sends -- it would not shrink the actual interface.
+    #[allow(clippy::too_many_arguments)]
     fn search_sessions(
         &self,
         agent: Option<String>,
@@ -2933,6 +2939,12 @@ pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
 }
 
 /// Search session metadata on the backend and return explicit paging facts.
+///
+/// Eight parameters for the same reason `AppState::search_sessions` has
+/// seven: this is the IPC entry point, so each one is a name the frontend's
+/// `invoke` call sends on the wire, not an internal grouping this file is
+/// free to tidy away behind a struct.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn search_sessions(
     agent: Option<String>,
@@ -3443,6 +3455,43 @@ mod tests {
         }
     }
 
+    /// A catalog with real variation along every axis the project and
+    /// subagent filters branch on: two distinct projects, a root thread and
+    /// its subagent in one of them, and a session whose log recorded no
+    /// project at all. `catalog_descriptor` alone cannot build this -- every
+    /// descriptor it returns is `ThreadRole::Root` with `project: Some(_)` --
+    /// so the fixture tests that need a subagent or an unrecorded project
+    /// construct descriptors directly, the same way
+    /// `session_summary_reports_a_subagent_thread_and_its_parent` does.
+    fn filter_fixture_descriptors() -> Vec<SessionDescriptor> {
+        fn descriptor(id: &str, project: Option<&str>, thread_role: ThreadRole) -> SessionDescriptor {
+            SessionDescriptor {
+                id: ct_domain::SessionId::new(id).unwrap(),
+                agent: AgentKind::Codex,
+                path: format!("C:/catalog/{id}.jsonl"),
+                size_bytes: 1,
+                project: project.map(str::to_string),
+                title: None,
+                git_branch: None,
+                started_at: None,
+                last_activity: None,
+                thread_role,
+            }
+        }
+        vec![
+            descriptor("root-alpha", Some("C:/repos/alpha"), ThreadRole::Root),
+            descriptor(
+                "subagent-alpha",
+                Some("C:/repos/alpha"),
+                ThreadRole::Subagent {
+                    parent: ct_domain::SessionId::new("root-alpha").unwrap(),
+                },
+            ),
+            descriptor("root-beta", Some("C:/repos/beta"), ThreadRole::Root),
+            descriptor("root-unrecorded", None, ThreadRole::Root),
+        ]
+    }
+
     fn catalog_state(sessions: Vec<SessionDescriptor>) -> AppState {
         AppState::from_parts(
             ContextTrace::new(vec![AgentBinding::new(
@@ -3706,60 +3755,92 @@ mod tests {
 
     #[test]
     fn subagent_threads_are_left_out_unless_they_are_asked_for() {
-        let homes = FixtureHomes::new();
-        let state = homes.state();
+        // Four descriptors: two root sessions in different projects, one
+        // root session with no recorded project, and one subagent under
+        // `root-alpha`. Only the subagent's presence or absence can move
+        // these totals, so a no-op filter is caught by the exact counts
+        // below, not merely by an inequality both sides of a real filter
+        // would also satisfy.
+        let state = catalog_state(filter_fixture_descriptors());
         let without = state
             .search_sessions(None, None, None, None, None, None, None)
             .expect("a page");
         let with = state
             .search_sessions(None, None, None, Some(true), None, None, None)
             .expect("a page");
+        assert_eq!(
+            without.total, 3,
+            "three root sessions; the subagent thread is left out by default"
+        );
+        assert_eq!(
+            with.total, 4,
+            "asking for subagents adds exactly the one subagent thread"
+        );
         assert!(
             without.sessions.iter().all(|session| session.thread_role.kind == "root"),
             "a subagent thread is not a run the reader started"
         );
-        assert!(with.total >= without.total);
+        assert!(
+            with.sessions.iter().any(|session| session.thread_role.kind == "subagent"),
+            "asking for subagents must actually surface one"
+        );
     }
 
     #[test]
     fn a_project_filter_matches_the_whole_path_and_narrows_the_total() {
-        let homes = FixtureHomes::new();
-        let state = homes.state();
+        // Two sessions carry "C:/repos/alpha" (one root, one subagent), one
+        // carries "C:/repos/beta", and one has no recorded project. With
+        // subagents left out by default, filtering to alpha must leave
+        // exactly the one root session in it -- a no-op filter would instead
+        // return all three root sessions, and a substring-matching filter
+        // would wrongly also catch nothing here since neither project name
+        // is a prefix of the other, so this alone would not catch that bug;
+        // the exact-match assertion below is what does.
+        let state = catalog_state(filter_fixture_descriptors());
         let all = state
             .search_sessions(None, None, None, None, None, None, None)
             .expect("a page");
-        let project = all
-            .sessions
-            .iter()
-            .find_map(|session| session.project.clone())
-            .expect("a fixture session with a project");
+        assert_eq!(all.total, 3, "three root sessions before any project filter");
+
         let filtered = state
             .search_sessions(
                 None,
                 None,
-                Some(ProjectFilter::Path(project.clone())),
+                Some(ProjectFilter::Path("C:/repos/alpha".to_string())),
                 None,
                 None,
                 None,
                 None,
             )
             .expect("a page");
-        assert!(filtered.total > 0);
-        assert!(filtered.total <= all.total);
+        assert_eq!(
+            filtered.total, 1,
+            "only root-alpha matches; root-beta and the unrecorded-project \
+             session must be excluded, not merely outnumbered"
+        );
         assert!(
             filtered
                 .sessions
                 .iter()
-                .all(|session| session.project.as_deref() == Some(project.as_str())),
+                .all(|session| session.project.as_deref() == Some("C:/repos/alpha")),
             "the filter is exact, not a substring: two checkouts can share a leaf name"
         );
     }
 
     #[test]
     fn the_project_list_counts_what_selecting_it_would_show() {
-        let homes = FixtureHomes::new();
-        let state = homes.state();
-        for summary in state.list_projects(None, None).expect("projects") {
+        // Exercises all three project shapes at once: two named projects and
+        // the `Unrecorded` case (root-unrecorded's log kept no `cwd`), which
+        // nothing before this fix ever put through `list_projects` or the
+        // `ProjectFilter::Unrecorded` arm of `search_sessions`.
+        let state = catalog_state(filter_fixture_descriptors());
+        let projects = state.list_projects(None, None).expect("projects");
+        assert_eq!(projects.len(), 3, "alpha, beta, and the unrecorded bucket");
+        assert!(
+            projects.iter().any(|summary| summary.path.is_none()),
+            "the unrecorded-project session must get its own entry"
+        );
+        for summary in &projects {
             let filtered = state
                 .search_sessions(
                     None,
