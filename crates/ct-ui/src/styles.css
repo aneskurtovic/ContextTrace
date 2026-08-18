@@ -489,7 +489,6 @@ button:disabled {
 .workspace-section {
   display: grid;
   gap: 14px;
-  max-width: 1260px;
   margin: 0 auto 24px;
   scroll-margin-top: 24px;
 }
@@ -537,7 +536,6 @@ button:disabled {
   justify-content: space-between;
   gap: 24px;
   align-items: flex-start;
-  max-width: 1260px;
   margin: 0 auto 27px;
 }
 

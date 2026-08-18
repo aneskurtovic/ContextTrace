@@ -3638,16 +3638,46 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [closePalette, notificationDrawerOpen, openPalette, paletteOpen]);
 
-  // Recomputed when the agent or subagent filter changes, so the count beside
-  // an option always describes what selecting it would actually show.
+  // A project filter chosen under one agent may name a project the other
+  // agent never wrote (a Codex-only checkout, say). Left in place across an
+  // agent switch, the backend would return zero sessions and the <select>
+  // below would render blank -- its value would name an option that no
+  // longer exists in its own option list -- with nothing on screen
+  // explaining why the list went empty. Resetting here means the switch
+  // always lands on "All projects" instead.
+  //
+  // The mount guard matters beyond tidiness: `refreshSessions` closes over
+  // `projectFilter`, so replacing it with a new (if equal) object on the
+  // very first render would change that callback's identity and fire a
+  // second, redundant initial fetch through the effect below that calls it.
+  const agentFilterMounted = useRef(false);
+  useEffect(() => {
+    if (!agentFilterMounted.current) {
+      agentFilterMounted.current = true;
+      return;
+    }
+    setProjectFilter({ kind: "any" });
+  }, [agentFilter]);
+
+  // Recomputed when the agent, subagent, or search filter changes, so the
+  // count beside an option always describes what selecting it would actually
+  // show against the session list on screen right now, including whatever
+  // the search box has already narrowed away.
   useEffect(() => {
     if (typeof api.listProjects !== "function") return;
     let cancelled = false;
-    api.listProjects(agentFilter === "all" ? undefined : agentFilter, showSubagents)
+    api.listProjects(agentFilter === "all" ? undefined : agentFilter, debouncedQuery, showSubagents)
       .then((options) => { if (!cancelled) setProjectOptions(options); })
-      .catch(() => { if (!cancelled) setProjectOptions([]); });
+      .catch((loadError) => {
+        // Keep whatever options are already on screen rather than emptying
+        // the dropdown: "All projects" plus nothing else is indistinguishable
+        // from "you genuinely have one project," so silently clearing the
+        // list on a backend failure would misreport the failure as a fact
+        // about the user's data instead of surfacing it as an error.
+        if (!cancelled) setError(errorMessage(loadError));
+      });
     return () => { cancelled = true; };
-  }, [agentFilter, showSubagents]);
+  }, [agentFilter, debouncedQuery, showSubagents]);
 
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
@@ -4842,6 +4872,15 @@ export default function App() {
           event.currentTarget.releasePointerCapture(event.pointerId);
           setResizing(false);
         }}
+        // A drag does not always end at `onPointerUp`: alt-tab, a system
+        // dialog, or anything else that steals the pointer fires
+        // `pointercancel` or `lostpointercapture` instead. Without these,
+        // `resizing` would stick true and `.app-shell.resizing` would keep
+        // `cursor: col-resize` and `user-select: none` over the whole app --
+        // in a tool whose purpose is reading and copying transcript text,
+        // an unrecoverable-looking loss of text selection.
+        onPointerCancel={() => setResizing(false)}
+        onLostPointerCapture={() => setResizing(false)}
         onKeyDown={(event) => {
           if (event.key === "ArrowLeft") applySidebarWidth(sidebarWidth - 16);
           else if (event.key === "ArrowRight") applySidebarWidth(sidebarWidth + 16);

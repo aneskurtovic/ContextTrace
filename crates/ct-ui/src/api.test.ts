@@ -311,8 +311,27 @@ describe("desktop IPC response validation", () => {
     ];
     invoke.mockResolvedValue(options);
 
-    await expect(listProjects('codex', true)).resolves.toEqual(options);
-    expect(invoke).toHaveBeenCalledWith('list_projects', { agent: 'codex', includeSubagents: true });
+    await expect(listProjects('codex', undefined, true)).resolves.toEqual(options);
+    expect(invoke).toHaveBeenCalledWith('list_projects', {
+      agent: 'codex',
+      query: null,
+      includeSubagents: true,
+    });
+  });
+
+  it('forwards the search query listProjects was called with, so a narrowed dropdown reflects a narrowed list', async () => {
+    // Regression: the project dropdown once ignored the search box entirely,
+    // so its counts described the whole catalog even while the session list
+    // beside it had already been narrowed by a query.
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue([]);
+
+    await listProjects('codex', '  atlas  ', true);
+    expect(invoke).toHaveBeenCalledWith('list_projects', {
+      agent: 'codex',
+      query: 'atlas',
+      includeSubagents: true,
+    });
   });
 
   describe('demo-path project and subagent filtering', () => {
@@ -386,9 +405,35 @@ describe("desktop IPC response validation", () => {
       // includeSubagents flips the same count the search filter uses, so the
       // two must stay in lockstep rather than each having its own notion of
       // which sessions count.
-      const withSubagents = await listProjects(undefined, true);
+      const withSubagents = await listProjects(undefined, undefined, true);
       const totalWithSubagents = withSubagents.reduce((sum, option) => sum + option.count, 0);
       expect(totalWithSubagents).toBe(demoSessions.length);
+    });
+
+    it('narrows the demo project list by the same query the session search used', async () => {
+      // Same regression as the backend test, exercised on the browser-demo
+      // path: a query that narrows `searchSessions` must narrow
+      // `listProjects` the same way, not just filter the session list while
+      // leaving the dropdown describing the unfiltered catalog.
+      const target = demoSessions.find((session) => session.threadRole.kind !== 'subagent')!;
+      const needle = target.id.slice(0, 6);
+      const matchingIds = new Set(
+        demoSessions
+          .filter((session) => session.threadRole.kind !== 'subagent')
+          .filter((session) =>
+            [session.project, session.id, session.path, session.agent]
+              .filter(Boolean)
+              .some((value) => value!.toLocaleLowerCase().includes(needle.toLocaleLowerCase())),
+          )
+          .map((session) => session.project),
+      );
+      expect(matchingIds.size).toBeGreaterThan(0);
+      expect(matchingIds.size).toBeLessThan(
+        new Set(demoSessions.map((session) => session.project)).size,
+      );
+
+      const options = await listProjects(undefined, needle);
+      expect(new Set(options.map((option) => option.path))).toEqual(matchingIds);
     });
   });
 

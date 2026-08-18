@@ -303,13 +303,31 @@ function asProjectOptions(value: unknown): ProjectOption[] {
  * catalog -- it is counted under a `path: null` entry labelled "No recorded
  * folder", so the total across every option still accounts for every
  * matching session.
+ *
+ * `query` is the same search-box text `searchSessions` was called with, so
+ * the count beside an option always describes what selecting it would show
+ * against the session list the reader is actually looking at, not the whole
+ * unfiltered catalog.
  */
-export function listProjects(agent?: string, includeSubagents = false): Promise<ProjectOption[]> {
+export function listProjects(
+  agent?: string,
+  query?: string,
+  includeSubagents = false,
+): Promise<ProjectOption[]> {
   if (!inTauri()) {
+    const needle = query?.trim().toLocaleLowerCase();
     const counts = new Map<string | null, number>();
     for (const session of demoSessions) {
       if (agent && session.agent !== agent) continue;
       if (!includeSubagents && session.threadRole.kind === 'subagent') continue;
+      if (
+        needle &&
+        ![session.project, session.id, session.path, session.agent]
+          .filter(Boolean)
+          .some((value) => value!.toLocaleLowerCase().includes(needle))
+      ) {
+        continue;
+      }
       counts.set(session.project, (counts.get(session.project) ?? 0) + 1);
     }
     return Promise.resolve(
@@ -322,6 +340,7 @@ export function listProjects(agent?: string, includeSubagents = false): Promise<
   }
   return invoke<unknown>('list_projects', {
     agent: agent || null,
+    query: query?.trim() || null,
     includeSubagents,
   }).then(asProjectOptions);
 }

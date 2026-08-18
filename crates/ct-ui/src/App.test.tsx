@@ -315,6 +315,78 @@ describe("desktop accessibility and state handling", () => {
     ));
   });
 
+  it("threads the search box query into the project dropdown's counts", async () => {
+    // Regression: the dropdown used to call listProjects with no query at
+    // all, so it kept reading e.g. "contexttrace · 41" after the search box
+    // had already narrowed the visible session list to a handful of rows --
+    // a number that described a set the search box had excluded.
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValue([]);
+    render(<App />);
+
+    await screen.findAllByRole("button", { name: /Codex session/ });
+    mockedApi.listProjects.mockClear();
+
+    fireEvent.change(screen.getByLabelText("Search sessions"), {
+      target: { value: "atlas" },
+    });
+
+    await waitFor(
+      () => expect(mockedApi.listProjects).toHaveBeenLastCalledWith(undefined, "atlas", false),
+      { timeout: 1_000 },
+    );
+  });
+
+  it("resets an orphaned project filter when the agent filter changes", async () => {
+    // Regression: a project chosen under one agent can be meaningless under
+    // another. Left in place, the backend returned zero sessions and the
+    // <select> rendered blank -- its value named an option absent from its
+    // own list -- with nothing on screen explaining the empty result.
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValue([
+      { path: "C:\\work\\api", label: "api", count: 3 },
+    ]);
+    render(<App />);
+
+    await screen.findAllByRole("button", { name: /Codex session/ });
+    const select = screen.getByLabelText("Filter sessions by project") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "C:\\work\\api" } });
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      undefined, "", 0, 200, false, { kind: "path", path: "C:\\work\\api" }, false,
+    ));
+    expect(select.value).toBe("C:\\work\\api");
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      "codex", "", 0, 200, false, { kind: "any" }, false,
+    ));
+    expect(select.value).toBe("any");
+  });
+
+  it("surfaces a project list failure in the alert instead of emptying the dropdown", async () => {
+    // Regression: `.catch(() => setProjectOptions([]))` made a backend
+    // failure indistinguishable from "you have exactly one project" (the
+    // ever-present "All projects" choice would be all that remained). The
+    // fix reports the failure and keeps whatever options were already shown.
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValueOnce([
+      { path: "C:\\work\\api", label: "api", count: 3 },
+    ]);
+    render(<App />);
+
+    await screen.findAllByRole("button", { name: /Codex session/ });
+    const select = screen.getByLabelText("Filter sessions by project") as HTMLSelectElement;
+    expect(select.options.length).toBe(2); // "All projects" plus "api"
+
+    mockedApi.listProjects.mockRejectedValueOnce(new Error("project list unavailable"));
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("project list unavailable");
+    expect(select.options.length).toBe(2);
+  });
+
   it("keeps the latest session visible when older detail and context requests finish later", async () => {
     const [first, latest] = demoSessions;
     const firstDetail = deferred<SessionDetail>();

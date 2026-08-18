@@ -380,15 +380,16 @@ impl AppState {
     /// Every project the catalog recognises, with the count each one would show.
     ///
     /// Counted over the whole filtered set rather than a page, and under the
-    /// same agent and subagent filters the list is showing, so the number
-    /// beside an option always describes what selecting it does.
+    /// same agent, search query and subagent filters the list is showing, so
+    /// the number beside an option always describes what selecting it does.
     fn list_projects(
         &self,
         agent: Option<String>,
+        query: Option<String>,
         include_subagents: Option<bool>,
     ) -> Result<Vec<ProjectSummary>, String> {
         let descriptors =
-            self.filtered_descriptors(agent, None, None, include_subagents.unwrap_or(false))?;
+            self.filtered_descriptors(agent, query, None, include_subagents.unwrap_or(false))?;
         let mut counts: BTreeMap<Option<String>, usize> = BTreeMap::new();
         for descriptor in &descriptors {
             *counts.entry(descriptor.project.clone()).or_default() += 1;
@@ -1823,7 +1824,7 @@ pub enum ProjectFilter {
 }
 
 /// One selectable project, with the number of sessions selecting it would show.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
     /// The full path, which is what the filter matches on. `None` is the entry
@@ -2974,10 +2975,11 @@ pub fn search_sessions(
 #[tauri::command]
 pub fn list_projects(
     agent: Option<String>,
+    query: Option<String>,
     include_subagents: Option<bool>,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ProjectSummary>, String> {
-    state.list_projects(agent, include_subagents)
+    state.list_projects(agent, query, include_subagents)
 }
 
 #[tauri::command]
@@ -3865,7 +3867,7 @@ mod tests {
         // nothing before this fix ever put through `list_projects` or the
         // `ProjectFilter::Unrecorded` arm of `search_sessions`.
         let state = catalog_state(filter_fixture_descriptors());
-        let projects = state.list_projects(None, None).expect("projects");
+        let projects = state.list_projects(None, None, None).expect("projects");
         assert_eq!(projects.len(), 3, "alpha, beta, and the unrecorded bucket");
         assert!(
             projects.iter().any(|summary| summary.path.is_none()),
@@ -3888,6 +3890,32 @@ mod tests {
                 .expect("a page");
             assert_eq!(filtered.total, summary.count, "{:?}", summary.label);
         }
+    }
+
+    #[test]
+    fn the_project_list_narrows_with_the_same_query_the_session_list_used() {
+        // Regression for a dropdown that read "contexttrace · 41" while the
+        // search box had already narrowed the visible list to 3: the count
+        // beside an option must describe what selecting it would show given
+        // the query already typed, not the whole unfiltered catalog. Only
+        // "root-alpha" and "subagent-alpha" have "alpha" in their id, path or
+        // project; "root-beta" and "root-unrecorded" have it in none of
+        // those, so a query-blind count would still report all three
+        // projects instead of just alpha's.
+        let state = catalog_state(filter_fixture_descriptors());
+        let projects = state
+            .list_projects(None, Some("alpha".to_string()), None)
+            .expect("projects");
+        assert_eq!(
+            projects,
+            vec![ProjectSummary {
+                label: "alpha".to_string(),
+                path: Some("C:/repos/alpha".to_string()),
+                count: 1,
+            }],
+            "only the alpha project should survive the query, with its \
+             subagent-excluded count of 1, not the unfiltered catalog"
+        );
     }
 
     #[test]
