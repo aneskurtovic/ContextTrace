@@ -34,6 +34,10 @@ serde_json.workspace = true
 chrono.workspace = true
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-notification = "2"
+# A second instance polls the same logs and writes the same notification store
+# as the first, with no cross-process locking between them. There is no use for
+# two, so there is one.
+tauri-plugin-single-instance = "2"
 
 # The toast API `tauri-plugin-notification` already builds on, named directly
 # because the plugin's own `show()` spawns the send and discards its `Result`.

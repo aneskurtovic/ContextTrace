@@ -34,6 +34,7 @@ vi.mock("./api", () => ({
   isDemoData: vi.fn(),
   getStartup: vi.fn(),
   searchSessions: vi.fn(),
+  listProjects: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
   getCorpus: vi.fn(),
@@ -107,6 +108,7 @@ beforeEach(() => {
   mockedApi.isDemoData.mockReturnValue(false);
   mockedApi.getStartup.mockResolvedValue(startup);
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
+  mockedApi.listProjects.mockResolvedValue([]);
   mockedApi.inspectSession.mockImplementation(async (_agent, id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
   mockedApi.getCorpus.mockResolvedValue(demoCorpus);
@@ -151,6 +153,8 @@ afterEach(() => {
   cleanup();
   vi.resetAllMocks();
 });
+
+afterEach(() => window.localStorage.clear());
 
 describe("desktop accessibility and state handling", () => {
   it("announces loading and renders a deterministic empty state", async () => {
@@ -256,6 +260,8 @@ describe("desktop accessibility and state handling", () => {
           0,
           200,
           false,
+          { kind: "any" },
+          false,
         ),
       { timeout: 1_000 },
     );
@@ -274,12 +280,111 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Load more (1)" }));
 
     await waitFor(() =>
-      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 1, 200, false),
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+        undefined, "", 1, 200, false, { kind: "any" }, false,
+      ),
     );
     expect(
       await screen.findByRole("button", { name: /Claude Code session: .*atlas-dashboard/ }),
     ).not.toBeNull();
     expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
+  });
+
+  it("narrows the session list by project and by thread role", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValue([
+      { path: "C:\\work\\api", label: "api", count: 3 },
+      { path: null, label: "No recorded folder", count: 1 },
+    ]);
+    render(<App />);
+
+    // demoSessions carries several Codex rows, so wait for the list rather
+    // than a single accessible name that would be ambiguous once loaded.
+    await screen.findAllByRole("button", { name: /Codex session/ });
+
+    fireEvent.change(screen.getByLabelText("Filter sessions by project"), {
+      target: { value: "C:\\work\\api" },
+    });
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      undefined, "", 0, 200, false, { kind: "path", path: "C:\\work\\api" }, false,
+    ));
+
+    fireEvent.click(screen.getByLabelText("Show subagent sessions"));
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      undefined, "", 0, 200, false, { kind: "path", path: "C:\\work\\api" }, true,
+    ));
+  });
+
+  it("threads the search box query into the project dropdown's counts", async () => {
+    // Regression: the dropdown used to call listProjects with no query at
+    // all, so it kept reading e.g. "contexttrace · 41" after the search box
+    // had already narrowed the visible session list to a handful of rows --
+    // a number that described a set the search box had excluded.
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValue([]);
+    render(<App />);
+
+    await screen.findAllByRole("button", { name: /Codex session/ });
+    mockedApi.listProjects.mockClear();
+
+    fireEvent.change(screen.getByLabelText("Search sessions"), {
+      target: { value: "atlas" },
+    });
+
+    await waitFor(
+      () => expect(mockedApi.listProjects).toHaveBeenLastCalledWith(undefined, "atlas", false),
+      { timeout: 1_000 },
+    );
+  });
+
+  it("resets an orphaned project filter when the agent filter changes", async () => {
+    // Regression: a project chosen under one agent can be meaningless under
+    // another. Left in place, the backend returned zero sessions and the
+    // <select> rendered blank -- its value named an option absent from its
+    // own list -- with nothing on screen explaining the empty result.
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValue([
+      { path: "C:\\work\\api", label: "api", count: 3 },
+    ]);
+    render(<App />);
+
+    await screen.findAllByRole("button", { name: /Codex session/ });
+    const select = screen.getByLabelText("Filter sessions by project") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "C:\\work\\api" } });
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      undefined, "", 0, 200, false, { kind: "path", path: "C:\\work\\api" }, false,
+    ));
+    expect(select.value).toBe("C:\\work\\api");
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      "codex", "", 0, 200, false, { kind: "any" }, false,
+    ));
+    expect(select.value).toBe("any");
+  });
+
+  it("surfaces a project list failure in the alert instead of emptying the dropdown", async () => {
+    // Regression: `.catch(() => setProjectOptions([]))` made a backend
+    // failure indistinguishable from "you have exactly one project" (the
+    // ever-present "All projects" choice would be all that remained). The
+    // fix reports the failure and keeps whatever options were already shown.
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValueOnce([
+      { path: "C:\\work\\api", label: "api", count: 3 },
+    ]);
+    render(<App />);
+
+    await screen.findAllByRole("button", { name: /Codex session/ });
+    const select = screen.getByLabelText("Filter sessions by project") as HTMLSelectElement;
+    expect(select.options.length).toBe(2); // "All projects" plus "api"
+
+    mockedApi.listProjects.mockRejectedValueOnce(new Error("project list unavailable"));
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("project list unavailable");
+    expect(select.options.length).toBe(2);
   });
 
   it("keeps the latest session visible when older detail and context requests finish later", async () => {
@@ -473,12 +578,16 @@ describe("desktop accessibility and state handling", () => {
 
     // Initial catalog load must not ask the backend to treat its cache as stale.
     await waitFor(() =>
-      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 0, 200, false),
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+        undefined, "", 0, 200, false, { kind: "any" }, false,
+      ),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
     await waitFor(() =>
-      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 0, 200, true),
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+        undefined, "", 0, 200, true, { kind: "any" }, false,
+      ),
     );
   });
 
@@ -561,19 +670,14 @@ describe("desktop accessibility and state handling", () => {
     expect(codexRow.getAttribute("aria-current")).toBeNull();
   });
 
-  it("measures unlogged context only when asked, and states the spread beside the ratio", async () => {
+  it("measures unlogged context automatically when Turns opens, and states the spread beside the ratio", async () => {
     const claudeSession = demoSessions.find((session) => session.agent === "claude-code")!;
     mockedApi.searchSessions.mockResolvedValue(sessionPage([claudeSession]));
 
     render(<App />);
     await openView("Turns");
 
-    const run = await screen.findByRole("button", { name: "Measure this session" });
-    // Selecting a session must not pay for a full-session reconstruction.
-    expect(mockedApi.getResidual).not.toHaveBeenCalled();
-
-    fireEvent.click(run);
-
+    // Opening the tab is itself the question; no click is required to ask it.
     await waitFor(() =>
       expect(mockedApi.getResidual).toHaveBeenCalledWith(claudeSession.agent, claudeSession.id),
     );
@@ -599,8 +703,6 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
     await openView("Turns");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
-
     expect(
       await screen.findByText(/all 41 turns reconstruct to more content than their prompts held/),
     ).not.toBeNull();
@@ -622,8 +724,6 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
     await openView("Turns");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
-
     expect(
       await screen.findByText("A compaction occurred here, which explains it."),
     ).not.toBeNull();
@@ -631,6 +731,39 @@ describe("desktop accessibility and state handling", () => {
     // unrecorded harness change would invent a second cause for one event.
     expect(screen.queryByText(/a tool registered, an MCP server connected/)).toBeNull();
   });
+
+  it("measures the session when Turns opens, once per session", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions.slice(0, 2)));
+    render(<App />);
+
+    await openView("Turns");
+    await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
+
+    // Leaving and returning is not a new question about the same session.
+    await openView("Overview");
+    await openView("Turns");
+    await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
+  });
+
+  it("measures a newly selected session even though the previous one was already measured", async () => {
+    const [first, second] = demoSessions;
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([first, second]));
+    render(<App />);
+
+    await openView("Turns");
+    await waitFor(() =>
+      expect(mockedApi.getResidual).toHaveBeenCalledWith(first.agent, first.id),
+    );
+
+    // A different session is a new question, even though Turns is already open.
+    const secondRow = await screen.findByRole("button", { name: new RegExp(second.title!.text) });
+    fireEvent.click(secondRow);
+    await waitFor(() =>
+      expect(mockedApi.getResidual).toHaveBeenCalledWith(second.agent, second.id),
+    );
+    expect(mockedApi.getResidual).toHaveBeenCalledTimes(2);
+  });
+
   it("exposes the redesigned views as an accessible tab set", async () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
@@ -852,6 +985,20 @@ describe('notifications', () => {
     expect(await screen.findByText(/no installed shortcut carries the app id/)).not.toBeNull();
   });
 
+  it('explains an empty settings panel instead of redrawing the feed', async () => {
+    mockedApi.getNotificationSettings.mockRejectedValue(new Error('store unreadable'));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+
+    // A control that changes nothing when pressed is worse than one that says why.
+    expect(await screen.findByText(/store unreadable/)).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry loading settings' })).not.toBeNull();
+    const drawer = screen.getByRole('dialog', { name: 'Notifications' });
+    expect(drawer.querySelector('.notification-feed')).toBeNull();
+  });
+
   it('requires an explicit local-monitoring onboarding decision', async () => {
     mockedApi.getNotificationSettings.mockResolvedValue({
       ...demoNotificationSettings,
@@ -865,6 +1012,23 @@ describe('notifications', () => {
     await waitFor(() => expect(mockedApi.updateNotificationSettings).toHaveBeenCalledWith(
       expect.objectContaining({ enabled: true, onboardingComplete: true }),
     ));
+  });
+
+  it('still loads the settings when the status payload is rejected', async () => {
+    // One bad payload used to reject the whole Promise.all, which left settings
+    // null -- and the panel is gated on settings, so pressing Settings redrew
+    // the feed and looked like a dead button.
+    mockedApi.getNotificationStatus.mockRejectedValue(
+      new Error('ContextTrace received an invalid response from notification status.'),
+    );
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(drawer.querySelector('.notification-settings')).not.toBeNull();
+    expect(drawer.querySelectorAll('.notification-rule')).toHaveLength(11);
   });
 
   it('refreshes a followed session only after its matching backend event', async () => {
@@ -1029,9 +1193,13 @@ describe("comparing turns across two sessions", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
     await openView("Diff");
-    fireEvent.change(await screen.findByRole("combobox"), {
-      target: { value: JSON.stringify({ agent: claude.agent, id: claude.id }) },
-    });
+    // The sidebar's own project filter is a second combobox on screen once
+    // this view is open, so the cross-session picker needs its label to
+    // disambiguate which one the change targets.
+    fireEvent.change(
+      await screen.findByRole("combobox", { name: "Compare this turn with" }),
+      { target: { value: JSON.stringify({ agent: claude.agent, id: claude.id }) } },
+    );
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "12" } });
 
     await waitFor(() => expect(mockedApi.getTurnDiff).toHaveBeenCalled());
@@ -1269,5 +1437,21 @@ describe("Find hidden changes gating and baseline controls", () => {
     const [, , left, right] = mockedApi.getTemporalGhost.mock.calls.at(-1)!;
     expect(left).toBe(pinned);
     expect(right).not.toBe(pinned);
+  });
+});
+
+describe("resizing the sessions panel", () => {
+  it('remembers a sidebar width and refuses a stored one it could not show', async () => {
+    window.localStorage.setItem('ct.sidebarWidth', '9000');
+    render(<App />);
+
+    // An out-of-range stored value must not restore a panel the user cannot see.
+    const shell = document.querySelector('.app-shell') as HTMLElement;
+    await waitFor(() => expect(shell.style.getPropertyValue('--sidebar-width')).toBe('250px'));
+
+    const separator = screen.getByRole('separator', { name: 'Resize the sessions panel' });
+    fireEvent.keyDown(separator, { key: 'ArrowRight' });
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('266px');
+    expect(window.localStorage.getItem('ct.sidebarWidth')).toBe('266');
   });
 });

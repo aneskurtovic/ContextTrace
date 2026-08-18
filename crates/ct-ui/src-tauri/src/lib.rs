@@ -3,6 +3,16 @@ mod commands;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin registered: it is the plugin that decides
+        // whether this process should keep running at all, so every other
+        // plugin's setup would otherwise happen in a process we are about to
+        // hand off to and exit.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.webview_windows().values().next() {
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .manage(commands::AppState::new())
         .manage(commands::notifications::NotificationState::new())
@@ -13,6 +23,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_startup,
             commands::search_sessions,
+            commands::list_projects,
             commands::search_memory,
             commands::inspect_session,
             commands::get_context,

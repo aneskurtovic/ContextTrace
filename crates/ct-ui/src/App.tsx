@@ -45,6 +45,8 @@ import type {
   NotificationRuleId,
   NotificationSettings,
   NotificationStatus,
+  ProjectFilter,
+  ProjectOption,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -832,7 +834,8 @@ function UnloggedContext({
           A prompt is larger than everything the log records. The difference is the system
           prompt and tool schemas the agent never wrote down, recovered by fitting this
           session's own characters-per-token ratio to its usage figures. Reconstructing every
-          turn takes a moment, so it runs when you ask.
+          turn takes a moment, so it runs once when this tab opens and is
+          repeated only when you ask.
         </p>
       )}
       {loading && <Spinner label="Reconstructing every turn to fit this session's ratio…" />}
@@ -2765,6 +2768,7 @@ function SessionWorkspace({
   residual,
   residualLoading,
   onRunResidual,
+  measuredSessions,
   demoData,
   archive,
   archiveLoading,
@@ -2827,6 +2831,7 @@ function SessionWorkspace({
   residual: ResidualReport | null;
   residualLoading: boolean;
   onRunResidual: () => void;
+  measuredSessions: { current: Set<string> };
   demoData: boolean;
   archive: ArchiveHolding | null;
   archiveLoading: boolean;
@@ -2864,6 +2869,18 @@ function SessionWorkspace({
   onLiveFollow: (value: boolean) => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
+  // The tab exists to answer where a session's context went, and opening it
+  // with the answer missing made the reader ask for it every time. Keyed on the
+  // session so returning to the tab is not a new question, and guarded on the
+  // in-flight state so a slow reconstruction is not started twice. The set
+  // itself lives in the parent, not here, because this component remounts on
+  // every session switch -- see the comment beside its declaration in App.
+  const sessionKey = `${detail.session.agent}:${detail.session.id}`;
+  useEffect(() => {
+    if (activeView !== "turns" || residualLoading || measuredSessions.current.has(sessionKey)) return;
+    measuredSessions.current.add(sessionKey);
+    onRunResidual();
+  }, [activeView, onRunResidual, residualLoading, sessionKey, measuredSessions]);
   const measuredTurns = growth.filter((point) => point.promptTokens != null);
   const selectedIndex = Math.max(
     0,
@@ -3220,6 +3237,7 @@ function NotificationCenter({
   onClose,
   onToggleSettings,
   onSettings,
+  onRetrySettings,
   onSelect,
   onReadAll,
   onDismiss,
@@ -3236,6 +3254,7 @@ function NotificationCenter({
   onClose: () => void;
   onToggleSettings: () => void;
   onSettings: (settings: NotificationSettings) => void;
+  onRetrySettings: () => void;
   onSelect: (notification: NotificationRecord) => void;
   onReadAll: () => void;
   onDismiss: (id: string) => void;
@@ -3256,6 +3275,9 @@ function NotificationCenter({
   }, [open]);
   if (!open) return null;
   const notifications = page?.notifications ?? [];
+  // The missing-settings arm below prints its own copy of `error`, so the
+  // shared banner would otherwise duplicate the same sentence on screen.
+  const settingsMissing = settingsOpen && !settings;
   return (
     <>
       <button className='notification-scrim' type='button' aria-label='Close notifications' onClick={onClose} />
@@ -3266,12 +3288,21 @@ function NotificationCenter({
             <h2>Notifications</h2>
           </div>
           <div className='notification-header-actions'>
-            <button type='button' onClick={onToggleSettings} aria-pressed={settingsOpen}>Settings</button>
+            <button type='button' className='notification-settings-toggle' onClick={onToggleSettings} aria-pressed={settingsOpen}>
+              <span aria-hidden='true'>⚙</span>
+              <span>Settings</span>
+            </button>
             <button type='button' onClick={onClose} aria-label='Close notification drawer'>×</button>
           </div>
         </header>
 
-        {settingsOpen && settings ? (
+        {/* Above both branches: a settings failure used to report itself on the
+            feed, which is the screen the reader was trying to leave. The
+            missing-settings arm shows this same string itself, so it is
+            skipped here to avoid printing it twice. */}
+        {error && !settingsMissing && <p className='notification-feed-error' role='alert'>{error}</p>}
+
+        {settingsOpen ? (settings ? (
           <div className='notification-settings'>
             <label className='notification-master-toggle'>
               <span><strong>Monitor live sessions</strong><small>Reads changed local logs while ContextTrace is open.</small></span>
@@ -3349,13 +3380,18 @@ function NotificationCenter({
             </div>
           </div>
         ) : (
+          <div className='notification-settings notification-settings-missing' role='status'>
+            <strong>These settings could not be read</strong>
+            <p>{error ?? 'The desktop bridge did not answer.'}</p>
+            <button type='button' onClick={onRetrySettings}>Retry loading settings</button>
+          </div>
+        )) : (
           <div className='notification-feed'>
             <div className='notification-feed-tools'>
               <span>{page?.unreadCount ?? 0} unread</span>
               <button type='button' onClick={onReadAll} disabled={!page?.unreadCount}>Mark all read</button>
               <button type='button' onClick={onClear} disabled={!notifications.length}>Clear history</button>
             </div>
-            {error && <p className='notification-feed-error' role='alert'>{error}</p>}
             {loading && !notifications.length ? <Spinner label='Loading notifications…' /> : notifications.length ? (
               <ol className='notification-list'>
                 {notifications.map((notification) => (
@@ -3426,6 +3462,20 @@ function NotificationOnboarding({
   );
 }
 
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 620;
+const SIDEBAR_DEFAULT = 250;
+
+function storedSidebarWidth(): number {
+  const stored = Number(window.localStorage.getItem("ct.sidebarWidth"));
+  // A stored value out of range would restore a panel the reader cannot see or
+  // cannot get past, so it is discarded rather than clamped into something they
+  // never chose.
+  return Number.isFinite(stored) && stored >= SIDEBAR_MIN && stored <= SIDEBAR_MAX
+    ? stored
+    : SIDEBAR_DEFAULT;
+}
+
 export default function App() {
   // Without the desktop bridge every panel below is filled from `demo.ts`.
   // A tool that argues for evidence over invention cannot render invented
@@ -3442,10 +3492,21 @@ export default function App() {
   const [context, setContext] = useState<ContextDetail | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>("overview");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
+  const [resizing, setResizing] = useState(false);
+
+  const applySidebarWidth = useCallback((width: number) => {
+    const clamped = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
+    setSidebarWidth(clamped);
+    window.localStorage.setItem("ct.sidebarWidth", String(clamped));
+  }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActiveIndex, setPaletteActiveIndex] = useState(0);
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter>({ kind: "any" });
+  const [showSubagents, setShowSubagents] = useState(false);
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [memoryHits, setMemoryHits] = useState<MemoryHit[]>([]);
@@ -3517,6 +3578,13 @@ export default function App() {
   const compactionRequest = useRef(0);
   const turnDiffRequest = useRef(0);
   const residualRequest = useRef(0);
+  // Lives here rather than inside SessionWorkspace: that panel remounts on
+  // every session switch (detail is nulled out while the next one loads), so
+  // a ref kept there would forget a session was already measured the moment
+  // its own unmount happened to intervene. Keeping the memory at the level
+  // that survives a session switch makes "already measured" a fact about the
+  // session, not a fact about how long the panel that asked has stayed mounted.
+  const measuredSessions = useRef<Set<string>>(new Set());
   const catalogRequest = useRef(0);
   const archiveRequest = useRef(0);
   const evidenceRequest = useRef(0);
@@ -3570,6 +3638,47 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [closePalette, notificationDrawerOpen, openPalette, paletteOpen]);
 
+  // A project filter chosen under one agent may name a project the other
+  // agent never wrote (a Codex-only checkout, say). Left in place across an
+  // agent switch, the backend would return zero sessions and the <select>
+  // below would render blank -- its value would name an option that no
+  // longer exists in its own option list -- with nothing on screen
+  // explaining why the list went empty. Resetting here means the switch
+  // always lands on "All projects" instead.
+  //
+  // The mount guard matters beyond tidiness: `refreshSessions` closes over
+  // `projectFilter`, so replacing it with a new (if equal) object on the
+  // very first render would change that callback's identity and fire a
+  // second, redundant initial fetch through the effect below that calls it.
+  const agentFilterMounted = useRef(false);
+  useEffect(() => {
+    if (!agentFilterMounted.current) {
+      agentFilterMounted.current = true;
+      return;
+    }
+    setProjectFilter({ kind: "any" });
+  }, [agentFilter]);
+
+  // Recomputed when the agent, subagent, or search filter changes, so the
+  // count beside an option always describes what selecting it would actually
+  // show against the session list on screen right now, including whatever
+  // the search box has already narrowed away.
+  useEffect(() => {
+    if (typeof api.listProjects !== "function") return;
+    let cancelled = false;
+    api.listProjects(agentFilter === "all" ? undefined : agentFilter, debouncedQuery, showSubagents)
+      .then((options) => { if (!cancelled) setProjectOptions(options); })
+      .catch((loadError) => {
+        // Keep whatever options are already on screen rather than emptying
+        // the dropdown: "All projects" plus nothing else is indistinguishable
+        // from "you genuinely have one project," so silently clearing the
+        // list on a backend failure would misreport the failure as a fact
+        // about the user's data instead of surfacing it as an error.
+        if (!cancelled) setError(errorMessage(loadError));
+      });
+    return () => { cancelled = true; };
+  }, [agentFilter, debouncedQuery, showSubagents]);
+
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
       const request = ++catalogRequest.current;
@@ -3583,6 +3692,8 @@ export default function App() {
           0,
           200,
           forceRefresh,
+          projectFilter,
+          showSubagents,
         );
         if (request !== catalogRequest.current) return;
         setSessions(page.sessions);
@@ -3604,7 +3715,7 @@ export default function App() {
         if (request === catalogRequest.current) setLoadingSessions(false);
       }
     },
-    [agentFilter, debouncedQuery],
+    [agentFilter, debouncedQuery, projectFilter, showSubagents],
   );
 
   const loadMoreSessions = useCallback(async () => {
@@ -3619,6 +3730,8 @@ export default function App() {
         sessions.length,
         200,
         false,
+        projectFilter,
+        showSubagents,
       );
       if (request !== catalogRequest.current) return;
       setSessions((current) => {
@@ -3642,7 +3755,9 @@ export default function App() {
     debouncedQuery,
     hasMoreSessions,
     loadingMore,
+    projectFilter,
     sessions.length,
+    showSubagents,
   ]);
 
   useEffect(() => {
@@ -3680,18 +3795,22 @@ export default function App() {
       typeof api.getNotificationStatus !== 'function'
     ) return;
     let cancelled = false;
-    Promise.all([
-      api.getNotificationSettings(),
-      api.getNotificationStatus(),
-      typeof api.listNotifications === 'function' ? api.listNotifications(null, 30, false) : Promise.resolve(null),
-    ]).then(([settings, status, page]) => {
-      if (cancelled) return;
-      setNotificationSettings(settings);
-      setNotificationStatus(status);
-      if (page) setNotificationPage(page);
-    }).catch((loadError) => {
-      if (!cancelled) setNotificationError(errorMessage(loadError));
-    });
+    // Settled independently rather than as one Promise.all: these three are
+    // unrelated reads, and joining them meant a single malformed payload blanked
+    // all three. That is how an invalid status left the settings panel rendering
+    // nothing at all when its button was pressed.
+    const apply = <T,>(
+      load: Promise<T>,
+      accept: (value: T) => void,
+    ) => load
+      .then((value) => { if (!cancelled) accept(value); })
+      .catch((loadError) => { if (!cancelled) setNotificationError(errorMessage(loadError)); });
+
+    void apply(api.getNotificationSettings(), setNotificationSettings);
+    void apply(api.getNotificationStatus(), setNotificationStatus);
+    if (typeof api.listNotifications === 'function') {
+      void apply(api.listNotifications(null, 30, false), setNotificationPage);
+    }
     return () => { cancelled = true; };
   }, []);
 
@@ -3720,6 +3839,16 @@ export default function App() {
       if (typeof api.getNotificationSettings === 'function') {
         try { setNotificationSettings(await api.getNotificationSettings()); } catch { /* retain the actionable save error */ }
       }
+    }
+  }, []);
+
+  const retryNotificationSettings = useCallback(async () => {
+    if (typeof api.getNotificationSettings !== 'function') return;
+    setNotificationError(null);
+    try {
+      setNotificationSettings(await api.getNotificationSettings());
+    } catch (loadError) {
+      setNotificationError(errorMessage(loadError));
     }
   }, []);
 
@@ -4412,7 +4541,11 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell" data-theme={theme}>
+    <div
+      className={resizing ? "app-shell resizing" : "app-shell"}
+      data-theme={theme}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+    >
       {notificationSettings && (
         <NotificationOnboarding
           settings={notificationSettings}
@@ -4434,6 +4567,7 @@ export default function App() {
         onClose={() => setNotificationDrawerOpen(false)}
         onToggleSettings={() => setNotificationSettingsOpen((current) => !current)}
         onSettings={(settings) => void saveNotificationSettings(settings)}
+        onRetrySettings={() => void retryNotificationSettings()}
         onSelect={openFeedNotification}
         onReadAll={() => void markAllNotificationsRead()}
         onDismiss={(id) => void dismissFeedNotification(id)}
@@ -4591,6 +4725,40 @@ export default function App() {
           </button>
         </div>
 
+        <div className="filter-row secondary">
+          <select
+            aria-label="Filter sessions by project"
+            value={projectFilter.kind === "path" ? projectFilter.path : projectFilter.kind}
+            onChange={(event) => {
+              const chosen = event.target.value;
+              setProjectFilter(
+                chosen === "any"
+                  ? { kind: "any" }
+                  : chosen === "unrecorded"
+                    ? { kind: "unrecorded" }
+                    : { kind: "path", path: chosen },
+              );
+            }}
+          >
+            <option value="any">All projects</option>
+            {projectOptions.map((option) => (
+              <option key={option.path ?? "unrecorded"} value={option.path ?? "unrecorded"}>
+                {option.label} · {option.count}
+              </option>
+            ))}
+          </select>
+          <label className="subagent-toggle">
+            <input
+              type="checkbox"
+              aria-label="Show subagent sessions"
+              checked={showSubagents}
+              onChange={(event) => setShowSubagents(event.target.checked)}
+            />
+            {/* A subagent thread has its own context window and is rarely the
+                run the reader went looking for, so it is off by default. */}
+            <span>Subagents</span>
+          </label>
+        </div>
 
         <div className="session-list-heading" aria-live="polite" aria-atomic="true">
           <span>{demoData ? "Demonstration sessions" : "Your sessions"}</span>
@@ -4680,6 +4848,49 @@ export default function App() {
         </footer>
       </aside>
 
+      {/* A real separator rather than a styled ::after, so the panel can be
+          resized without a mouse. */}
+      <div
+        className="sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the sessions panel"
+        aria-valuenow={sidebarWidth}
+        aria-valuemin={SIDEBAR_MIN}
+        aria-valuemax={SIDEBAR_MAX}
+        tabIndex={0}
+        onDoubleClick={() => applySidebarWidth(SIDEBAR_DEFAULT)}
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setResizing(true);
+        }}
+        onPointerMove={(event) => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          applySidebarWidth(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          setResizing(false);
+        }}
+        // A drag does not always end at `onPointerUp`: alt-tab, a system
+        // dialog, or anything else that steals the pointer fires
+        // `pointercancel` or `lostpointercapture` instead. Without these,
+        // `resizing` would stick true and `.app-shell.resizing` would keep
+        // `cursor: col-resize` and `user-select: none` over the whole app --
+        // in a tool whose purpose is reading and copying transcript text,
+        // an unrecoverable-looking loss of text selection.
+        onPointerCancel={() => setResizing(false)}
+        onLostPointerCapture={() => setResizing(false)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") applySidebarWidth(sidebarWidth - 16);
+          else if (event.key === "ArrowRight") applySidebarWidth(sidebarWidth + 16);
+          else if (event.key === "Home") applySidebarWidth(SIDEBAR_MIN);
+          else if (event.key === "End") applySidebarWidth(SIDEBAR_MAX);
+          else return;
+          event.preventDefault();
+        }}
+      />
+
       <div
         className={demoData ? "main-area demo-mode" : "main-area"}
         aria-busy={loadingDetail}
@@ -4767,6 +4978,7 @@ export default function App() {
             residual={residual}
             residualLoading={loadingResidual}
             onRunResidual={runResidual}
+            measuredSessions={measuredSessions}
             demoData={demoData}
             archive={archive}
             archiveLoading={loadingArchive}

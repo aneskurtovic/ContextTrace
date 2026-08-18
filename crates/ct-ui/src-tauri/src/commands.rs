@@ -13,8 +13,8 @@ use ct_domain::{
     CompactionItemDisposition, Confidence, ContextItemId, ContextSource, MessageRole,
     SessionDescriptor, ThreadRole, TurnNumber,
 };
-use serde::Serialize;
-use std::collections::{HashMap, VecDeque};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -327,36 +327,26 @@ impl AppState {
         }
     }
 
-    /// Search the complete local catalog before taking a page.
+    /// Every descriptor a search matches, before paging.
     ///
-    /// `refresh` distinguishes a genuine catalog refresh from an ordinary
-    /// page request: the two need opposite cache policies. Paging through
-    /// results the user already saw, or narrowing a query, must not discard
-    /// sessions already parsed — that only wastes the parse the user just
-    /// waited for. An explicit refresh means the caller wants to treat the
-    /// cache as possibly stale (a file could have changed or disappeared on
-    /// disk since it was cached), so only that case clears both caches.
-    fn search_sessions(
+    /// The query, the project and the thread role are all applied here, and all
+    /// three after `list_sessions` rather than through `SessionFilter`: the
+    /// query matches session ids and local source paths as well as projects, so
+    /// narrowing the domain query by project would make an id search silently
+    /// incomplete.
+    fn filtered_descriptors(
         &self,
         agent: Option<String>,
         query: Option<String>,
-        offset: Option<usize>,
-        limit: Option<usize>,
-        refresh: Option<bool>,
-    ) -> Result<SessionPage, String> {
-        if refresh.unwrap_or(false) {
-            self.sessions().clear();
-            self.lifecycles().clear();
-        }
+        project: Option<&ProjectFilter>,
+        include_subagents: bool,
+    ) -> Result<Vec<SessionDescriptor>, String> {
         let parsed_agent = match agent.as_deref() {
             Some(agent) => Some(parse_agent(agent)?),
             None => None,
         };
         let filter = SessionFilter {
             agent: parsed_agent,
-            // Search below intentionally includes stable ids and local source
-            // paths as well as projects. Do not pre-filter by `project` here:
-            // doing so would make an id/path search silently incomplete.
             project: None,
             since: None,
             limit: None,
@@ -371,11 +361,98 @@ impl AppState {
                 .map_err(|error| error.to_string())?,
             None => self.app.list_sessions(&filter),
         };
-        let mut sessions: Vec<SessionSummary> = descriptors
+        Ok(descriptors
             .into_iter()
             .filter(|descriptor| session_matches_query(descriptor, query.as_deref()))
-            .map(SessionSummary::from)
+            .filter(|descriptor| {
+                include_subagents || matches!(descriptor.thread_role, ThreadRole::Root)
+            })
+            .filter(|descriptor| match project {
+                None => true,
+                Some(ProjectFilter::Unrecorded) => descriptor.project.is_none(),
+                Some(ProjectFilter::Path(path)) => {
+                    descriptor.project.as_deref() == Some(path.as_str())
+                }
+            })
+            .collect())
+    }
+
+    /// Every project the catalog recognises, with the count each one would show.
+    ///
+    /// Counted over the whole filtered set rather than a page, and under the
+    /// same agent, search query and subagent filters the list is showing, so
+    /// the number beside an option always describes what selecting it does.
+    fn list_projects(
+        &self,
+        agent: Option<String>,
+        query: Option<String>,
+        include_subagents: Option<bool>,
+    ) -> Result<Vec<ProjectSummary>, String> {
+        let descriptors =
+            self.filtered_descriptors(agent, query, None, include_subagents.unwrap_or(false))?;
+        let mut counts: BTreeMap<Option<String>, usize> = BTreeMap::new();
+        for descriptor in &descriptors {
+            *counts.entry(descriptor.project.clone()).or_default() += 1;
+        }
+        let mut projects: Vec<ProjectSummary> = counts
+            .into_iter()
+            .map(|(path, count)| ProjectSummary {
+                label: match &path {
+                    Some(path) => leaf_name(path),
+                    // Not "unknown project": the log recorded no folder, which
+                    // is a fact about the log, not a project called Unknown.
+                    None => "No recorded folder".to_string(),
+                },
+                path,
+                count,
+            })
             .collect();
+        projects.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.label.cmp(&right.label))
+        });
+        Ok(projects)
+    }
+
+    /// Search the complete local catalog before taking a page.
+    ///
+    /// `refresh` distinguishes a genuine catalog refresh from an ordinary
+    /// page request: the two need opposite cache policies. Paging through
+    /// results the user already saw, or narrowing a query, must not discard
+    /// sessions already parsed — that only wastes the parse the user just
+    /// waited for. An explicit refresh means the caller wants to treat the
+    /// cache as possibly stale (a file could have changed or disappeared on
+    /// disk since it was cached), so only that case clears both caches.
+    ///
+    /// Seven parameters, not a params struct: every one of them is a wire
+    /// argument the frontend names individually when it calls this command,
+    /// so grouping them would only move the same fields behind a struct name
+    /// the caller never sends -- it would not shrink the actual interface.
+    #[allow(clippy::too_many_arguments)]
+    fn search_sessions(
+        &self,
+        agent: Option<String>,
+        query: Option<String>,
+        project: Option<ProjectFilter>,
+        include_subagents: Option<bool>,
+        offset: Option<usize>,
+        limit: Option<usize>,
+        refresh: Option<bool>,
+    ) -> Result<SessionPage, String> {
+        if refresh.unwrap_or(false) {
+            self.sessions().clear();
+            self.lifecycles().clear();
+        }
+        let descriptors = self.filtered_descriptors(
+            agent,
+            query,
+            project.as_ref(),
+            include_subagents.unwrap_or(false),
+        )?;
+        let mut sessions: Vec<SessionSummary> =
+            descriptors.into_iter().map(SessionSummary::from).collect();
         let total = sessions.len();
         let offset = offset.unwrap_or(0).min(total);
         let limit = limit
@@ -1734,6 +1811,30 @@ impl From<ThreadRole> for ThreadRoleSummary {
     }
 }
 
+/// Which project a session listing is narrowed to.
+///
+/// Three states, because `Option<String>` can only express two and the third
+/// is real: a Codex rollout whose log never recorded a `cwd` has no folder to
+/// name, and "every project" must not be confused with "the ones with none".
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectFilter {
+    Unrecorded,
+    Path(String),
+}
+
+/// One selectable project, with the number of sessions selecting it would show.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSummary {
+    /// The full path, which is what the filter matches on. `None` is the entry
+    /// for sessions whose log recorded no folder.
+    pub path: Option<String>,
+    /// The leaf name, for display.
+    pub label: String,
+    pub count: usize,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
@@ -2842,16 +2943,43 @@ pub fn get_startup(state: tauri::State<'_, AppState>) -> StartupSummary {
 }
 
 /// Search session metadata on the backend and return explicit paging facts.
+///
+/// Eight parameters for the same reason `AppState::search_sessions` has
+/// seven: this is the IPC entry point, so each one is a name the frontend's
+/// `invoke` call sends on the wire, not an internal grouping this file is
+/// free to tidy away behind a struct.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn search_sessions(
     agent: Option<String>,
     query: Option<String>,
+    project: Option<ProjectFilter>,
+    include_subagents: Option<bool>,
     offset: Option<usize>,
     limit: Option<usize>,
     refresh: Option<bool>,
     state: tauri::State<'_, AppState>,
 ) -> Result<SessionPage, String> {
-    state.search_sessions(agent, query, offset, limit, refresh)
+    state.search_sessions(
+        agent,
+        query,
+        project,
+        include_subagents,
+        offset,
+        limit,
+        refresh,
+    )
+}
+
+/// The projects a session listing can be narrowed to, with their counts.
+#[tauri::command]
+pub fn list_projects(
+    agent: Option<String>,
+    query: Option<String>,
+    include_subagents: Option<bool>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ProjectSummary>, String> {
+    state.list_projects(agent, query, include_subagents)
 }
 
 #[tauri::command]
@@ -3056,6 +3184,16 @@ fn parse_agent(agent: &str) -> Result<AgentKind, String> {
         .ok_or_else(|| format!("unknown agent '{agent}'; use claude-code or codex"))
 }
 
+/// The last path segment, which is what a project is called in the UI.
+fn leaf_name(path: &str) -> String {
+    path.trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
 fn session_matches_query(descriptor: &SessionDescriptor, query: Option<&str>) -> bool {
     let Some(query) = query else {
         return true;
@@ -3175,7 +3313,15 @@ mod tests {
 
     fn all_sessions(state: &AppState) -> Vec<SessionSummary> {
         state
-            .search_sessions(None, None, Some(0), Some(MAX_SESSION_PAGE_SIZE), None)
+            .search_sessions(
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+                Some(MAX_SESSION_PAGE_SIZE),
+                None,
+            )
             .expect("list committed synthetic fixtures")
             .sessions
     }
@@ -3328,6 +3474,47 @@ mod tests {
             last_activity: None,
             thread_role: ThreadRole::Root,
         }
+    }
+
+    /// A catalog with real variation along every axis the project and
+    /// subagent filters branch on: two distinct projects, a root thread and
+    /// its subagent in one of them, and a session whose log recorded no
+    /// project at all. `catalog_descriptor` alone cannot build this -- every
+    /// descriptor it returns is `ThreadRole::Root` with `project: Some(_)` --
+    /// so the fixture tests that need a subagent or an unrecorded project
+    /// construct descriptors directly, the same way
+    /// `session_summary_reports_a_subagent_thread_and_its_parent` does.
+    fn filter_fixture_descriptors() -> Vec<SessionDescriptor> {
+        fn descriptor(
+            id: &str,
+            project: Option<&str>,
+            thread_role: ThreadRole,
+        ) -> SessionDescriptor {
+            SessionDescriptor {
+                id: ct_domain::SessionId::new(id).unwrap(),
+                agent: AgentKind::Codex,
+                path: format!("C:/catalog/{id}.jsonl"),
+                size_bytes: 1,
+                project: project.map(str::to_string),
+                title: None,
+                git_branch: None,
+                started_at: None,
+                last_activity: None,
+                thread_role,
+            }
+        }
+        vec![
+            descriptor("root-alpha", Some("C:/repos/alpha"), ThreadRole::Root),
+            descriptor(
+                "subagent-alpha",
+                Some("C:/repos/alpha"),
+                ThreadRole::Subagent {
+                    parent: ct_domain::SessionId::new("root-alpha").unwrap(),
+                },
+            ),
+            descriptor("root-beta", Some("C:/repos/beta"), ThreadRole::Root),
+            descriptor("root-unrecorded", None, ThreadRole::Root),
+        ]
     }
 
     fn catalog_state(sessions: Vec<SessionDescriptor>) -> AppState {
@@ -3592,6 +3779,146 @@ mod tests {
     }
 
     #[test]
+    fn subagent_threads_are_left_out_unless_they_are_asked_for() {
+        // Four descriptors: two root sessions in different projects, one
+        // root session with no recorded project, and one subagent under
+        // `root-alpha`. Only the subagent's presence or absence can move
+        // these totals, so a no-op filter is caught by the exact counts
+        // below, not merely by an inequality both sides of a real filter
+        // would also satisfy.
+        let state = catalog_state(filter_fixture_descriptors());
+        let without = state
+            .search_sessions(None, None, None, None, None, None, None)
+            .expect("a page");
+        let with = state
+            .search_sessions(None, None, None, Some(true), None, None, None)
+            .expect("a page");
+        assert_eq!(
+            without.total, 3,
+            "three root sessions; the subagent thread is left out by default"
+        );
+        assert_eq!(
+            with.total, 4,
+            "asking for subagents adds exactly the one subagent thread"
+        );
+        assert!(
+            without
+                .sessions
+                .iter()
+                .all(|session| session.thread_role.kind == "root"),
+            "a subagent thread is not a run the reader started"
+        );
+        assert!(
+            with.sessions
+                .iter()
+                .any(|session| session.thread_role.kind == "subagent"),
+            "asking for subagents must actually surface one"
+        );
+    }
+
+    #[test]
+    fn a_project_filter_matches_the_whole_path_and_narrows_the_total() {
+        // Two sessions carry "C:/repos/alpha" (one root, one subagent), one
+        // carries "C:/repos/beta", and one has no recorded project. With
+        // subagents left out by default, filtering to alpha must leave
+        // exactly the one root session in it -- a no-op filter would instead
+        // return all three root sessions, and a substring-matching filter
+        // would wrongly also catch nothing here since neither project name
+        // is a prefix of the other, so this alone would not catch that bug;
+        // the exact-match assertion below is what does.
+        let state = catalog_state(filter_fixture_descriptors());
+        let all = state
+            .search_sessions(None, None, None, None, None, None, None)
+            .expect("a page");
+        assert_eq!(
+            all.total, 3,
+            "three root sessions before any project filter"
+        );
+
+        let filtered = state
+            .search_sessions(
+                None,
+                None,
+                Some(ProjectFilter::Path("C:/repos/alpha".to_string())),
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("a page");
+        assert_eq!(
+            filtered.total, 1,
+            "only root-alpha matches; root-beta and the unrecorded-project \
+             session must be excluded, not merely outnumbered"
+        );
+        assert!(
+            filtered
+                .sessions
+                .iter()
+                .all(|session| session.project.as_deref() == Some("C:/repos/alpha")),
+            "the filter is exact, not a substring: two checkouts can share a leaf name"
+        );
+    }
+
+    #[test]
+    fn the_project_list_counts_what_selecting_it_would_show() {
+        // Exercises all three project shapes at once: two named projects and
+        // the `Unrecorded` case (root-unrecorded's log kept no `cwd`), which
+        // nothing before this fix ever put through `list_projects` or the
+        // `ProjectFilter::Unrecorded` arm of `search_sessions`.
+        let state = catalog_state(filter_fixture_descriptors());
+        let projects = state.list_projects(None, None, None).expect("projects");
+        assert_eq!(projects.len(), 3, "alpha, beta, and the unrecorded bucket");
+        assert!(
+            projects.iter().any(|summary| summary.path.is_none()),
+            "the unrecorded-project session must get its own entry"
+        );
+        for summary in &projects {
+            let filtered = state
+                .search_sessions(
+                    None,
+                    None,
+                    Some(match &summary.path {
+                        Some(path) => ProjectFilter::Path(path.clone()),
+                        None => ProjectFilter::Unrecorded,
+                    }),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .expect("a page");
+            assert_eq!(filtered.total, summary.count, "{:?}", summary.label);
+        }
+    }
+
+    #[test]
+    fn the_project_list_narrows_with_the_same_query_the_session_list_used() {
+        // Regression for a dropdown that read "contexttrace · 41" while the
+        // search box had already narrowed the visible list to 3: the count
+        // beside an option must describe what selecting it would show given
+        // the query already typed, not the whole unfiltered catalog. Only
+        // "root-alpha" and "subagent-alpha" have "alpha" in their id, path or
+        // project; "root-beta" and "root-unrecorded" have it in none of
+        // those, so a query-blind count would still report all three
+        // projects instead of just alpha's.
+        let state = catalog_state(filter_fixture_descriptors());
+        let projects = state
+            .list_projects(None, Some("alpha".to_string()), None)
+            .expect("projects");
+        assert_eq!(
+            projects,
+            vec![ProjectSummary {
+                label: "alpha".to_string(),
+                path: Some("C:/repos/alpha".to_string()),
+                count: 1,
+            }],
+            "only the alpha project should survive the query, with its \
+             subagent-excluded count of 1, not the unfiltered catalog"
+        );
+    }
+
+    #[test]
     fn backend_search_reaches_a_targeted_session_after_the_first_500() {
         let sessions = (0..501)
             .map(|index| {
@@ -3606,7 +3933,15 @@ mod tests {
         let state = catalog_state(sessions);
 
         let first_page = state
-            .search_sessions(Some("codex".into()), None, Some(0), Some(500), None)
+            .search_sessions(
+                Some("codex".into()),
+                None,
+                None,
+                None,
+                Some(0),
+                Some(500),
+                None,
+            )
             .expect("list the first page");
         assert_eq!(first_page.total, 501);
         assert_eq!(first_page.sessions.len(), 500);
@@ -3619,6 +3954,8 @@ mod tests {
             .search_sessions(
                 None,
                 Some("  TARGETED older  ".into()),
+                None,
+                None,
                 Some(0),
                 Some(50),
                 None,
@@ -3630,7 +3967,7 @@ mod tests {
         assert_eq!(targeted.sessions[0].id, "catalog-0500");
 
         let final_page = state
-            .search_sessions(None, None, Some(500), Some(50), None)
+            .search_sessions(None, None, None, None, Some(500), Some(50), None)
             .expect("page beyond the legacy 500-item cutoff");
         assert_eq!(final_page.total, 501);
         assert_eq!(final_page.offset, 500);
@@ -3659,7 +3996,7 @@ mod tests {
         // An ordinary page request (offset > 0, no explicit refresh) is what
         // "Load more" sends. It must not throw away the parse above.
         state
-            .search_sessions(None, None, Some(1), Some(1), None)
+            .search_sessions(None, None, None, None, Some(1), Some(1), None)
             .expect("page through the catalog without asking for a refresh");
         state
             .inspect_session(AgentKind::Codex, &codex_id)
@@ -3668,7 +4005,7 @@ mod tests {
         // Nor does an ordinary offset-0 search issued without `refresh`, e.g.
         // a query or filter change.
         state
-            .search_sessions(None, Some("".into()), Some(0), Some(50), None)
+            .search_sessions(None, Some("".into()), None, None, Some(0), Some(50), None)
             .expect("search again without asking for a refresh");
         state
             .inspect_session(AgentKind::Codex, &codex_id)
@@ -3691,7 +4028,7 @@ mod tests {
             .expect("cached inspection does not reread a session until an explicit refresh");
 
         let refreshed = state
-            .search_sessions(None, None, Some(0), None, Some(true))
+            .search_sessions(None, None, None, None, Some(0), None, Some(true))
             .expect("an explicit refresh clears the cache and rescans the catalog");
         assert_eq!(refreshed.sessions.len(), 1);
         assert_eq!(refreshed.sessions[0].agent, "claude-code");
@@ -3749,7 +4086,7 @@ mod tests {
         let (state, _homes, id) = colliding_id_state();
 
         let page = state
-            .search_sessions(None, None, Some(0), None, None)
+            .search_sessions(None, None, None, None, Some(0), None, None)
             .expect("list sessions across both agents");
         assert_eq!(
             page.sessions.len(),
@@ -3858,8 +4195,15 @@ mod tests {
         let homes = FixtureHomes::new();
         let state = homes.state();
 
-        let error = match state.search_sessions(Some("cursor".to_string()), None, None, None, None)
-        {
+        let error = match state.search_sessions(
+            Some("cursor".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) {
             Err(error) => error,
             Ok(_) => panic!("unsupported agents are rejected before discovery"),
         };
@@ -3872,7 +4216,15 @@ mod tests {
         assert_eq!(error, "no session matching 'does-not-exist'");
 
         let sessions = state
-            .search_sessions(Some("codex".to_string()), None, None, None, None)
+            .search_sessions(
+                Some("codex".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .expect("list Codex fixture")
             .sessions;
         let codex_id = session_id(&sessions, "codex");
