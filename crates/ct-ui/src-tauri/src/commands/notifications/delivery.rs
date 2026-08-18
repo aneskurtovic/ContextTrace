@@ -47,16 +47,24 @@ use std::path::{Path, PathBuf};
 /// development build delivers exactly as well as an installed one, and
 /// registration is the whole question.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+// The per-variant `rename_all` is the load-bearing one, and is why every other
+// tagged enum in this crate carries it too: the container attribute renames an
+// enum's *variants*, never the fields inside them. Without it `app_id` and
+// `exe_dir` went out in snake_case while every other DTO spoke camelCase, and
+// the frontend -- which validates a payload before rendering it -- rejected the
+// whole notification status, which nulled the settings loaded beside it.
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum Deliverability {
     /// A Start Menu shortcut carries this app id, so Windows knows who a toast
     /// is from.
+    #[serde(rename_all = "camelCase")]
     Ready { app_id: String },
     /// Nothing on this machine associates the app id with an application, so
     /// Windows will accept a toast and silently drop it. `exe_dir` is carried
     /// because the usual shape of this state is a build run out of a Cargo
     /// target directory on a machine where the app was never installed, and
     /// naming the directory is what makes the message actionable.
+    #[serde(rename_all = "camelCase")]
     Unregistered {
         app_id: String,
         exe_dir: Option<String>,
@@ -303,6 +311,44 @@ mod tests {
             panic!("an unregistered app id cannot deliver");
         };
         assert!(reason.contains("Install ContextTrace once"), "{reason:?}");
+    }
+
+    /// The frontend validates this payload before rendering it, and rejects
+    /// the whole notification status when a key is missing -- which took the
+    /// settings panel down with it, because one failed load nulled all three.
+    ///
+    /// `rename_all` on an *enum* renames its variants, not the fields inside
+    /// them, so the container attribute alone left `app_id` and `exe_dir` in
+    /// snake_case on the wire while every other DTO spoke camelCase. Asserted
+    /// on the serialised keys rather than on a round trip, because Rust can
+    /// deserialise its own snake_case happily; only the TypeScript reader
+    /// could tell the difference.
+    #[test]
+    fn deliverability_states_reach_the_frontend_in_camel_case() {
+        let ready = serde_json::to_value(Deliverability::Ready {
+            app_id: "dev.contexttrace.desktop".into(),
+        })
+        .expect("serialisable");
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["appId"], "dev.contexttrace.desktop");
+
+        let unregistered = serde_json::to_value(Deliverability::Unregistered {
+            app_id: "dev.contexttrace.desktop".into(),
+            exe_dir: Some("C:\\work\\target\\debug".into()),
+        })
+        .expect("serialisable");
+        assert_eq!(unregistered["state"], "unregistered");
+        assert_eq!(unregistered["appId"], "dev.contexttrace.desktop");
+        assert_eq!(unregistered["exeDir"], "C:\\work\\target\\debug");
+
+        // The absent directory stays an explicit null: the reader accepts
+        // `string | null` and would reject the key being missing entirely.
+        let no_dir = serde_json::to_value(Deliverability::Unregistered {
+            app_id: "dev.contexttrace.desktop".into(),
+            exe_dir: None,
+        })
+        .expect("serialisable");
+        assert!(no_dir.get("exeDir").is_some_and(serde_json::Value::is_null));
     }
 
     #[test]
