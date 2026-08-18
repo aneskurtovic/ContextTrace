@@ -12,7 +12,10 @@ import type {
   CompactionDiffUnavailableReason,
   CompactionItemDisposition,
   ContextDetail,
+  CorpusProgress,
+  CorpusReport,
   CostReport,
+  Deliverability,
   GhostItem,
   DoctorReport,
   ExportOutcome,
@@ -23,17 +26,22 @@ import type {
   NotificationRuleId,
   NotificationSettings,
   NotificationStatus,
+  OsDelivery,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
   SessionDetail,
   SessionPage,
   SessionSummary,
+  SessionTitle,
   SessionUpdatedEvent,
   StartupSummary,
   InstructionFileComparison,
   InstructionFileReport,
   TemporalGhost,
+  TestNotificationResult,
+  TranscriptEntry,
+  TranscriptPage,
   ThreadRole,
   ToolDelta,
   TurnDiff,
@@ -45,6 +53,7 @@ import {
   demoArchiveVerification,
   demoCompactionDiff,
   demoContext,
+  demoCorpus,
   demoDetail,
   demoDoctor,
   demoLifecycle,
@@ -58,6 +67,8 @@ import {
   demoInstructionFiles,
   demoTemporalGhost,
   demoCost,
+  demoTranscript,
+  demoTranscriptEntry,
 } from "./demo";
 
 const inTauri = () =>
@@ -109,6 +120,19 @@ function isThreadRole(value: unknown): value is ThreadRole {
   );
 }
 
+const titleSources = new Set(['agentGenerated', 'firstPrompt']);
+
+/** A title must state where it came from, or the row cannot say. */
+function isTitle(value: unknown): value is SessionTitle | null {
+  return (
+    value === null ||
+    (isRecord(value) &&
+      typeof value.text === 'string' &&
+      typeof value.source === 'string' &&
+      titleSources.has(value.source))
+  );
+}
+
 function isSession(value: unknown): value is SessionSummary {
   return (
     isRecord(value) &&
@@ -118,10 +142,100 @@ function isSession(value: unknown): value is SessionSummary {
     typeof value.path === "string" &&
     typeof value.sizeBytes === "number" &&
     isStringOrNull(value.project) &&
+    isTitle(value.title) &&
+    isStringOrNull(value.gitBranch) &&
     isStringOrNull(value.startedAt) &&
     isStringOrNull(value.lastActivity) &&
     isThreadRole(value.threadRole)
   );
+}
+
+function isPressureBands(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    ['comfortable', 'warming', 'tight', 'critical', 'unmeasured'].every(
+      (band) => typeof value[band] === 'number',
+    )
+  );
+}
+
+function asCorpus(value: unknown): CorpusReport {
+  if (
+    !isRecord(value) ||
+    typeof value.sessions !== 'number' ||
+    typeof value.turns !== 'number' ||
+    typeof value.events !== 'number' ||
+    typeof value.outputTokens !== 'number' ||
+    typeof value.unreadable !== 'number' ||
+    typeof value.costMicros !== 'number' ||
+    // Checked, not assumed: a cost total that arrived without its unpriced
+    // count would render as a complete figure when it is a floor.
+    typeof value.unpricedTurns !== 'number' ||
+    typeof value.compactions !== 'number' ||
+    typeof value.compactionsMeasured !== 'number' ||
+    typeof value.cached !== 'boolean' ||
+    !isPressureBands(value.pressure) ||
+    !Array.isArray(value.byAgent) ||
+    !Array.isArray(value.byProject) ||
+    !Array.isArray(value.byDay) ||
+    !Array.isArray(value.byTool) ||
+    !Array.isArray(value.models) ||
+    !Array.isArray(value.largestSessions) ||
+    !Array.isArray(value.costliestSessions)
+  ) {
+    throw malformed('the corpus summary');
+  }
+  return value as unknown as CorpusReport;
+}
+
+const transcriptKinds = new Set([
+  'user',
+  'assistant',
+  'reasoning',
+  'toolCall',
+  'toolResult',
+  'injection',
+  'compaction',
+]);
+
+function isTranscriptEntry(value: unknown): value is TranscriptEntry {
+  return (
+    isRecord(value) &&
+    typeof value.index === 'number' &&
+    typeof value.kind === 'string' &&
+    transcriptKinds.has(value.kind) &&
+    isNumberOrNull(value.turn) &&
+    isStringOrNull(value.label) &&
+    typeof value.text === 'string' &&
+    typeof value.truncated === 'boolean' &&
+    // `chars` and `truncated` are what a collapsed row states about the text it
+    // is not showing. A row that omitted either would be claiming a size it
+    // never measured.
+    isNumberOrNull(value.chars) &&
+    typeof value.sidechain === 'boolean' &&
+    typeof value.error === 'boolean' &&
+    typeof value.line === 'number' &&
+    typeof value.collapsed === 'boolean'
+  );
+}
+
+function asTranscriptPage(value: unknown): TranscriptPage {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.entries) ||
+    !value.entries.every(isTranscriptEntry) ||
+    typeof value.total !== 'number' ||
+    typeof value.offset !== 'number' ||
+    typeof value.hasMore !== 'boolean'
+  ) {
+    throw malformed('a session transcript');
+  }
+  return value as unknown as TranscriptPage;
+}
+
+function asTranscriptEntry(value: unknown): TranscriptEntry {
+  if (!isTranscriptEntry(value)) throw malformed('a transcript entry');
+  return value;
 }
 
 function malformed(command: string): Error {
@@ -490,6 +604,52 @@ export function getContext(agent: Agent, id: string, turn?: number): Promise<Con
   return invoke<unknown>("get_context", { id, agent, turn: turn ?? null }).then(asContext);
 }
 
+/**
+ * Summarise every local session at once.
+ *
+ * Seconds on a first run and instant afterwards, because the backend reuses
+ * the last sweep while the corpus fingerprint is unchanged. `refresh` forces
+ * a re-parse.
+ */
+export function getCorpus(refresh = false): Promise<CorpusReport> {
+  if (!inTauri()) return Promise.resolve(structuredClone(demoCorpus));
+  return invoke<unknown>('get_corpus', { refresh }).then(asCorpus);
+}
+
+/** Progress of a running sweep, so seconds of work are not silent. */
+export async function listenForCorpusProgress(
+  callback: (progress: CorpusProgress) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri()) return () => undefined;
+  return listen<unknown>('contexttrace://corpus-progress', (event) => {
+    const payload = event.payload;
+    if (isRecord(payload) && typeof payload.done === 'number' && typeof payload.total === 'number') {
+      callback(payload as unknown as CorpusProgress);
+    }
+  });
+}
+
+/** One window of a session's conversation. Paged: a session can be 6.8 MB. */
+export function getTranscript(
+  agent: Agent,
+  id: string,
+  offset = 0,
+  limit = 40,
+): Promise<TranscriptPage> {
+  if (!inTauri()) return Promise.resolve(demoTranscript(offset, limit));
+  return invoke<unknown>('get_transcript', { id, agent, offset, limit }).then(asTranscriptPage);
+}
+
+/** One entry in full, for an entry the reader expanded. */
+export function getTranscriptEntry(
+  agent: Agent,
+  id: string,
+  index: number,
+): Promise<TranscriptEntry> {
+  if (!inTauri()) return Promise.resolve(demoTranscriptEntry(index));
+  return invoke<unknown>('get_transcript_entry', { id, agent, index }).then(asTranscriptEntry);
+}
+
 export function runDoctor(agent: Agent, id: string, turn?: number): Promise<DoctorReport> {
   if (!inTauri()) return Promise.resolve(demoDoctor(turn));
   return invoke<unknown>("run_doctor", { id, agent, turn: turn ?? null }).then(asDoctor);
@@ -768,6 +928,39 @@ function asNotificationSettings(value: unknown): NotificationSettings {
   return value as unknown as NotificationSettings;
 }
 
+/**
+ * A deliverability state must carry the app id it describes, except for
+ * `unsupported`, where there is no identity to name. Checked rather than
+ * trusted for the same reason as everything else here: the panel renders this
+ * as a claim about whether the user will ever see a toast.
+ */
+function isDeliverability(value: unknown): value is Deliverability {
+  if (!isRecord(value) || typeof value.state !== 'string') return false;
+  switch (value.state) {
+    case 'ready':
+      return typeof value.appId === 'string';
+    case 'unregistered':
+      return typeof value.appId === 'string' && isStringOrNull(value.exeDir);
+    case 'unsupported':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isOsDelivery(value: unknown): value is OsDelivery {
+  if (!isRecord(value) || typeof value.status !== 'string') return false;
+  switch (value.status) {
+    case 'notRequested':
+    case 'delivered':
+      return true;
+    case 'failed':
+      return typeof value.reason === 'string';
+    default:
+      return false;
+  }
+}
+
 function asNotificationStatus(value: unknown): NotificationStatus {
   if (
     !isRecord(value) ||
@@ -775,11 +968,25 @@ function asNotificationStatus(value: unknown): NotificationStatus {
     typeof value.osPermission !== 'string' ||
     !notificationPermissions.has(value.osPermission) ||
     !isStringOrNull(value.lastSuccessfulPoll) ||
-    !isStringOrNull(value.error)
+    !isStringOrNull(value.error) ||
+    !isDeliverability(value.deliverability) ||
+    !isStringOrNull(value.obstacle)
   ) {
     throw malformed('notification status');
   }
   return value as unknown as NotificationStatus;
+}
+
+function asTestNotificationResult(value: unknown): TestNotificationResult {
+  if (
+    !isRecord(value) ||
+    typeof value.delivered !== 'boolean' ||
+    !isStringOrNull(value.reason) ||
+    !isDeliverability(value.deliverability)
+  ) {
+    throw malformed('a test notification result');
+  }
+  return value as unknown as TestNotificationResult;
 }
 
 function asNotificationRecord(value: unknown): NotificationRecord {
@@ -799,6 +1006,7 @@ function asNotificationRecord(value: unknown): NotificationRecord {
     !isStringOrNull(value.readAt) ||
     !isStringOrNull(value.dismissedAt) ||
     typeof value.catchUp !== 'boolean' ||
+    !isOsDelivery(value.osDelivery) ||
     !isRecord(value.location) ||
     typeof value.location.agent !== 'string' ||
     !agents.has(value.location.agent) ||
@@ -1150,6 +1358,24 @@ export function updateNotificationSettings(
 export function getNotificationStatus(): Promise<NotificationStatus> {
   if (!inTauri()) return Promise.resolve({ ...demoNotificationStatus });
   return invoke<unknown>('get_notification_status').then(asNotificationStatus);
+}
+
+/**
+ * Ask for one toast now and report what happened to it.
+ *
+ * Without the desktop bridge there is no OS to ask, and saying "delivered"
+ * would be the same fabrication this whole command exists to remove — so the
+ * demo path answers `unsupported`, plainly undelivered.
+ */
+export function sendTestNotification(): Promise<TestNotificationResult> {
+  if (!inTauri()) {
+    return Promise.resolve({
+      delivered: false,
+      reason: 'The desktop bridge is not available, so no notification was sent.',
+      deliverability: { state: 'unsupported' },
+    });
+  }
+  return invoke<unknown>('send_test_notification').then(asTestNotificationResult);
 }
 
 export function listNotifications(

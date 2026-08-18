@@ -39,6 +39,9 @@ What runs today:
 
 | Feature | What it answers | Surface |
 |---|---|---|
+| Corpus summary | Where a month of sessions went, and what the totals could not measure | CLI + desktop |
+| Session transcript | What was actually said, with injected content and tool results in place | CLI + desktop |
+| Named sessions | Which session is which, from the log's own title or first prompt | CLI + desktop |
 | Context composition | What filled a turn's context window, by category and confidence | CLI + desktop |
 | Largest contributors | Which items are biggest, ranked and named by what they acted on | CLI + desktop |
 | Item lifecycle tracing | When an item entered context, and when — or why — it left | CLI + desktop |

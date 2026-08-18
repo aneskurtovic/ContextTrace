@@ -2,9 +2,12 @@
 #
 # Until this file existed, nothing had ever compiled this workspace off Windows
 # -- `rust-toolchain.toml` said so in a comment. It turned out to build, lint,
-# test and pass its MSRV check on Linux unchanged, because the tree contains no
-# `#[cfg(windows)]` at all: the one mention in `ct-adapters/src/archive.rs` is a
-# comment explaining that the archive root is resolved *without* one.
+# test and pass its MSRV check on Linux unchanged, because nothing these gates
+# compile is platform-conditional: the one `#[cfg(windows)]` mention in
+# `ct-adapters/src/archive.rs` is a comment explaining that the archive root is
+# resolved *without* one. The real ones live in `ct-ui`, which every compiling
+# step below excludes anyway -- Windows toast delivery is genuinely a Windows
+# path, and the Windows workflow is where it gets compiled and tested.
 #
 # So these gates move off the single Windows agent, where they were competing
 # for one machine, and the Windows workflow keeps only what Windows alone can

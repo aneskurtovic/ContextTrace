@@ -685,6 +685,8 @@ mod tests {
             path: format!("fake-path/{id}.jsonl"),
             size_bytes: 100,
             project: None,
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Root,

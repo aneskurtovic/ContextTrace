@@ -1,15 +1,18 @@
 //! Notification persistence, IPC presentation and live-session monitoring.
 
+mod delivery;
+
 use super::AppState;
 use chrono::{DateTime, Utc};
 use ct_domain::ports::NotificationStore;
 use ct_domain::{
     AgentKind, NotificationDelivery, NotificationRecord, NotificationRuleId, NotificationSettings,
-    ThreadRole,
+    OsDeliveryStatus, ThreadRole,
 };
+use delivery::Deliverability;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::plugin::PermissionState;
 use tauri::{AppHandle, Emitter, Manager};
@@ -36,6 +39,13 @@ pub struct NotificationSettingsDto {
     cost_budget_usd: Option<f64>,
 }
 
+/// What the desktop can say about OS delivery *before* anything is sent.
+///
+/// `os_permission` alone was misleading on Windows: the plugin answers
+/// `Granted` unconditionally there, so a settings panel reporting it was
+/// telling every user that toasts would work regardless of whether this build
+/// could produce one. `deliverability` is the observation that question
+/// actually needs, and `obstacle` is the sentence to show when it is negative.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationStatusDto {
@@ -43,6 +53,19 @@ pub struct NotificationStatusDto {
     os_permission: String,
     last_successful_poll: Option<String>,
     error: Option<String>,
+    deliverability: Deliverability,
+    obstacle: Option<String>,
+}
+
+/// The outcome of one deliberately triggered toast.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestNotificationDto {
+    delivered: bool,
+    /// Windows' own words when it refused, or this build's reason for not
+    /// asking it. `None` only when the toast was accepted.
+    reason: Option<String>,
+    deliverability: Deliverability,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +94,33 @@ pub struct NotificationRecordDto {
     dismissed_at: Option<String>,
     catch_up: bool,
     location: NotificationLocationDto,
+    /// What became of the OS toast for this record: `notRequested` when the
+    /// rule is feed-only or the record was caught up after the fact,
+    /// `delivered` when Windows accepted it, `failed` with the reason
+    /// otherwise. Presented rather than kept internal because a feed row
+    /// claiming an OS notification the user never saw is precisely the
+    /// confusion this pass exists to end.
+    os_delivery: OsDeliveryDto,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum OsDeliveryDto {
+    NotRequested,
+    Delivered,
+    Failed { reason: String },
+}
+
+impl From<&OsDeliveryStatus> for OsDeliveryDto {
+    fn from(value: &OsDeliveryStatus) -> Self {
+        match value {
+            OsDeliveryStatus::NotRequested => OsDeliveryDto::NotRequested,
+            OsDeliveryStatus::Delivered => OsDeliveryDto::Delivered,
+            OsDeliveryStatus::Failed { reason } => OsDeliveryDto::Failed {
+                reason: reason.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +142,10 @@ pub struct NotificationState {
     store: ct_runtime::FileNotificationStore,
     status: Mutex<MonitorStatus>,
     seen_this_run: Mutex<HashSet<(AgentKind, String)>>,
+    /// Resolved once per process. Working it out reads the Start Menu, and the
+    /// answer only changes when the app is installed or moved -- neither of
+    /// which happens to a running process without restarting it.
+    deliverability: OnceLock<Deliverability>,
 }
 
 impl NotificationState {
@@ -100,6 +154,7 @@ impl NotificationState {
             store: ct_runtime::notification_store(),
             status: Mutex::new(MonitorStatus::default()),
             seen_this_run: Mutex::new(HashSet::new()),
+            deliverability: OnceLock::new(),
         }
     }
 
@@ -113,6 +168,16 @@ impl NotificationState {
         self.seen_this_run
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn deliverability(&self, app: &AppHandle) -> &Deliverability {
+        self.deliverability.get_or_init(|| {
+            let config = app.config();
+            delivery::deliverability(
+                &config.identifier,
+                config.product_name.as_deref().unwrap_or("ContextTrace"),
+            )
+        })
     }
 }
 
@@ -347,9 +412,9 @@ fn poll_session(
             .map_err(|error| error.to_string())?;
         if !catch_up
             && candidate.delivery.includes_os()
-            && _subagent_os_allowed(&descriptor.thread_role, preferences)
+            && subagent_os_allowed(&descriptor.thread_role, preferences)
         {
-            let os_status = deliver_os(app, &record);
+            let os_status = deliver_os(app, notifications, &record);
             notifications
                 .store
                 .set_os_delivery(record.id, os_status.clone())
@@ -430,12 +495,43 @@ pub fn get_notification_status(
     app: AppHandle,
     state: tauri::State<'_, NotificationState>,
 ) -> NotificationStatusDto {
+    let deliverability = state.deliverability(&app).clone();
+    let permission = permission_label(app.notification().permission_state());
     let status = state.status();
     NotificationStatusDto {
         monitoring: status.running,
-        os_permission: permission_label(app.notification().permission_state()).into(),
+        os_permission: permission.into(),
         last_successful_poll: status.last_successful_poll.map(|value| value.to_rfc3339()),
         error: status.error.clone(),
+        obstacle: deliverability.obstacle(),
+        deliverability,
+    }
+}
+
+/// Send a toast on demand, so "do OS notifications work here" stops being a
+/// question answered by waiting for one of eleven rules to fire.
+///
+/// It reports the true outcome, including the case where nothing was sent
+/// because this build cannot deliver. Nothing is written to the feed: a test
+/// the user asked for is not an observation about their sessions.
+#[tauri::command]
+pub fn send_test_notification(
+    app: AppHandle,
+    state: tauri::State<'_, NotificationState>,
+) -> TestNotificationDto {
+    let deliverability = state.deliverability(&app).clone();
+    let outcome = delivery::deliver(
+        &deliverability,
+        "ContextTrace test notification",
+        "If you can see this, OS notifications are reaching you.",
+    );
+    TestNotificationDto {
+        delivered: matches!(outcome, OsDeliveryStatus::Delivered),
+        reason: match outcome {
+            OsDeliveryStatus::Failed { reason } => Some(reason),
+            OsDeliveryStatus::Delivered | OsDeliveryStatus::NotRequested => None,
+        },
+        deliverability,
     }
 }
 
@@ -722,6 +818,7 @@ fn record_dto(record: &NotificationRecord) -> NotificationRecordDto {
         read_at: record.read_at_ms.map(timestamp),
         dismissed_at: record.dismissed_at_ms.map(timestamp),
         catch_up: record.catch_up,
+        os_delivery: OsDeliveryDto::from(&record.os_delivery),
         location: NotificationLocationDto {
             agent: record.candidate.location.agent.to_string(),
             session_id: record.candidate.location.session_id.to_string(),
@@ -797,24 +894,28 @@ fn permission_label(result: Result<PermissionState, impl std::fmt::Display>) -> 
     }
 }
 
-fn deliver_os(app: &AppHandle, record: &NotificationRecord) -> ct_domain::OsDeliveryStatus {
+/// Send one record's toast and report what Windows did with it.
+///
+/// The permission check stays first for the platforms where it means
+/// something. On Windows the plugin answers `Granted` unconditionally, so the
+/// check passing there says nothing at all -- which is why
+/// [`delivery::deliver`] re-asks the question the platform can actually answer
+/// before it sends.
+fn deliver_os(
+    app: &AppHandle,
+    state: &NotificationState,
+    record: &NotificationRecord,
+) -> OsDeliveryStatus {
     match app.notification().permission_state() {
-        Ok(PermissionState::Granted) => match app
-            .notification()
-            .builder()
-            .title(&record.candidate.title)
-            .body(&record.candidate.body)
-            .show()
-        {
-            Ok(()) => ct_domain::OsDeliveryStatus::Delivered,
-            Err(error) => ct_domain::OsDeliveryStatus::Failed {
-                reason: error.to_string(),
-            },
+        Ok(PermissionState::Granted) => delivery::deliver(
+            state.deliverability(app),
+            &record.candidate.title,
+            &record.candidate.body,
+        ),
+        Ok(permission) => OsDeliveryStatus::Failed {
+            reason: format!("OS notification permission is {permission:?}"),
         },
-        Ok(state) => ct_domain::OsDeliveryStatus::Failed {
-            reason: format!("OS notification permission is {state:?}"),
-        },
-        Err(error) => ct_domain::OsDeliveryStatus::Failed {
+        Err(error) => OsDeliveryStatus::Failed {
             reason: error.to_string(),
         },
     }
@@ -858,7 +959,7 @@ struct SessionUpdatedEvent {
     session_id: String,
 }
 
-fn _subagent_os_allowed(
+fn subagent_os_allowed(
     role: &ThreadRole,
     preferences: ct_runtime::NotificationUiPreferences,
 ) -> bool {

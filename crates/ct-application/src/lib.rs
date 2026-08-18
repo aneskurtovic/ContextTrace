@@ -8,6 +8,7 @@
 //! that does not exist yet.
 
 pub mod archive;
+pub mod corpus;
 pub mod cost;
 pub mod diagnostics;
 pub mod diff;
@@ -20,6 +21,7 @@ pub mod instructions;
 pub mod lifecycle;
 pub mod notifications;
 pub mod secrets;
+pub mod transcript;
 
 use ct_domain::model::archive::ArchiveEntry;
 use ct_domain::ports::ArchiveStore;
@@ -35,6 +37,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 pub use archive::{default_transform, RedactingTransform, VerbatimTransform};
+pub use corpus::{
+    AgentTotals, Corpus, CorpusReport, DayTotals, PressureBands, ProjectTotals, SessionRank,
+    ToolTotals,
+};
 pub use cost::{
     compare as compare_cost, project as project_cost, project_scenario as project_cost_scenario,
     project_with as project_cost_with, CostCategory, CostComparison, CostForecast, CostReport,
@@ -63,6 +69,10 @@ pub use notifications::{
     CostBudgetObservation, NotificationEngine, NotificationEvaluation, NotificationInputs,
 };
 pub use secrets::{ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport};
+pub use transcript::{
+    entry as transcript_entry, page as transcript_page, TranscriptEntry, TranscriptKind,
+    TranscriptPage,
+};
 
 /// An agent adapter paired with the token estimator appropriate to its models.
 ///
@@ -635,6 +645,68 @@ impl ContextTrace {
         Ok(adapter.compaction_diffs(session, raw, estimator)?)
     }
 
+    /// Parse every discovered session and report the corpus, not one session.
+    ///
+    /// The same walk `sweep_drift` performs -- discover, then load each
+    /// descriptor -- with more counted per session. Deliberately the plain
+    /// `load`: content analysis would hash and compress every payload for
+    /// results this report does not use, and turning a five-second sweep into
+    /// a minute-long one is how a view like this stops being opened.
+    ///
+    /// `progress` is called after each session with the number completed and
+    /// the total discovered.
+    pub fn sweep_corpus(&self, mut progress: impl FnMut(usize, usize)) -> corpus::CorpusReport {
+        let total: usize = self
+            .bindings
+            .iter()
+            .map(|binding| {
+                binding
+                    .adapter
+                    .discover()
+                    .map(|found| found.len())
+                    .unwrap_or(0)
+            })
+            .sum();
+        let mut done = 0usize;
+        let mut collected = corpus::Corpus::new();
+        for binding in &self.bindings {
+            let before = done;
+            corpus::sweep_adapter(binding.adapter.as_ref(), &mut collected, |completed| {
+                done = before + completed;
+                progress(done, total);
+            });
+        }
+        collected.finish()
+    }
+
+    /// One window of a session's conversation, read back from its log.
+    ///
+    /// Raw bytes are fetched for the requested entries only, so opening a
+    /// 6.8 MB session costs a page of seeks rather than the whole file.
+    pub fn transcript(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        raw: &dyn RawEventSource,
+        offset: usize,
+        limit: usize,
+    ) -> transcript::TranscriptPage {
+        let adapter = &self.bindings[binding].adapter;
+        transcript::page(session, adapter.as_ref(), raw, offset, limit)
+    }
+
+    /// One transcript entry in full, for a reader who expanded it.
+    pub fn transcript_entry(
+        &self,
+        session: &AgentSession,
+        binding: usize,
+        raw: &dyn RawEventSource,
+        index: usize,
+    ) -> Option<transcript::TranscriptEntry> {
+        let adapter = &self.bindings[binding].adapter;
+        transcript::entry(session, adapter.as_ref(), raw, index)
+    }
+
     /// Per-turn history of what the log could and could not account for.
     ///
     /// The unlogged remainder is stable by nature -- an agent's system prompt
@@ -1023,6 +1095,8 @@ mod tests {
             path: format!("/tmp/{id}.jsonl"),
             size_bytes: 100,
             project: Some(project.into()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: Some(Utc.with_ymd_and_hms(2026, 7, day, 0, 0, 0).unwrap()),
             thread_role: ThreadRole::Root,

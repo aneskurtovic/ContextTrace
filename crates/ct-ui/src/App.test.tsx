@@ -6,6 +6,7 @@ import {
   demoCost,
   demoArchiveHolding,
   demoContext,
+  demoCorpus,
   demoDetail,
   demoDoctor,
   demoInstructionFiles,
@@ -16,6 +17,8 @@ import {
   demoResidual,
   demoSessions,
   demoTemporalGhost,
+  demoTranscript,
+  demoTranscriptEntry,
   demoTurnDiff,
 } from "./demo";
 import type {
@@ -33,6 +36,10 @@ vi.mock("./api", () => ({
   searchSessions: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
+  getCorpus: vi.fn(),
+  listenForCorpusProgress: vi.fn(),
+  getTranscript: vi.fn(),
+  getTranscriptEntry: vi.fn(),
   runDoctor: vi.fn(),
   getLifecycle: vi.fn(),
   getResidual: vi.fn(),
@@ -48,6 +55,7 @@ vi.mock("./api", () => ({
   getNotificationSettings: vi.fn(),
   updateNotificationSettings: vi.fn(),
   getNotificationStatus: vi.fn(),
+  sendTestNotification: vi.fn(),
   listNotifications: vi.fn(),
   markNotificationsRead: vi.fn(),
   dismissNotification: vi.fn(),
@@ -85,7 +93,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function openView(name: "Overview" | "Turns" | "Diff" | "Evidence") {
+async function openView(name: "Overview" | "Turns" | "Chat" | "Diff" | "Evidence") {
   const tab = await screen.findByRole("tab", { name });
   await waitFor(() => expect(tab.hasAttribute("disabled")).toBe(false));
   fireEvent.click(tab);
@@ -101,6 +109,14 @@ beforeEach(() => {
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
   mockedApi.inspectSession.mockImplementation(async (_agent, id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
+  mockedApi.getCorpus.mockResolvedValue(demoCorpus);
+  mockedApi.listenForCorpusProgress.mockResolvedValue(() => undefined);
+  mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset = 0, limit = 40) =>
+    demoTranscript(offset, limit),
+  );
+  mockedApi.getTranscriptEntry.mockImplementation(async (_agent, _id, index) =>
+    demoTranscriptEntry(index),
+  );
   mockedApi.runDoctor.mockImplementation(async (_agent, _id, turn) => demoDoctor(turn));
   mockedApi.getLifecycle.mockImplementation(async (_agent, _id, item) => demoLifecycle(item));
   mockedApi.getResidual.mockImplementation(async (agent, id) => demoResidual(agent, id));
@@ -118,6 +134,11 @@ beforeEach(() => {
   mockedApi.getNotificationSettings.mockResolvedValue({ ...demoNotificationSettings, onboardingComplete: true });
   mockedApi.updateNotificationSettings.mockImplementation(async (settings) => settings);
   mockedApi.getNotificationStatus.mockResolvedValue(demoNotificationStatus);
+  mockedApi.sendTestNotification.mockResolvedValue({
+    delivered: true,
+    reason: null,
+    deliverability: { state: 'ready', appId: 'dev.contexttrace.desktop' },
+  });
   mockedApi.listNotifications.mockResolvedValue(demoNotificationPage);
   mockedApi.markNotificationsRead.mockResolvedValue(undefined);
   mockedApi.dismissNotification.mockResolvedValue(undefined);
@@ -197,7 +218,7 @@ describe("desktop accessibility and state handling", () => {
       "false",
     );
 
-    const session = await screen.findByRole("button", { name: /Codex session: ContextTrace/ });
+    const session = await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ });
     expect(session.getAttribute("aria-current")).toBe("true");
 
     const roots = screen.getByRole("button", { name: /Private by design/ });
@@ -221,7 +242,7 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("button", { name: /Codex session: ContextTrace/ }),
+      await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ }),
     ).not.toBeNull();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), {
       target: { value: "semantic-search" },
@@ -239,7 +260,7 @@ describe("desktop accessibility and state handling", () => {
       { timeout: 1_000 },
     );
     expect(
-      await screen.findByRole("button", { name: /Codex session: semantic-search/ }),
+      await screen.findByRole("button", { name: /Codex session: .*semantic-search/ }),
     ).not.toBeNull();
   });
 
@@ -256,7 +277,7 @@ describe("desktop accessibility and state handling", () => {
       expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 1, 200, false),
     );
     expect(
-      await screen.findByRole("button", { name: /Claude Code session: atlas-dashboard/ }),
+      await screen.findByRole("button", { name: /Claude Code session: .*atlas-dashboard/ }),
     ).not.toBeNull();
     expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
   });
@@ -280,22 +301,28 @@ describe("desktop accessibility and state handling", () => {
     await waitFor(() =>
       expect(mockedApi.inspectSession).toHaveBeenCalledWith(first.agent, first.id),
     );
-    fireEvent.click(await screen.findByRole("button", { name: /Codex session: ContextTrace/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Claude Code session: atlas-dashboard/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Claude Code session: .*atlas-dashboard/ }));
     await waitFor(() =>
       expect(mockedApi.inspectSession).toHaveBeenCalledWith(latest.agent, latest.id),
     );
+    // The workspace heading is the session's own name, so these assertions
+    // name the two sessions rather than the two projects they ran in -- which
+    // is the point of the change: two sessions in one repository used to give
+    // this heading the same text twice.
+    const firstName = first.title!.text;
+    const latestName = latest.title!.text;
     expect(await screen.findByText("Reading session…")).not.toBeNull();
-    expect(screen.queryByRole("heading", { name: "ContextTrace" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: firstName })).toBeNull();
 
     latestDetail.resolve(demoDetail(latest.id));
     latestContext.resolve(demoContext());
-    expect(await screen.findByRole("heading", { name: "atlas-dashboard" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: latestName })).not.toBeNull();
 
     firstDetail.resolve(demoDetail(first.id));
     firstContext.resolve(demoContext());
-    await waitFor(() => expect(screen.getByRole("heading", { name: "atlas-dashboard" })).not.toBeNull());
-    expect(screen.queryByRole("heading", { name: "ContextTrace" })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("heading", { name: latestName })).not.toBeNull());
+    expect(screen.queryByRole("heading", { name: firstName })).toBeNull();
   });
 
   it("keeps the latest turn context when responses arrive out of order", async () => {
@@ -455,6 +482,43 @@ describe("desktop accessibility and state handling", () => {
     );
   });
 
+  it("tells two sessions in one repository apart by name, branch and title provenance", async () => {
+    // The complaint this answers: every row in a repository read
+    // `contexttrace · a1b2c3d4`, so the catalog could not be scanned. Both
+    // sessions below share a project on purpose.
+    const [titled, untitled] = [
+      { ...demoSessions[0], id: "same-repo-one" },
+      {
+        ...demoSessions[0],
+        id: "same-repo-two",
+        title: { text: "Ship the notification delivery fix", source: "firstPrompt" as const },
+        gitBranch: "fix/toasts",
+      },
+    ];
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([titled, untitled]));
+
+    render(<App />);
+
+    const rows = await screen.findAllByRole("button", { name: /Codex session:/ });
+    expect(rows[0].textContent).toContain("Trace the 38k-token tool result in the planner");
+    expect(rows[1].textContent).toContain("Ship the notification delivery fix");
+    expect(rows[1].textContent).toContain("fix/toasts");
+    // Both name a session; only one is the agent's own summary of it, and the
+    // mark is what stops the weaker claim from reading as the stronger.
+    expect(rows[0].querySelector(".title-source")).toBeNull();
+    expect(rows[1].querySelector(".title-source")).not.toBeNull();
+  });
+
+  it("falls back to the project when a session has no name of its own", async () => {
+    const nameless: SessionSummary = { ...demoSessions[0], title: null, gitBranch: null };
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([nameless]));
+
+    render(<App />);
+
+    const row = await screen.findByRole("button", { name: /Codex session:/ });
+    expect(row.querySelector(".session-title")!.textContent).toBe("ContextTrace");
+  });
+
   it("keeps a same-id collision across agents from cross-selecting or cross-loading", async () => {
     const codexSession: SessionSummary = {
       ...demoSessions[0],
@@ -473,10 +537,10 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
 
     const codexRow = await screen.findByRole("button", {
-      name: /Codex session: collision-codex-project/,
+      name: /Codex session: .*collision-codex-project/,
     });
     const claudeRow = await screen.findByRole("button", {
-      name: /Claude Code session: collision-claude-project/,
+      name: /Claude Code session: .*collision-claude-project/,
     });
 
     // The first session in the page is selected by default; only its row
@@ -640,6 +704,101 @@ describe("desktop accessibility and state handling", () => {
   });
 });
 
+describe("corpus overview", () => {
+  it("summarises every session and states what it could not measure", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /All sessions at once/ }));
+
+    expect(await screen.findByRole("heading", { name: "134 sessions" })).not.toBeNull();
+    // A cost total without its unpriced count reads as complete when it is a
+    // floor, and a corpus with no measured compaction is not a corpus where
+    // compaction freed nothing. Both caveats have to be on screen.
+    expect(screen.getByText(/2,046 turns had no local rate/)).not.toBeNull();
+    expect(screen.getByText(/none recorded a before\/after size/)).not.toBeNull();
+    expect(
+      screen.getByText(/53 of 134 sessions never recorded both a prompt size/),
+    ).not.toBeNull();
+
+    // The session-scoped tab strip is meaningless here and is gone, not
+    // disabled.
+    expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
+  });
+
+  it("reuses the last sweep until asked to re-run it", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /All sessions at once/ }));
+    await screen.findByRole("heading", { name: "134 sessions" });
+
+    expect(mockedApi.getCorpus).toHaveBeenCalledWith(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-sweep" }));
+
+    await waitFor(() => expect(mockedApi.getCorpus).toHaveBeenCalledWith(true));
+  });
+});
+
+describe("conversation", () => {
+  it("reads a session back with tool results collapsed to their size", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await openView("Chat");
+
+    const entries = await screen.findAllByRole("listitem");
+    const conversation = entries.filter((entry) => entry.className.includes("transcript-entry"));
+    expect(conversation.length).toBeGreaterThan(3);
+
+    // The point of the view: a 152,480-character tool result sits between an
+    // ordinary question and an ordinary answer, and is collapsed to its size
+    // rather than pasted.
+    const result = conversation.find((entry) => entry.className.includes("toolResult"))!;
+    expect(result.textContent).toContain("152,480 chars");
+    expect(result.querySelector(".transcript-text")).toBeNull();
+    expect(result.querySelector(".transcript-collapsed")).not.toBeNull();
+
+    // A message is not machinery and arrives open.
+    const message = conversation.find((entry) => entry.className.includes("user"))!;
+    expect(message.querySelector(".transcript-text")!.textContent).toContain(
+      "losing track of the schema",
+    );
+  });
+
+  it("fetches the rest of a truncated entry only when it is expanded", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await openView("Chat");
+
+    const result = (await screen.findAllByRole("listitem")).find((entry) =>
+      entry.className.includes("toolResult"),
+    )!;
+    expect(mockedApi.getTranscriptEntry).not.toHaveBeenCalled();
+
+    fireEvent.click(result.querySelector<HTMLButtonElement>(".transcript-toggle")!);
+
+    await waitFor(() =>
+      expect(mockedApi.getTranscriptEntry).toHaveBeenCalledWith("codex", demoSessions[0].id, 4),
+    );
+    await waitFor(() =>
+      expect(result.querySelector(".transcript-text")!.textContent!.length).toBeGreaterThan(2_000),
+    );
+  });
+
+  it("moves from a message to the measurements of the turn it belongs to", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await openView("Chat");
+
+    // The link back is what makes this a transcript rather than a chat log:
+    // the reader who spots the oversized result goes straight to the turn's
+    // composition.
+    fireEvent.click((await screen.findAllByRole("button", { name: "turn 1" }))[0]);
+
+    await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith("codex", demoSessions[0].id, 1));
+  });
+});
+
 describe('notifications', () => {
   it('opens the feed, marks a finding read, and navigates to its session turn', async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
@@ -654,6 +813,43 @@ describe('notifications', () => {
     await waitFor(() => expect(mockedApi.markNotificationsRead).toHaveBeenCalledWith(['demo-notification-compaction']));
     await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith('codex', demoSessions[0].id, 18));
     expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+  });
+
+  it('says which findings reached the OS and why the others did not', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Notifications, 2 unread' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+
+    // The demo feed carries one failed OS delivery and one that was never
+    // requested. A row that says nothing at all is what let 38 undelivered
+    // toasts read as delivered, so the failure has to be on the row.
+    expect(drawer.textContent).toContain('OS failed');
+    expect(drawer.textContent).toContain('no OS notification was sent in demo mode');
+    expect(drawer.querySelectorAll('.os-delivered')).toHaveLength(0);
+  });
+
+  it('reports a real outcome for a test notification instead of assuming one', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+
+    // Deliverability, not the plugin's permission answer: on Windows that is
+    // `granted` whatever the truth is, so the obstacle is the honest half.
+    expect(drawer.querySelector('.notification-health')!.textContent).toContain('unsupported');
+    expect(screen.getByText(/OS notifications cannot be delivered from this build/)).not.toBeNull();
+
+    mockedApi.sendTestNotification.mockResolvedValue({
+      delivered: false,
+      reason: 'no installed shortcut carries the app id dev.contexttrace.desktop',
+      deliverability: { state: 'unregistered', appId: 'dev.contexttrace.desktop', exeDir: null },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
+
+    expect(await screen.findByText(/no installed shortcut carries the app id/)).not.toBeNull();
   });
 
   it('requires an explicit local-monitoring onboarding decision', async () => {

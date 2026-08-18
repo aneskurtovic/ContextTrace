@@ -187,6 +187,25 @@ pub trait AgentAdapter: Send + Sync {
         )))
     }
 
+    /// The readable text of one raw log line, for showing a session back as a
+    /// conversation.
+    ///
+    /// Deliberately weaker than [`AgentAdapter::recount_exact`]'s notion of
+    /// countable text, and never a substitute for it. That one refuses a
+    /// payload it cannot count *in full*, because a partial measurement
+    /// reported as a total is a wrong number. This one is for reading: a
+    /// payload that is half text and half opaque bytes yields the text it has,
+    /// with the rest described rather than dropped, and nothing derived from it
+    /// is ever counted.
+    ///
+    /// `None` means this line carries nothing a reader would want -- telemetry,
+    /// lifecycle markers -- or that the adapter does not implement this at all,
+    /// in which case the caller falls back to the previews recorded at parse
+    /// time.
+    fn transcript_text(&self, _raw_line: &str) -> Option<String> {
+        None
+    }
+
     /// Diff each compaction's literal replacement history against the history
     /// it replaced. Only agents that record that literal list can implement
     /// this; the default refuses rather than inferring an eviction.

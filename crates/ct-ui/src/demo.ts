@@ -7,6 +7,7 @@ import type {
   CompactionDiff,
   ContextDetail,
   ContextItemSummary,
+  CorpusReport,
   CostReport,
   DoctorReport,
   GrowthPoint,
@@ -22,6 +23,8 @@ import type {
   SessionSummary,
   StartupSummary,
   ThreadRole,
+  TranscriptEntry,
+  TranscriptPage,
   TurnDiff,
   TurnTarget,
   TemporalGhost,
@@ -44,6 +47,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\contexttrace.jsonl",
     sizeBytes: 3_829_760,
     project: "C:\\work\\ContextTrace",
+    title: { text: "Trace the 38k-token tool result in the planner", source: "agentGenerated" },
+    gitBranch: "main",
     startedAt: ago(5),
     lastActivity: ago(0.4),
     threadRole: root,
@@ -54,6 +59,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.claude\\projects\\atlas\\session.jsonl",
     sizeBytes: 1_677_721,
     project: "C:\\work\\atlas-dashboard",
+    title: { text: "Why does the dashboard reload twice on login?", source: "firstPrompt" },
+    gitBranch: "fix/double-reload",
     startedAt: ago(30),
     lastActivity: ago(23),
     threadRole: root,
@@ -64,6 +71,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\search.jsonl",
     sizeBytes: 812_413,
     project: "C:\\work\\semantic-search",
+    title: { text: "Add hybrid ranking to the query planner", source: "agentGenerated" },
+    gitBranch: "feat/hybrid-ranking",
     startedAt: ago(51),
     lastActivity: ago(47),
     threadRole: root,
@@ -74,6 +83,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.claude\\projects\\payments\\session.jsonl",
     sizeBytes: 7_130_317,
     project: "C:\\work\\payment-service",
+    title: { text: "Refund webhook retries are duplicating charges", source: "firstPrompt" },
+    gitBranch: "main",
     startedAt: ago(76),
     lastActivity: ago(70),
     threadRole: root,
@@ -84,6 +95,8 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\compiler.jsonl",
     sizeBytes: 2_075_648,
     project: "C:\\work\\compiler-lab",
+    title: { text: "Constant folding pass drops side effects", source: "agentGenerated" },
+    gitBranch: "spike/const-fold",
     startedAt: ago(110),
     lastActivity: ago(99),
     threadRole: root,
@@ -99,6 +112,10 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.codex\\sessions\\contexttrace-subagent.jsonl",
     sizeBytes: 214_030,
     project: "C:\\work\\ContextTrace",
+    // A subagent's name is the brief it was handed, which is why its title
+    // reads as an instruction rather than as a summary.
+    title: { text: "Read the planner's tool results and report the largest", source: "firstPrompt" },
+    gitBranch: "main",
     startedAt: ago(5),
     lastActivity: ago(4.6),
     threadRole: { kind: "subagent", parent: "0198fce2e48a7b12" },
@@ -113,6 +130,10 @@ export const demoSessions: SessionSummary[] = [
     path: "C:\\Users\\demo\\.claude\\projects\\atlas\\quick-question.jsonl",
     sizeBytes: 48_216,
     project: "C:\\work\\atlas-dashboard",
+    // Untitled on purpose. A session too brief to have earned a name is a real
+    // state, and the row has to stay readable in it.
+    title: null,
+    gitBranch: null,
     startedAt: ago(2),
     lastActivity: ago(1.9),
     threadRole: root,
@@ -144,6 +165,11 @@ export const demoNotificationStatus: NotificationStatus = {
   osPermission: 'prompt',
   lastSuccessfulPoll: null,
   error: null,
+  // Without the desktop bridge there is no OS to deliver through, and the demo
+  // must not imply otherwise -- the whole point of labelling demo data is that
+  // it never poses as a working local install.
+  deliverability: { state: 'unsupported' },
+  obstacle: 'OS notifications are supported on Windows only.',
 };
 
 export const demoNotificationPage: NotificationPage = {
@@ -163,6 +189,7 @@ export const demoNotificationPage: NotificationPage = {
       readAt: null,
       dismissedAt: null,
       catchUp: false,
+      osDelivery: { status: 'failed', reason: 'no OS notification was sent in demo mode' },
       location: {
         agent: 'codex',
         sessionId: demoSessions[0].id,
@@ -184,6 +211,7 @@ export const demoNotificationPage: NotificationPage = {
       readAt: null,
       dismissedAt: null,
       catchUp: true,
+      osDelivery: { status: 'notRequested' },
       location: {
         agent: 'codex',
         sessionId: demoSessions[0].id,
@@ -1071,3 +1099,213 @@ export function demoResidual(agent: Agent, id: string): ResidualReport {
     ],
   };
 }
+
+/**
+ * A short fabricated conversation, arranged around the demo session's one
+ * expensive tool result.
+ *
+ * The shape matters more than the words: a request, the model's reasoning, a
+ * call, an enormous result, and the answer that followed it. That is the
+ * sequence the transcript exists to make legible -- the 38k-token entry sits
+ * between a question and an answer that both look ordinary.
+ */
+const demoTranscriptEntries: TranscriptEntry[] = [
+  {
+    index: 0,
+    kind: "injection",
+    turn: 1,
+    label: "CLAUDE.md",
+    text: "# ContextTrace\n\nLocal-first tooling. Never send session content anywhere.",
+    truncated: false,
+    chars: 1_284,
+    sidechain: false,
+    error: false,
+    line: 3,
+    collapsed: true,
+  },
+  {
+    index: 1,
+    kind: "user",
+    turn: 1,
+    label: null,
+    text: "The planner keeps losing track of the schema halfway through a run. Can you work out what is filling its context?",
+    truncated: false,
+    chars: 113,
+    sidechain: false,
+    error: false,
+    line: 7,
+    collapsed: false,
+  },
+  {
+    index: 2,
+    kind: "reasoning",
+    turn: 1,
+    label: "recorded without its text",
+    text: "[thinking, recorded without its text]",
+    truncated: false,
+    chars: 4_210,
+    sidechain: false,
+    error: false,
+    line: 8,
+    collapsed: true,
+  },
+  {
+    index: 3,
+    kind: "toolCall",
+    turn: 1,
+    label: "Read · src/planner/schema.json",
+    text: '{"file_path":"C:\\work\\ContextTrace\\src\\planner\\schema.json"}',
+    truncated: false,
+    chars: 78,
+    sidechain: false,
+    error: false,
+    line: 9,
+    collapsed: false,
+  },
+  {
+    index: 4,
+    kind: "toolResult",
+    turn: 1,
+    label: "Read",
+    // Truncated on purpose: this is the entry the whole view is built around,
+    // and a demo where the largest item printed in full would misrepresent
+    // both the cost and the interaction.
+    text: '{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"PlannerStep","type":"object",',
+    truncated: true,
+    chars: 152_480,
+    sidechain: false,
+    error: false,
+    line: 10,
+    collapsed: true,
+  },
+  {
+    index: 5,
+    kind: "assistant",
+    turn: 1,
+    label: null,
+    text: "The schema file is 152,480 characters and it is re-read on every planning turn. That single item is most of the window by turn 12.",
+    truncated: false,
+    chars: 130,
+    sidechain: false,
+    error: false,
+    line: 12,
+    collapsed: false,
+  },
+  {
+    index: 6,
+    kind: "compaction",
+    turn: 18,
+    label: "auto",
+    text: "Summary: the planner reads schema.json each turn; the user is deciding whether to cache it.",
+    truncated: false,
+    chars: 90,
+    sidechain: false,
+    error: false,
+    line: DEMO_COMPACTION_LINE_NO,
+    collapsed: false,
+  },
+  {
+    index: 7,
+    kind: "toolResult",
+    turn: 19,
+    label: "Bash",
+    text: "error: could not compile `planner` (lib) due to 1 previous error",
+    truncated: false,
+    chars: 63,
+    sidechain: false,
+    error: true,
+    line: 4_830,
+    collapsed: true,
+  },
+];
+
+export function demoTranscript(offset: number, limit: number): TranscriptPage {
+  const entries = demoTranscriptEntries.slice(offset, offset + limit);
+  return {
+    entries,
+    total: demoTranscriptEntries.length,
+    offset,
+    hasMore: offset + entries.length < demoTranscriptEntries.length,
+  };
+}
+
+/** Expanding an entry serves the whole thing, so the demo grows the one entry
+ *  that was truncated rather than returning the same text twice. */
+export function demoTranscriptEntry(index: number): TranscriptEntry {
+  const entry = demoTranscriptEntries[index] ?? demoTranscriptEntries[0];
+  if (!entry.truncated) return entry;
+  return {
+    ...entry,
+    text: `${entry.text}${'"type":"string"},'.repeat(240)}`,
+    truncated: false,
+  };
+}
+
+/**
+ * A fabricated corpus summary.
+ *
+ * Shaped after the real sweep of this machine rather than invented from
+ * nothing: two agents, a handful of projects with one dominating, a long tail
+ * of tools where `exec` and `Read` return most of the text, and — importantly —
+ * a large `unmeasured` pressure band and a large `unpricedTurns` count. A demo
+ * where every figure was complete would misrepresent the view's whole point,
+ * which is that it says what it could not measure.
+ */
+export const demoCorpus: CorpusReport = {
+  sessions: 134,
+  turns: 5_122,
+  events: 31_354,
+  outputTokens: 1_699_968,
+  unreadable: 0,
+  unrecognisedEvents: 0,
+  compactions: 22,
+  sessionsWithCompaction: 19,
+  compactionsMeasured: 0,
+  reclaimedTokens: 0,
+  toolCalls: 4_816,
+  toolErrors: 107,
+  costMicros: 1_435_980_000,
+  unpricedTurns: 2_046,
+  pressure: { comfortable: 64, warming: 6, tight: 11, critical: 0, unmeasured: 53 },
+  byAgent: [
+    { agent: "claude-code", sessions: 52, turns: 1_872, events: 12_402, outputTokens: 780_408 },
+    { agent: "codex", sessions: 82, turns: 3_241, events: 18_952, outputTokens: 915_475 },
+  ],
+  byProject: [
+    { project: "C:\\work\\ContextTrace", sessions: 29, turns: 2_162, outputTokens: 812_004, costMicros: 692_950_000 },
+    { project: "C:\\work\\VoxMux", sessions: 31, turns: 1_520, outputTokens: 561_233, costMicros: 619_290_000 },
+    { project: "C:\\work\\Ludo.Nexus", sessions: 13, turns: 383, outputTokens: 194_820, costMicros: 78_490_000 },
+    { project: "C:\\work\\atlas-dashboard", sessions: 8, turns: 214, outputTokens: 88_115, costMicros: 41_510_000 },
+  ],
+  byDay: [
+    { day: "2026-08-11", sessions: 9, turns: 402, outputTokens: 121_884 },
+    { day: "2026-08-12", sessions: 14, turns: 651, outputTokens: 198_402 },
+    { day: "2026-08-13", sessions: 7, turns: 288, outputTokens: 96_113 },
+    { day: "2026-08-14", sessions: 18, turns: 812, outputTokens: 260_551 },
+    { day: "2026-08-15", sessions: 11, turns: 470, outputTokens: 151_290 },
+    { day: "2026-08-16", sessions: 22, turns: 985, outputTokens: 318_774 },
+    { day: "2026-08-17", sessions: 27, turns: 1_204, outputTokens: 402_663 },
+  ],
+  byTool: [
+    { tool: "exec", calls: 1_847, errors: 0, resultChars: 14_282_271 },
+    { tool: "Read", calls: 426, errors: 6, resultChars: 8_280_488 },
+    { tool: "Bash", calls: 811, errors: 23, resultChars: 904_355 },
+    { tool: "PowerShell", calls: 269, errors: 68, resultChars: 199_845 },
+    { tool: "Grep", calls: 66, errors: 1, resultChars: 76_165 },
+    { tool: "Edit", calls: 370, errors: 0, resultChars: 65_917 },
+  ],
+  models: [
+    ["gpt-5.4", 3_241],
+    ["claude-opus-4.5", 1_872],
+  ],
+  largestSessions: [
+    { id: demoSessions[0].id, agent: "codex", title: demoSessions[0].title!.text, project: demoSessions[0].project, turns: 425, peakPromptTokens: 536_766, outputTokens: 214_882, costMicros: 402_110_000 },
+    { id: demoSessions[3].id, agent: "claude-code", title: demoSessions[3].title!.text, project: demoSessions[3].project, turns: 249, peakPromptTokens: 360_770, outputTokens: 152_004, costMicros: 210_400_000 },
+    { id: demoSessions[2].id, agent: "codex", title: demoSessions[2].title!.text, project: demoSessions[2].project, turns: 131, peakPromptTokens: 260_176, outputTokens: 88_113, costMicros: 96_220_000 },
+  ],
+  costliestSessions: [
+    { id: demoSessions[0].id, agent: "codex", title: demoSessions[0].title!.text, project: demoSessions[0].project, turns: 425, peakPromptTokens: 536_766, outputTokens: 214_882, costMicros: 402_110_000 },
+    { id: demoSessions[3].id, agent: "claude-code", title: demoSessions[3].title!.text, project: demoSessions[3].project, turns: 249, peakPromptTokens: 360_770, outputTokens: 152_004, costMicros: 210_400_000 },
+  ],
+  cached: false,
+};

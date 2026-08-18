@@ -41,6 +41,8 @@ fn descriptor(path: PathBuf, agent: AgentKind, id: &str) -> SessionDescriptor {
         path: path.to_string_lossy().into_owned(),
         size_bytes: size,
         project: None,
+        title: None,
+        git_branch: None,
         started_at: None,
         last_activity: None,
         thread_role: ThreadRole::Root,

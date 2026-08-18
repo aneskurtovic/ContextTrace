@@ -31,15 +31,170 @@ export type ThreadRole =
   | { kind: "root"; parent: null }
   | { kind: "subagent"; parent: string };
 
+/**
+ * Where a session's name came from.
+ *
+ * `agentGenerated` is the agent's own summary of the session.
+ * `firstPrompt` is the first thing the user typed, which describes the session
+ * only as well as an opening request ever does. Rendered differently for that
+ * reason: the two are not equally strong claims about what a session is.
+ */
+export type TitleSource = 'agentGenerated' | 'firstPrompt';
+
+export interface SessionTitle {
+  text: string;
+  source: TitleSource;
+}
+
 export interface SessionSummary {
   id: string;
   agent: Agent;
   path: string;
   sizeBytes: number;
   project: string | null;
+  /** `null` when the log offered no name; the row falls back to its project. */
+  title: SessionTitle | null;
+  gitBranch: string | null;
   startedAt: string | null;
   lastActivity: string | null;
   threadRole: ThreadRole;
+}
+
+/**
+ * How close sessions came to their context window, in bands.
+ *
+ * Bands rather than an average: an average utilization across a corpus is a
+ * number no session ever had. `unmeasured` counts sessions where either the
+ * peak or the window was never recorded — the share of the corpus the question
+ * cannot be asked of is part of the answer.
+ */
+export interface PressureBands {
+  comfortable: number;
+  warming: number;
+  tight: number;
+  critical: number;
+  unmeasured: number;
+}
+
+export interface AgentTotals {
+  agent: string;
+  sessions: number;
+  turns: number;
+  events: number;
+  outputTokens: number;
+}
+
+export interface ProjectTotals {
+  project: string;
+  sessions: number;
+  turns: number;
+  outputTokens: number;
+  costMicros: number;
+}
+
+export interface ToolTotals {
+  tool: string;
+  calls: number;
+  errors: number;
+  /** Characters, not tokens: no estimator ran during the sweep. */
+  resultChars: number;
+}
+
+export interface DayTotals {
+  day: string;
+  sessions: number;
+  turns: number;
+  outputTokens: number;
+}
+
+export interface SessionRank {
+  id: string;
+  agent: Agent;
+  title: string | null;
+  project: string | null;
+  turns: number;
+  peakPromptTokens: number | null;
+  outputTokens: number;
+  costMicros: number;
+}
+
+/** Everything one sweep of the local corpus found. */
+export interface CorpusReport {
+  sessions: number;
+  turns: number;
+  events: number;
+  outputTokens: number;
+  unreadable: number;
+  unrecognisedEvents: number;
+  compactions: number;
+  sessionsWithCompaction: number;
+  /** Compactions that recorded both a before and an after size — the
+   *  denominator for `reclaimedTokens`, and the difference between "freed
+   *  nothing" and "nothing measured it". */
+  compactionsMeasured: number;
+  reclaimedTokens: number;
+  toolCalls: number;
+  toolErrors: number;
+  costMicros: number;
+  /** Turns no local rate could price, which makes every cost above a floor. */
+  unpricedTurns: number;
+  pressure: PressureBands;
+  byAgent: AgentTotals[];
+  byProject: ProjectTotals[];
+  byDay: DayTotals[];
+  byTool: ToolTotals[];
+  models: Array<[string, number]>;
+  largestSessions: SessionRank[];
+  costliestSessions: SessionRank[];
+  /** Whether this answer was reused from the last sweep. */
+  cached: boolean;
+}
+
+export interface CorpusProgress {
+  done: number;
+  total: number;
+}
+
+/**
+ * What one entry of a session's conversation is.
+ *
+ * `injection` is content the harness put in the prompt rather than anything a
+ * person or the model wrote. It appears in the transcript because the model
+ * read it: a conversation showing only the typed parts would misrepresent what
+ * was actually in the context window.
+ */
+export type TranscriptKind =
+  | 'user'
+  | 'assistant'
+  | 'reasoning'
+  | 'toolCall'
+  | 'toolResult'
+  | 'injection'
+  | 'compaction';
+
+export interface TranscriptEntry {
+  index: number;
+  kind: TranscriptKind;
+  turn: number | null;
+  label: string | null;
+  text: string;
+  /** True when `text` is a prefix of what is on disk. */
+  truncated: boolean;
+  /** The whole entry's length, which is what a collapsed row states. */
+  chars: number | null;
+  sidechain: boolean;
+  error: boolean;
+  line: number;
+  /** Whether this kind arrives collapsed. Decided by the backend so the CLI
+   *  and the desktop cannot disagree about what a conversation looks like. */
+  collapsed: boolean;
+}
+
+export interface TranscriptPage {
+  entries: TranscriptEntry[];
+  total: number;
+  offset: number;
+  hasMore: boolean;
 }
 
 /**
@@ -313,12 +468,45 @@ export interface NotificationSettings {
   costBudgetUsd: number | null;
 }
 
+/**
+ * Whether a toast sent from this build can reach the Windows shell.
+ *
+ * Separate from `osPermission`, which the notification plugin answers
+ * `granted` unconditionally on Windows and so cannot be read as a promise that
+ * anything will appear. This is the observation that can come back negative.
+ */
+export type Deliverability =
+  | { state: 'ready'; appId: string }
+  | { state: 'unregistered'; appId: string; exeDir: string | null }
+  | { state: 'unsupported' };
+
 export interface NotificationStatus {
   monitoring: boolean;
   osPermission: NotificationPermission;
   lastSuccessfulPoll: string | null;
   error: string | null;
+  deliverability: Deliverability;
+  /** The one-line reason OS delivery cannot work, or `null` when it can. */
+  obstacle: string | null;
 }
+
+/** The result of the toast the user asked for, reported as it happened. */
+export interface TestNotificationResult {
+  delivered: boolean;
+  reason: string | null;
+  deliverability: Deliverability;
+}
+
+/**
+ * What became of a record's OS toast.
+ *
+ * `notRequested` covers both a feed-only rule and a record caught up after the
+ * fact; `failed` carries what Windows said, or why this build never asked it.
+ */
+export type OsDelivery =
+  | { status: 'notRequested' }
+  | { status: 'delivered' }
+  | { status: 'failed'; reason: string };
 
 export interface NotificationLocation {
   agent: Agent;
@@ -343,6 +531,7 @@ export interface NotificationRecord {
   dismissedAt: string | null;
   catchUp: boolean;
   location: NotificationLocation;
+  osDelivery: OsDelivery;
 }
 
 export interface NotificationPage {

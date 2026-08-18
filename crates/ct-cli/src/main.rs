@@ -137,6 +137,38 @@ enum Command {
         json: bool,
     },
 
+    /// Summarise every local session at once
+    ///
+    /// Parses the whole corpus in one pass -- totals, per-project and per-day
+    /// activity, context-pressure bands, the tools returning the most text,
+    /// and the sessions that ran closest to their window. Cost is summed from
+    /// the turns a local rate could price, and the rest are reported as
+    /// unpriced rather than dropped.
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Read a session back as the conversation it was
+    ///
+    /// Shows what the model actually read, in log order: messages, reasoning,
+    /// tool calls and their results, and the content the harness injected.
+    /// Long entries are truncated with their full length stated, so a
+    /// 38,000-character tool result is visible as one without printing it.
+    /// Raw lines are read only for the requested window.
+    Transcript {
+        /// Session id, or an unambiguous prefix of one
+        id: String,
+        /// Skip this many entries. Entries are numbered within the transcript,
+        /// not by log line.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 40)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Break down the context at a turn by category
     Context {
         id: String,
@@ -690,6 +722,23 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         } => {
             let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
             render::inspect(&session, &resolved, limit, raw, json)?;
+        }
+
+        Command::Stats { json } => {
+            let report = app.sweep_corpus(|_done, _total| {});
+            render::stats(&report, json);
+        }
+
+        Command::Transcript {
+            id,
+            offset,
+            limit,
+            json,
+        } => {
+            let (session, resolved) = app.load_with_archive(&id, &archive_store)?;
+            let raw = FileRawEventSource::for_session(&resolved.descriptor.path);
+            let page = app.transcript(&session, resolved.binding, &raw, offset, limit);
+            render::transcript(&page, json);
         }
 
         Command::Compactions { id, json } => {

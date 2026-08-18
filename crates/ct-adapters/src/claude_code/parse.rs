@@ -22,10 +22,51 @@ use std::path::Path;
 /// session answers both questions below within a few kilobytes.
 const PRELUDE_BYTES: u64 = 1024 * 1024;
 
+/// How far to keep reading for a session's own title, once the questions above
+/// are answered.
+///
+/// Claude Code writes `{"type":"ai-title","aiTitle":…}` some way into the file
+/// rather than at its head. Across the eight local sessions that carry one, the
+/// line begins at byte 30,286 / 34,714 / 35,438 / 38,438 / 40,263 / 43,414 /
+/// 62,705 / 277,954. This budget takes the seven and leaves the outlier to the
+/// first-prompt fallback, because discovery re-runs on every catalog refresh
+/// and a budget that covered the last case would multiply that cost by four
+/// for every *untitled* session -- which is what the budget is actually spent
+/// on, since a titled one stops as soon as it finds its title.
+const TITLE_BYTES: u64 = 64 * 1024;
+
+/// The longest title kept. Long enough for a descriptive sentence, short
+/// enough that a pasted wall of text cannot become a row's name.
+const TITLE_CHARS: usize = 120;
+
+/// The shortest prompt worth naming a session after.
+///
+/// Sessions genuinely open with `continue`, `Yes`, `Yes please`. Those are real
+/// messages and useless as names -- a list of eleven rows called "continue"
+/// identifies nothing, which is the problem this field exists to solve. Below
+/// this length the scan keeps looking, still bounded by [`TITLE_BYTES`], and a
+/// session whose every early prompt is that short ends up untitled rather than
+/// mislabelled.
+const MIN_TITLE_CHARS: usize = 16;
+
 #[derive(Default)]
 pub struct Header {
     pub cwd: Option<String>,
     pub timestamp: Option<DateTime<Utc>>,
+    /// The title Claude Code generated for this session, if it wrote one.
+    pub ai_title: Option<String>,
+    /// The first user message that is a prompt rather than harness scaffolding.
+    pub first_prompt: Option<String>,
+    /// The same, from the sidechain half of the log.
+    ///
+    /// Kept apart rather than merged because the two answer different
+    /// questions. In a main session a sidechain message is a subagent's brief
+    /// and naming the session after it would be wrong; in a subagent
+    /// transcript, where every line is a sidechain, that brief is exactly what
+    /// the file is. Which one applies is a property of the file, which
+    /// [`super::describe`] knows and this reader does not.
+    pub first_sidechain_prompt: Option<String>,
+    pub git_branch: Option<String>,
     /// Whether any line in the prelude carries a `uuid`.
     ///
     /// The test for "is this a session transcript at all". A Claude Code
@@ -46,9 +87,9 @@ pub struct Header {
 /// is taken from the first line that has it. Since the file is append-only,
 /// that is also the earliest such line.
 ///
-/// The scan stops as soon as all three are answered, so the ordinary session —
-/// whose first line is a `user` event carrying all of them — still costs one
-/// `read_line`.
+/// The scan stops as soon as all three are answered *and* the title question is
+/// settled, so the ordinary titled session stops at its `ai-title` line and an
+/// untitled one stops at [`TITLE_BYTES`].
 pub fn read_header(path: &Path) -> PortResult<Header> {
     let file = File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
     let mut reader = BufReader::new(file.take(PRELUDE_BYTES));
@@ -58,7 +99,16 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
     let mut consumed: u64 = 0;
     let mut line = String::new();
 
-    while !(header.has_conversation && header.cwd.is_some() && header.timestamp.is_some()) {
+    loop {
+        let identified =
+            header.has_conversation && header.cwd.is_some() && header.timestamp.is_some();
+        // An agent-written title ends the search; a first prompt does not,
+        // because a title found later is the better of the two and this is the
+        // only pass that will look for it.
+        let titled = header.ai_title.is_some() || consumed >= TITLE_BYTES;
+        if identified && titled {
+            break;
+        }
         line.clear();
         match reader.read_line(&mut line).map_err(io)? {
             0 => break,
@@ -75,6 +125,25 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
         if header.timestamp.is_none() {
             header.timestamp = parse_time(value.get("timestamp"));
         }
+        if header.git_branch.is_none() {
+            header.git_branch = str_field(&value, "gitBranch");
+        }
+        if str_field(&value, "type").as_deref() == Some("ai-title") {
+            header.ai_title = str_field(&value, "aiTitle");
+        } else if str_field(&value, "type").as_deref() == Some("user") {
+            let sidechain = value
+                .get("isSidechain")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let slot = if sidechain {
+                &mut header.first_sidechain_prompt
+            } else {
+                &mut header.first_prompt
+            };
+            if slot.is_none() {
+                *slot = authored_prompt(&value);
+            }
+        }
         header.has_conversation |= value.get("uuid").is_some();
     }
 
@@ -85,6 +154,64 @@ pub fn read_header(path: &Path) -> PortResult<Header> {
     // journals.
     header.has_conversation |= consumed >= PRELUDE_BYTES;
     Ok(header)
+}
+
+/// Wrappers the harness writes as `user` lines that no person typed.
+///
+/// Claude Code replays slash commands, hook output and injected reminders
+/// through the same `type: "user"` envelope as a real prompt, and they sort
+/// *before* it: this very repository's sessions open with a `/clear` caveat and
+/// a `<command-name>` line. Naming a session after one of those would be worse
+/// than leaving it untitled, because it looks like a title and is not.
+///
+/// Matched at the start of the trimmed text only. These markers are opening
+/// tags of blocks the harness emits, so a prompt that merely *mentions* one --
+/// as any conversation about this code eventually does -- keeps its title.
+const HARNESS_PROMPT_MARKERS: [&str; 6] = [
+    "<local-command-caveat>",
+    "<local-command-stdout>",
+    "<command-name>",
+    "<command-message>",
+    "<system-reminder>",
+    "<user-prompt-submit-hook>",
+];
+
+/// The text of a `user` line, when it reads as something a person wrote.
+///
+/// `None` for a tool result carried in the user envelope, for harness
+/// scaffolding, and for anything too short to name a session by.
+fn authored_prompt(value: &Value) -> Option<String> {
+    let content = value.get("message")?.get("content")?;
+    let text = match content {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => {
+            if blocks
+                .iter()
+                .any(|block| block_type(block) == Some("tool_result"))
+            {
+                return None;
+            }
+            blocks
+                .iter()
+                .filter(|block| block_type(block) == Some("text"))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => return None,
+    };
+    let trimmed = text.trim();
+    if HARNESS_PROMPT_MARKERS
+        .iter()
+        .any(|marker| trimmed.starts_with(marker))
+    {
+        return None;
+    }
+    // Collapsed to one line before truncation: a prompt's first line is often a
+    // heading, and a row that renders raw newlines is not a title.
+    let collapsed = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    (collapsed.chars().count() >= MIN_TITLE_CHARS)
+        .then(|| ct_domain::ports::truncate_chars(&collapsed, TITLE_CHARS))
 }
 
 /// Parse a full Claude Code session.
@@ -708,21 +835,27 @@ pub(crate) fn is_redacted_thinking(block: &Value) -> bool {
         && block.get("signature").is_some()
 }
 
+/// Where an attachment keeps the content it injected, in priority order.
+///
+/// Shared by [`attachment_chars`] and [`attachment_text`] so that the size an
+/// entry reports and the text it shows are measurements of the same thing.
+const ATTACHMENT_CONTENT_KEYS: [&str; 8] = [
+    "content",
+    "stdout",
+    "planContent",
+    "snippet",
+    "prompt",
+    "skills",
+    "addedLines",
+    "addedBlocks",
+];
+
 /// Size of an attachment's injected content.
 fn attachment_chars(attachment: &Value) -> u32 {
     let mut total: usize = 0;
     let mut counted = false;
 
-    for key in [
-        "content",
-        "stdout",
-        "planContent",
-        "snippet",
-        "prompt",
-        "skills",
-        "addedLines",
-        "addedBlocks",
-    ] {
+    for key in ATTACHMENT_CONTENT_KEYS {
         if let Some(value) = attachment.get(key) {
             total += text_chars(value);
             counted = true;
@@ -737,6 +870,86 @@ fn attachment_chars(attachment: &Value) -> u32 {
     }
 
     total.min(u32::MAX as usize) as u32
+}
+
+/// The readable text of one raw Claude Code line.
+///
+/// Every branch renders what the model was actually shown, and describes in
+/// square brackets what it was shown that cannot be rendered -- a redacted
+/// thinking block, an inline image. A silent omission would leave a reader
+/// believing they had seen the whole turn, which is the failure this view
+/// exists to prevent; nothing derived here is ever counted.
+pub(crate) fn transcript_text(line: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    let text = match str_field(&value, "type").as_deref()? {
+        "user" | "assistant" => message_text(value.get("message")?),
+        "attachment" => attachment_text(value.get("attachment")?),
+        "system" => str_field(&value, "content").unwrap_or_default(),
+        _ => return None,
+    };
+    (!text.trim().is_empty()).then_some(text)
+}
+
+fn message_text(message: &Value) -> String {
+    match message.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(block_text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn block_text(block: &Value) -> Option<String> {
+    match block_type(block)? {
+        "text" => block
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        "thinking" => Some(match block.get("thinking").and_then(Value::as_str) {
+            // The ordinary case in the local corpus: 5,820 of 5,869 thinking
+            // blocks were written with their text stripped. The block still
+            // occupied the model's context, so the reader is told it was there.
+            Some(thinking) if !thinking.is_empty() => thinking.to_string(),
+            _ => "[thinking, recorded without its text]".into(),
+        }),
+        "tool_use" => block.get("input").map(|input| input.to_string()),
+        "tool_result" => Some(match block.get("content") {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Array(inner)) => inner
+                .iter()
+                .filter_map(block_text)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            other => other.map(Value::to_string).unwrap_or_default(),
+        }),
+        "image" => Some("[inline image]".into()),
+        _ => None,
+    }
+}
+
+/// The injected content of an attachment.
+///
+/// Reads the same keys, in the same order, as [`attachment_chars`] counts, and
+/// falls back the same way. That is the point: a reader shown nothing for an
+/// entry whose size says 3,198 characters would reasonably conclude the tool
+/// had lost the content, when what happened is that two functions disagreed
+/// about where it lives.
+fn attachment_text(attachment: &Value) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for key in ATTACHMENT_CONTENT_KEYS {
+        match attachment.get(key) {
+            Some(Value::String(text)) if !text.is_empty() => parts.push(text.clone()),
+            Some(other @ (Value::Array(_) | Value::Object(_))) => parts.push(other.to_string()),
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        return attachment.to_string();
+    }
+    parts.join("\n")
 }
 
 fn first_text(blocks: Option<&Vec<Value>>, max: usize) -> String {

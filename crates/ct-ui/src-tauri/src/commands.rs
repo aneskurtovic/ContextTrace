@@ -19,11 +19,17 @@ use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tauri::{AppHandle, Emitter};
 
 pub mod notifications;
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
 const MAX_SESSION_PAGE_SIZE: usize = 1_000;
+/// Smaller than a page of the catalog, and for a different reason: a catalog
+/// row is a few fields, while a transcript entry carries up to
+/// [`ct_application::transcript::PAGE_TEXT_CHARS`] of text apiece.
+const DEFAULT_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const MAX_TRANSCRIPT_PAGE_SIZE: usize = 200;
 
 /// How many parsed sessions the desktop keeps warm at once.
 ///
@@ -132,6 +138,18 @@ pub struct AppState {
     archive: Option<ct_runtime::FileArchiveStore>,
     sessions: Mutex<BoundedCache<SessionKey, Arc<CachedSession>>>,
     lifecycles: Mutex<BoundedCache<SessionKey, Arc<LifecycleSweep>>>,
+    /// The last corpus sweep, beside the corpus it was computed from.
+    ///
+    /// One entry, not a bounded cache: there is exactly one local corpus, and
+    /// a sweep of it takes seconds. Re-running that every time the view is
+    /// opened is the difference between a summary people check and one they
+    /// avoid.
+    corpus: Mutex<
+        Option<(
+            Vec<ct_domain::SessionFingerprint>,
+            ct_application::CorpusReport,
+        )>,
+    >,
 }
 
 struct CachedSession {
@@ -186,6 +204,7 @@ impl AppState {
             archive,
             sessions: Mutex::new(BoundedCache::new(SESSION_CACHE_CAPACITY)),
             lifecycles: Mutex::new(BoundedCache::new(LIFECYCLE_CACHE_CAPACITY)),
+            corpus: Mutex::new(None),
         }
     }
 
@@ -782,6 +801,106 @@ impl AppState {
             .find(|diff| diff.source().line_no == line_no)
             .ok_or_else(|| format!("no compaction recorded at line {line_no} in this session"))?;
         Ok(CompactionDiffSummary::from(diff))
+    }
+
+    /// Summarise the whole local corpus, reusing the last sweep when nothing
+    /// on disk has changed.
+    ///
+    /// The cache is keyed by a fingerprint of every discovered session --
+    /// path, size and last activity -- rather than by a timestamp. Discovery
+    /// is the cheap half of the sweep (a `stat` and a short read per file), so
+    /// re-running it to decide whether the expensive half is still valid costs
+    /// a fraction of what it saves, and it notices a session that changed
+    /// without growing.
+    fn corpus(&self, refresh: bool, app: &AppHandle) -> Result<CorpusSummary, String> {
+        let fingerprint = self.corpus_fingerprint();
+        if !refresh {
+            if let Some(cached) = self
+                .corpus
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref()
+                .filter(|(seen, _)| *seen == fingerprint)
+            {
+                return Ok(CorpusSummary::from_cached(&cached.1, true));
+            }
+        }
+
+        let report = self.app.sweep_corpus(|done, total| {
+            let _ = app.emit(
+                "contexttrace://corpus-progress",
+                CorpusProgress { done, total },
+            );
+        });
+        let summary = CorpusSummary::from_cached(&report, false);
+        *self
+            .corpus
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
+        Ok(summary)
+    }
+
+    /// What the corpus looked like when a sweep ran.
+    fn corpus_fingerprint(&self) -> Vec<ct_domain::SessionFingerprint> {
+        let mut fingerprints: Vec<_> = self
+            .app
+            .list_sessions(&SessionFilter {
+                agent: None,
+                project: None,
+                since: None,
+                limit: None,
+            })
+            .into_iter()
+            .map(|descriptor| ct_domain::SessionFingerprint {
+                path: descriptor.path,
+                size_bytes: descriptor.size_bytes,
+                last_activity: descriptor.last_activity,
+            })
+            .collect();
+        fingerprints.sort_by(|left, right| left.path.cmp(&right.path));
+        fingerprints
+    }
+
+    /// One window of the session's conversation.
+    ///
+    /// Paged rather than whole for the same reason the catalog is: the largest
+    /// local session is 6.8 MB, and reading a conversation must not mean
+    /// materialising one.
+    fn transcript(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> Result<TranscriptPageSummary, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+        let limit = limit
+            .unwrap_or(DEFAULT_TRANSCRIPT_PAGE_SIZE)
+            .clamp(1, MAX_TRANSCRIPT_PAGE_SIZE);
+        let page = self.app.transcript(
+            &cached.session,
+            cached.binding,
+            &raw,
+            offset.unwrap_or(0),
+            limit,
+        );
+        Ok(TranscriptPageSummary::from(page))
+    }
+
+    /// One transcript entry in full, for an entry the reader expanded.
+    fn transcript_entry(
+        &self,
+        agent: AgentKind,
+        id: &str,
+        index: usize,
+    ) -> Result<TranscriptEntrySummary, String> {
+        let cached = self.cached_session(agent, id, false)?;
+        let raw = ct_runtime::raw_event_source(&cached.descriptor.path);
+        self.app
+            .transcript_entry(&cached.session, cached.binding, &raw, index)
+            .map(TranscriptEntrySummary::from)
+            .ok_or_else(|| format!("this session's transcript has no entry {index}"))
     }
 
     /// Compare two turns, which may belong to two different sessions.
@@ -1623,9 +1742,33 @@ pub struct SessionSummary {
     path: String,
     size_bytes: u64,
     project: Option<String>,
+    /// A recognisable name for the session, with the provenance of that name
+    /// beside it -- an agent's own title and a first prompt are different
+    /// claims and the row says which it is showing.
+    title: Option<SessionTitleSummary>,
+    git_branch: Option<String>,
     started_at: Option<String>,
     last_activity: Option<String>,
     thread_role: ThreadRoleSummary,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTitleSummary {
+    text: String,
+    source: &'static str,
+}
+
+impl From<ct_domain::SessionTitle> for SessionTitleSummary {
+    fn from(value: ct_domain::SessionTitle) -> Self {
+        Self {
+            text: value.text,
+            source: match value.source {
+                ct_domain::TitleSource::AgentGenerated => "agentGenerated",
+                ct_domain::TitleSource::FirstPrompt => "firstPrompt",
+            },
+        }
+    }
 }
 
 /// A bounded, searchable page of locally discovered sessions.
@@ -1662,9 +1805,119 @@ impl From<SessionDescriptor> for SessionSummary {
             path: value.path,
             size_bytes: value.size_bytes,
             project: value.project,
+            title: value.title.map(SessionTitleSummary::from),
+            git_branch: value.git_branch,
             started_at: value.started_at.map(|time| time.to_rfc3339()),
             last_activity: value.last_activity.map(|time| time.to_rfc3339()),
             thread_role: value.thread_role.into(),
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CorpusProgress {
+    done: usize,
+    total: usize,
+}
+
+/// The corpus sweep, plus whether this answer came from the cache.
+///
+/// `cached` is presented rather than hidden because the two are different
+/// claims about freshness, and a summary of a corpus that changed since it was
+/// computed should say so rather than look identical to one that did not.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CorpusSummary {
+    #[serde(flatten)]
+    report: ct_application::CorpusReport,
+    cached: bool,
+}
+
+impl CorpusSummary {
+    fn from_cached(report: &ct_application::CorpusReport, cached: bool) -> Self {
+        Self {
+            report: report.clone(),
+            cached,
+        }
+    }
+}
+
+/// One entry of a session's conversation, as the desktop renders it.
+///
+/// `chars` is the entry's whole length and `text` may be a truncated prefix of
+/// it, which is the pair that lets a collapsed row state its weight honestly.
+/// The two must not be confused: a row showing 2,000 characters of a 38,000
+/// character tool result is the case this view exists to make visible.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptEntrySummary {
+    index: usize,
+    kind: &'static str,
+    turn: Option<u32>,
+    label: Option<String>,
+    text: String,
+    truncated: bool,
+    chars: Option<u32>,
+    sidechain: bool,
+    error: bool,
+    line: u32,
+    /// Whether this kind of entry is machinery a reader scrolls past rather
+    /// than reads. Decided in the application layer so the CLI and the desktop
+    /// cannot disagree about what a conversation looks like.
+    collapsed: bool,
+}
+
+impl From<ct_application::TranscriptEntry> for TranscriptEntrySummary {
+    fn from(value: ct_application::TranscriptEntry) -> Self {
+        Self {
+            index: value.index,
+            kind: transcript_kind_label(value.kind),
+            turn: value.turn,
+            label: value.label,
+            text: value.text,
+            truncated: value.truncated,
+            chars: value.chars,
+            sidechain: value.sidechain,
+            error: value.error,
+            line: value.line,
+            collapsed: value.kind.collapsed_by_default(),
+        }
+    }
+}
+
+fn transcript_kind_label(kind: ct_application::TranscriptKind) -> &'static str {
+    match kind {
+        ct_application::TranscriptKind::User => "user",
+        ct_application::TranscriptKind::Assistant => "assistant",
+        ct_application::TranscriptKind::Reasoning => "reasoning",
+        ct_application::TranscriptKind::ToolCall => "toolCall",
+        ct_application::TranscriptKind::ToolResult => "toolResult",
+        ct_application::TranscriptKind::Injection => "injection",
+        ct_application::TranscriptKind::Compaction => "compaction",
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptPageSummary {
+    entries: Vec<TranscriptEntrySummary>,
+    total: usize,
+    offset: usize,
+    has_more: bool,
+}
+
+impl From<ct_application::TranscriptPage> for TranscriptPageSummary {
+    fn from(value: ct_application::TranscriptPage) -> Self {
+        Self {
+            entries: value
+                .entries
+                .into_iter()
+                .map(TranscriptEntrySummary::from)
+                .collect(),
+            total: value.total,
+            offset: value.offset,
+            has_more: value.has_more,
         }
     }
 }
@@ -2630,6 +2883,41 @@ pub fn get_context(
     state.context(parse_agent(&agent)?, &id, turn)
 }
 
+/// Summarise every local session at once.
+///
+/// Runs on the command's own thread, which Tauri dispatches off the UI thread,
+/// and emits progress as it goes -- a sweep measured at 3.2 seconds over 134
+/// local sessions is long enough that a silent wait reads as a hang.
+#[tauri::command]
+pub fn get_corpus(
+    refresh: Option<bool>,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<CorpusSummary, String> {
+    state.corpus(refresh.unwrap_or(false), &app)
+}
+
+#[tauri::command]
+pub fn get_transcript(
+    id: String,
+    agent: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    state: tauri::State<'_, AppState>,
+) -> Result<TranscriptPageSummary, String> {
+    state.transcript(parse_agent(&agent)?, &id, offset, limit)
+}
+
+#[tauri::command]
+pub fn get_transcript_entry(
+    id: String,
+    agent: String,
+    index: usize,
+    state: tauri::State<'_, AppState>,
+) -> Result<TranscriptEntrySummary, String> {
+    state.transcript_entry(parse_agent(&agent)?, &id, index)
+}
+
 #[tauri::command]
 pub fn run_doctor(
     id: String,
@@ -2777,10 +3065,19 @@ fn session_matches_query(descriptor: &SessionDescriptor, query: Option<&str>) ->
         AgentKind::Codex => "codex",
         AgentKind::ClaudeCode => "claude-code",
     };
+    // The title is searched alongside the id, project and path. It is what the
+    // row is now labelled with, so a catalog that showed a name it could not
+    // then find would be a worse search than the id-only one it replaced.
     let matches = [
         descriptor.id.as_str(),
         descriptor.project.as_deref().unwrap_or_default(),
         descriptor.path.as_str(),
+        descriptor
+            .title
+            .as_ref()
+            .map(|title| title.text.as_str())
+            .unwrap_or_default(),
+        descriptor.git_branch.as_deref().unwrap_or_default(),
         agent,
     ]
     .into_iter()
@@ -3025,6 +3322,8 @@ mod tests {
             path: format!("C:/catalog/session-{index:04}.jsonl"),
             size_bytes: 1,
             project: Some(project.to_string()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Root,
@@ -3233,6 +3532,8 @@ mod tests {
             path: "session.jsonl".to_string(),
             size_bytes: 42,
             project: Some("ContextTrace".to_string()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Root,
@@ -3254,6 +3555,8 @@ mod tests {
             path: "session.jsonl".to_string(),
             size_bytes: 42,
             project: Some("ContextTrace".to_string()),
+            title: None,
+            git_branch: None,
             started_at: None,
             last_activity: None,
             thread_role: ThreadRole::Subagent {

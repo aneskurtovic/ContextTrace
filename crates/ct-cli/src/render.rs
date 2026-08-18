@@ -6,10 +6,10 @@ use crate::format::{
 };
 use ct_adapters::FileRawEventSource;
 use ct_application::{
-    AppError, Comparability, ContextTrace, CostComparison, CostReport, Departure, Diagnostics,
-    DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift,
+    AppError, Comparability, ContextTrace, CorpusReport, CostComparison, CostReport, Departure,
+    Diagnostics, DriftReport, ExportRedaction, FidelityTrend, GrowthTimeline, InstructionDrift,
     InstructionFileReport, ItemLifecycle, ResidualPoint, ResolvedSession, SecretScanReport,
-    SessionDiff, SessionFamily, TemporalGhost,
+    SessionDiff, SessionFamily, TemporalGhost, TranscriptKind, TranscriptPage,
 };
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::{ExactRecount, PortError, RawEventSource};
@@ -17,7 +17,7 @@ use ct_domain::services::DerivedRatio;
 use ct_domain::{
     AgentKind, AgentSession, ArchiveEntry, ArchiveIntegrity, CompactionDiff,
     CompactionItemDisposition, ContextSnapshot, Contributor, FilteredView, RedactionMode,
-    SessionDescriptor, ThreadRole, TokenCount,
+    SessionDescriptor, ThreadRole, TitleSource, TokenCount,
 };
 
 /// Every local path this build touches, split by whether it is read or written.
@@ -48,6 +48,21 @@ pub fn roots(app: &ContextTrace, archive_root: &str) {
     println!("Nothing leaves this machine either way.");
 }
 
+/// The last component of a project path, for a column narrow enough to leave
+/// room for the session's name. The full path is still one `ct inspect` away,
+/// and `--json` carries it untouched.
+fn project_leaf(project: Option<&str>) -> &str {
+    let Some(project) = project else {
+        return "-";
+    };
+    project
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|leaf| !leaf.is_empty())
+        .unwrap_or(project)
+}
+
 pub fn sessions(list: &[SessionDescriptor], json: bool) {
     if json {
         print_json(list);
@@ -59,12 +74,17 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
         return;
     }
 
+    // PROJECT is bounded so SESSION can be the free-flowing last column. The
+    // project answers "where did this run", which repeats across every row in
+    // a repository; the name answers "which one is this", which is the
+    // question a catalog is read to answer.
     println!(
-        "{}  {}  {}  {}  PROJECT",
+        "{}  {}  {}  {}  {}  SESSION",
         pad("ID", 10),
         pad("AGENT", 12),
         pad("LAST ACTIVITY", 18),
-        rpad("SIZE", 9)
+        rpad("SIZE", 9),
+        pad("PROJECT", 24)
     );
 
     for d in list {
@@ -85,13 +105,24 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
                 format!("  [subagent of {parent_short}]")
             }
         };
+        // A first prompt is marked, not silently presented as a title: it is
+        // whatever the user happened to type first, not a description of the
+        // session, and the two must not read alike.
+        let name = match &d.title {
+            Some(title) => match title.source {
+                TitleSource::AgentGenerated => ellipsize(&title.text, 70),
+                TitleSource::FirstPrompt => format!("> {}", ellipsize(&title.text, 68)),
+            },
+            None => "-".into(),
+        };
         println!(
-            "{}  {}  {}  {}  {}{}",
+            "{}  {}  {}  {}  {}  {}{}",
             pad(&short_id, 10),
             pad(d.agent.label(), 12),
             pad(&when, 18),
             rpad(&bytes(d.size_bytes), 9),
-            ellipsize(d.project.as_deref().unwrap_or("-"), 60),
+            pad(&ellipsize(project_leaf(d.project.as_deref()), 24), 24),
+            name,
             marker
         );
     }
@@ -100,6 +131,224 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
         "\n{} session(s). Inspect one with: ct inspect <id>",
         list.len()
     );
+}
+
+/// Print what the whole local corpus adds up to.
+pub fn stats(report: &CorpusReport, json: bool) {
+    if json {
+        print_json(report);
+        return;
+    }
+    if report.sessions == 0 {
+        println!("No sessions found. Run `ct roots` to see which directories were searched.");
+        return;
+    }
+
+    println!(
+        "{} sessions  {} turns  {} events",
+        report.sessions, report.turns, report.events
+    );
+    if report.unreadable > 0 {
+        println!(
+            "  {} session(s) could not be parsed and are excluded from every figure below",
+            report.unreadable
+        );
+    }
+    if report.unrecognised_events > 0 {
+        println!(
+            "  {} event(s) this build did not recognise -- run `ct doctor --dir` for the breakdown",
+            report.unrecognised_events
+        );
+    }
+    println!("  {} output tokens", report.output_tokens);
+    println!(
+        "  ${:.2} across priced turns{}",
+        report.cost_micros as f64 / 1_000_000.0,
+        if report.unpriced_turns > 0 {
+            format!(
+                ", {} turn(s) no local rate covered -- a floor, not a total",
+                report.unpriced_turns
+            )
+        } else {
+            String::new()
+        }
+    );
+    // "reclaiming 0 tokens" and "nothing recorded a size" are different
+    // statements, and every compaction in a Codex-only corpus is the second.
+    let reclaimed = if report.compactions_measured == 0 {
+        "; none recorded a before/after size, so no reclaimed total exists".to_string()
+    } else {
+        format!(
+            ", reclaiming {} tokens across the {} that recorded both sizes",
+            report.reclaimed_tokens, report.compactions_measured
+        )
+    };
+    println!(
+        "  {} compaction(s) across {} session(s){}",
+        report.compactions, report.sessions_with_compaction, reclaimed
+    );
+    println!(
+        "  {} tool call(s), {} of them reported errors",
+        report.tool_calls, report.tool_errors
+    );
+
+    let pressure = &report.pressure;
+    println!("\nPeak context pressure, by session");
+    println!(
+        "  under 50%: {}   50-75%: {}   75-90%: {}   over 90%: {}   unmeasured: {}",
+        pressure.comfortable,
+        pressure.warming,
+        pressure.tight,
+        pressure.critical,
+        pressure.unmeasured
+    );
+
+    println!("\n{}  SESSIONS  TURNS  OUTPUT", pad("AGENT", 14));
+    for agent in &report.by_agent {
+        println!(
+            "{}  {}  {}  {}",
+            pad(&agent.agent, 14),
+            rpad(&agent.sessions.to_string(), 8),
+            rpad(&agent.turns.to_string(), 5),
+            agent.output_tokens
+        );
+    }
+
+    println!("\n{}  SESSIONS  TURNS  COST", pad("PROJECT", 28));
+    for project in &report.by_project {
+        println!(
+            "{}  {}  {}  ${:.2}",
+            pad(&ellipsize(project_leaf(Some(&project.project)), 28), 28),
+            rpad(&project.sessions.to_string(), 8),
+            rpad(&project.turns.to_string(), 5),
+            project.cost_micros as f64 / 1_000_000.0
+        );
+    }
+
+    println!("\n{}  CALLS  ERRORS  RESULT CHARS", pad("TOOL", 24));
+    for tool in &report.by_tool {
+        println!(
+            "{}  {}  {}  {}",
+            pad(&ellipsize(&tool.tool, 24), 24),
+            rpad(&tool.calls.to_string(), 5),
+            rpad(&tool.errors.to_string(), 6),
+            tool.result_chars
+        );
+    }
+
+    println!("\n{}  TURNS  PEAK PROMPT  SESSION", pad("ID", 10));
+    for rank in &report.largest_sessions {
+        let short: String = rank.id.chars().take(8).collect();
+        println!(
+            "{}  {}  {}  {}",
+            pad(&short, 10),
+            rpad(&rank.turns.to_string(), 5),
+            rpad(
+                &rank
+                    .peak_prompt_tokens
+                    .map(|peak| peak.to_string())
+                    .unwrap_or_else(|| "-".into()),
+                11
+            ),
+            ellipsize(rank.title.as_deref().unwrap_or("-"), 60)
+        );
+    }
+}
+
+/// Print a window of a session's conversation.
+///
+/// Entries the reader is unlikely to be scanning for -- tool results, injected
+/// context, reasoning -- print their first line and their length rather than
+/// their body. That is not hiding them: an entry stating `38,412 chars` is
+/// exactly how an oversized tool result announces itself, and `--json` carries
+/// the same text this printed from.
+pub fn transcript(page: &TranscriptPage, json: bool) {
+    if json {
+        print_json(page);
+        return;
+    }
+    if page.entries.is_empty() {
+        println!("This session's transcript has no entries in that range.");
+        return;
+    }
+
+    for entry in &page.entries {
+        let turn = entry
+            .turn
+            .map(|turn| format!("turn {turn}"))
+            .unwrap_or_else(|| "-".into());
+        let label = entry
+            .label
+            .as_deref()
+            .map(|label| format!(" {label}"))
+            .unwrap_or_default();
+        let size = entry
+            .chars
+            .map(|chars| format!("  {chars} chars"))
+            .unwrap_or_default();
+        println!(
+            "\n[{}] {}{}  ({}, line {}){}{}",
+            entry.index,
+            transcript_kind(entry.kind),
+            label,
+            turn,
+            entry.line,
+            size,
+            if entry.error { "  ERROR" } else { "" }
+        );
+
+        if entry.kind.collapsed_by_default() {
+            // One flattened line: enough to tell a stack trace from a file
+            // read without pasting either, and `ellipsize` also strips the
+            // control characters raw tool output is full of.
+            println!("  {}", ellipsize(&entry.text, 110));
+        } else {
+            // Line structure is kept here, because a prompt or an answer is
+            // written in paragraphs and flattening it makes it unreadable.
+            for line in truncate_lines(&entry.text, 1_200) {
+                println!("  {line}");
+            }
+        }
+    }
+
+    println!(
+        "\n{} of {} entries. Next window: --offset {}",
+        page.entries.len(),
+        page.total,
+        page.offset + page.entries.len()
+    );
+}
+
+/// Break text into printable lines, stopping after `max` characters.
+///
+/// Not [`ellipsize`], which replaces every control character with a space:
+/// that is right for a table cell and wrong for a message, where the line
+/// breaks are part of what was written.
+fn truncate_lines(text: &str, max: usize) -> Vec<String> {
+    let mut used = 0usize;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if used >= max {
+            out.push("[…]".into());
+            break;
+        }
+        let room = max - used;
+        used += line.chars().count() + 1;
+        out.push(ellipsize(line, room));
+    }
+    out
+}
+
+fn transcript_kind(kind: TranscriptKind) -> &'static str {
+    match kind {
+        TranscriptKind::User => "user",
+        TranscriptKind::Assistant => "assistant",
+        TranscriptKind::Reasoning => "reasoning",
+        TranscriptKind::ToolCall => "tool call",
+        TranscriptKind::ToolResult => "tool result",
+        TranscriptKind::Injection => "injected",
+        TranscriptKind::Compaction => "compaction",
+    }
 }
 
 /// Show the recorded root/subagent structure without inferring edges from

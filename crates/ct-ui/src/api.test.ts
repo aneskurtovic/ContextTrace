@@ -27,6 +27,7 @@ import {
   markNotificationsRead,
   runDoctor,
   searchSessions,
+  sendTestNotification,
   verifyArchived,
 } from "./api";
 import {
@@ -74,6 +75,49 @@ describe('notification IPC contracts', () => {
     const { contextPressure: _missing, ...rules } = demoNotificationSettings.rules;
     invoke.mockResolvedValue({ ...demoNotificationSettings, rules });
     await expect(getNotificationSettings()).rejects.toThrow('invalid response from notification settings');
+  });
+
+  it('refuses a status or record that leaves OS delivery unstated', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { deliverability: _absent, ...status } = demoNotificationStatus;
+    invoke.mockResolvedValueOnce(status);
+    await expect(getNotificationStatus()).rejects.toThrow('invalid response from notification status');
+
+    // An `unregistered` state that omits `exeDir`, and a `failed` delivery
+    // without a reason, are both the shape this pass exists to prevent: a
+    // verdict with nothing behind it. `null` is a stated absence and allowed;
+    // a missing field is not.
+    invoke.mockResolvedValueOnce({
+      ...demoNotificationStatus,
+      deliverability: { state: 'unregistered', appId: 'dev.contexttrace.desktop' },
+    });
+    await expect(getNotificationStatus()).rejects.toThrow('invalid response from notification status');
+
+    const [record] = demoNotificationPage.notifications;
+    invoke.mockResolvedValueOnce({
+      ...demoNotificationPage,
+      notifications: [{ ...record, osDelivery: { status: 'failed' } }],
+    });
+    await expect(listNotifications()).rejects.toThrow('invalid response from notification history');
+  });
+
+  it('reports a test notification outcome, and never fabricates one without the bridge', async () => {
+    const undelivered = await sendTestNotification();
+    expect(undelivered.delivered).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
+
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const outcome = {
+      delivered: false,
+      reason: 'no installed shortcut carries the app id',
+      deliverability: { state: 'unregistered', appId: 'dev.contexttrace.desktop', exeDir: null },
+    };
+    invoke.mockResolvedValueOnce(outcome);
+    await expect(sendTestNotification()).resolves.toEqual(outcome);
+    expect(invoke).toHaveBeenCalledWith('send_test_notification');
+
+    invoke.mockResolvedValueOnce({ delivered: true, reason: null });
+    await expect(sendTestNotification()).rejects.toThrow('invalid response from a test notification result');
   });
 
   it('uses null to mark every notification read', async () => {

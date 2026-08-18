@@ -30,6 +30,8 @@ import type {
   ContextDetail,
   ContextItemSummary,
   ContributorSummary,
+  CorpusProgress,
+  CorpusReport,
   CostReport,
   DoctorReport,
   ExportOutcome,
@@ -49,19 +51,24 @@ import type {
   SessionDetail,
   SessionSummary,
   StartupSummary,
+  TestNotificationResult,
+  TranscriptEntry,
+  TranscriptKind,
+  TranscriptPage,
   TurnDiff,
   TurnTarget,
   TemporalGhost,
 } from "./types";
 
 type AgentFilter = "all" | Agent;
-type WorkspaceView = "overview" | "turns" | "diff" | "evidence";
+type WorkspaceView = "overview" | "turns" | "chat" | "diff" | "evidence";
 
 const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; shortcut: string }> = [
   { id: "overview", label: "Overview", shortcut: "1" },
   { id: "turns", label: "Turns", shortcut: "2" },
-  { id: "diff", label: "Diff", shortcut: "3" },
-  { id: "evidence", label: "Evidence", shortcut: "4" },
+  { id: "chat", label: "Chat", shortcut: "3" },
+  { id: "diff", label: "Diff", shortcut: "4" },
+  { id: "evidence", label: "Evidence", shortcut: "5" },
 ];
 
 /**
@@ -126,6 +133,19 @@ function Metric({
   );
 }
 
+/**
+ * What to call a session in the catalog.
+ *
+ * The project alone was the label, and it is not an identity: a week of work
+ * in one repository produced a column of rows reading `contexttrace` that
+ * differed only by an opaque id. The name the log offers leads when there is
+ * one, and the project moves down to the line that says *where* — which is a
+ * different question from *what*.
+ */
+function sessionName(session: SessionSummary): string {
+  return session.title?.text ?? projectName(session.project);
+}
+
 function SessionListItem({
   session,
   selected,
@@ -138,20 +158,34 @@ function SessionListItem({
   // Narrowed through the value itself rather than a boolean alias, so the
   // union tells the compiler `parent` is a string in this branch.
   const role = session.threadRole;
+  const name = sessionName(session);
   return (
     <button
       className={`session-row ${selected ? "selected" : ""}`}
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
-      aria-label={`${agentLabel(session.agent)} session: ${projectName(session.project)}, ${shortId(session.id)}${
+      aria-label={`${agentLabel(session.agent)} session: ${name}, ${projectName(session.project)}, ${shortId(session.id)}${
         role.kind === "subagent" ? `, subagent of ${shortId(role.parent)}` : ""
       }`}
     >
       <AgentMark agent={session.agent} />
       <span className="session-copy">
-        <span className="session-title">{projectName(session.project)}</span>
+        <span className="session-title" title={session.title?.text ?? undefined}>
+          {name}
+          {/* A first prompt describes a session only as well as an opening
+              request does, and an agent's own title is a summary of the whole
+              thing. The mark is what keeps the reader from reading the weaker
+              one as the stronger. */}
+          {session.title?.source === "firstPrompt" && (
+            <i className="title-source" title="Named after this session's first prompt">
+              ›
+            </i>
+          )}
+        </span>
         <span className="session-meta">
-          {shortId(session.id)} · {formatBytes(session.sizeBytes)}
+          {projectName(session.project)}
+          {session.gitBranch && <> · <span className="session-branch">{session.gitBranch}</span></>}
+          {" · "}{shortId(session.id)} · {formatBytes(session.sizeBytes)}
           {role.kind === "subagent" && (
             <span className="thread-marker"> · subagent of {shortId(role.parent)}</span>
           )}
@@ -277,7 +311,7 @@ function CrossSessionPicker({
               key={`${session.agent}:${session.id}`}
               value={JSON.stringify({ agent: session.agent, id: session.id })}
             >
-              {agentLabel(session.agent)} · {projectName(session.project)} · {shortId(session.id)}
+              {agentLabel(session.agent)} · {sessionName(session)} · {shortId(session.id)}
             </option>
           ))}
         </select>
@@ -1296,8 +1330,8 @@ function SessionComparePanel({
   return (
     <section className="panel session-compare-panel" aria-labelledby="session-compare-heading">
       <div className="panel-heading"><div><span className="eyebrow">A/B lab</span><h2 id="session-compare-heading">Session Compare · prompt architecture</h2></div><span className="sandbox-badge">empirical, local evidence</span></div>
-      <div className="ab-controls"><label>Compare this session with<input aria-label="Session to compare" value={other ? `${projectName(other.session.project)} · ${shortId(other.session.id)}` : ""} placeholder="Choose a second session…" readOnly /></label><div className="ab-options">{candidates.slice(0, 5).map((session) => <button type="button" key={`${session.agent}:${session.id}`} onClick={() => onSelect(JSON.stringify({ agent: session.agent, id: session.id }))}>{projectName(session.project)} · {shortId(session.id)}</button>)}</div>{loading && <Spinner label="Loading comparison…" />}</div>
-      {other ? <div className="ab-grid"><div className="ab-side"><span className="ab-label">Session A · current</span><strong>{projectName(current.session.project)}</strong><div className="ab-stat"><span>Turns</span><b>{current.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(currentPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(current.totalOutputTokens)}</b></div></div><div className="ab-arrow">→<small>{tokenDelta <= 0 ? `${formatTokens(Math.abs(tokenDelta))} fewer peak tokens` : `${formatTokens(tokenDelta)} more peak tokens`}</small></div><div className="ab-side alt"><span className="ab-label">Session B · candidate</span><strong>{projectName(other.session.project)}</strong><div className="ab-stat"><span>Turns</span><b>{other.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(otherPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(other.totalOutputTokens)}</b></div></div></div> : <div className="ab-empty"><strong>Turn prompt experiments into evidence.</strong><p>Run the same task twice, select the second session, and ContextTrace will line up turns, peak prompt size, and output volume.</p></div>}
+      <div className="ab-controls"><label>Compare this session with<input aria-label="Session to compare" value={other ? `${sessionName(other.session)} · ${shortId(other.session.id)}` : ""} placeholder="Choose a second session…" readOnly /></label><div className="ab-options">{candidates.slice(0, 5).map((session) => <button type="button" key={`${session.agent}:${session.id}`} onClick={() => onSelect(JSON.stringify({ agent: session.agent, id: session.id }))}>{sessionName(session)} · {shortId(session.id)}</button>)}</div>{loading && <Spinner label="Loading comparison…" />}</div>
+      {other ? <div className="ab-grid"><div className="ab-side"><span className="ab-label">Session A · current</span><strong>{sessionName(current.session)}</strong><div className="ab-stat"><span>Turns</span><b>{current.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(currentPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(current.totalOutputTokens)}</b></div></div><div className="ab-arrow">→<small>{tokenDelta <= 0 ? `${formatTokens(Math.abs(tokenDelta))} fewer peak tokens` : `${formatTokens(tokenDelta)} more peak tokens`}</small></div><div className="ab-side alt"><span className="ab-label">Session B · candidate</span><strong>{sessionName(other.session)}</strong><div className="ab-stat"><span>Turns</span><b>{other.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(otherPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(other.totalOutputTokens)}</b></div></div></div> : <div className="ab-empty"><strong>Turn prompt experiments into evidence.</strong><p>Run the same task twice, select the second session, and ContextTrace will line up turns, peak prompt size, and output volume.</p></div>}
     </section>
   );
 }
@@ -2312,6 +2346,398 @@ function EvidenceTools({
   );
 }
 
+/** A labelled proportion bar, reusing the spend-bar shape already in the app. */
+function CorpusBars({
+  label,
+  rows,
+}: {
+  label: string;
+  rows: Array<{ name: string; value: number; note: string }>;
+}) {
+  const largest = Math.max(1, ...rows.map((row) => row.value));
+  return (
+    <div className="corpus-bars" aria-label={label}>
+      <h3>{label}</h3>
+      {rows.map((row) => (
+        <div className="corpus-bar-row" key={row.name}>
+          <span title={row.name}>{row.name}</span>
+          <div>
+            <i style={{ width: `${Math.max(2, (row.value / largest) * 100)}%` }} />
+          </div>
+          <strong>{row.note}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * What the whole local corpus adds up to.
+ *
+ * Every other view in this app is scoped to one session. This one exists for
+ * the questions a single session cannot answer -- where the month went, which
+ * tool returns the most text, how close to the ceiling these sessions run --
+ * and it states its own limits in the same breath, because a large share of
+ * any real corpus is unpriced and unmeasured.
+ */
+function CorpusPanel({ demoData }: { demoData: boolean }) {
+  const [report, setReport] = useState<CorpusReport | null>(null);
+  const [progress, setProgress] = useState<CorpusProgress | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback((refresh: boolean) => {
+    setLoading(true);
+    setError(null);
+    setProgress(null);
+    api.getCorpus(refresh)
+      .then(setReport)
+      .catch((problem: unknown) => setError(errorMessage(problem)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load(false);
+    let unlisten: (() => void) | undefined;
+    api.listenForCorpusProgress(setProgress).then((stop) => {
+      unlisten = stop;
+    });
+    return () => unlisten?.();
+  }, [load]);
+
+  if (loading && !report) {
+    return (
+      <div className="workspace-centered">
+        <Spinner
+          label={
+            progress
+              ? `Reading session ${progress.done} of ${progress.total}…`
+              : "Reading every local session…"
+          }
+        />
+      </div>
+    );
+  }
+  if (error) return <p className="empty-inline">{error}</p>;
+  if (!report) return null;
+
+  const pressure = report.pressure;
+  const measuredPressure =
+    pressure.comfortable + pressure.warming + pressure.tight + pressure.critical;
+
+  return (
+    <main className="workspace corpus" aria-busy={loading}>
+      {/* Not `.workspace-header`, which the redesign hides in favour of the
+          topbar breadcrumb -- and that breadcrumb names the selected session,
+          which is exactly what this view is not about. */}
+      <header className="corpus-header">
+        <div>
+          <span className="eyebrow">Every local session</span>
+          <h1>{report.sessions.toLocaleString()} sessions</h1>
+          <p>
+            {report.turns.toLocaleString()} turns · {report.events.toLocaleString()} events ·{" "}
+            {report.cached ? "from the last sweep" : "swept just now"}
+            {demoData && " · fabricated"}
+          </p>
+        </div>
+        <button type="button" className="corpus-refresh" onClick={() => load(true)} disabled={loading}>
+          {loading ? "Sweeping…" : "Re-sweep"}
+        </button>
+      </header>
+
+      <div className="metrics">
+        <Metric label="Output tokens" value={formatTokens(report.outputTokens)} note="billed output across every session" />
+        <Metric
+          label="Priced spend"
+          value={`$${(report.costMicros / 1_000_000).toFixed(2)}`}
+          note={
+            report.unpricedTurns
+              ? `a floor — ${report.unpricedTurns.toLocaleString()} turns had no local rate`
+              : "every turn priced"
+          }
+          accent
+        />
+        <Metric
+          label="Tool calls"
+          value={report.toolCalls.toLocaleString()}
+          note={`${report.toolErrors.toLocaleString()} reported an error`}
+        />
+        <Metric
+          label="Compactions"
+          value={report.compactions.toLocaleString()}
+          note={
+            // "reclaimed 0" and "nothing recorded a size" are different
+            // statements, and a Codex-only corpus is always the second.
+            report.compactionsMeasured
+              ? `${formatTokens(report.reclaimedTokens)} reclaimed across ${report.compactionsMeasured} measured`
+              : "none recorded a before/after size"
+          }
+        />
+      </div>
+
+      {(report.unreadable > 0 || report.unrecognisedEvents > 0) && (
+        <p className="corpus-caveat" role="status">
+          {report.unreadable > 0 &&
+            `${report.unreadable} session(s) could not be parsed and are excluded from every figure above. `}
+          {report.unrecognisedEvents > 0 &&
+            `${report.unrecognisedEvents.toLocaleString()} event(s) were not recognised by this build.`}
+        </p>
+      )}
+
+      <section className="corpus-grid">
+        <CorpusBars
+          label="Turns by project"
+          rows={report.byProject.map((project) => ({
+            name: projectName(project.project),
+            value: project.turns,
+            note: `${project.turns.toLocaleString()} turns · $${(project.costMicros / 1_000_000).toFixed(2)}`,
+          }))}
+        />
+        <CorpusBars
+          label="Text returned by tool"
+          rows={report.byTool.map((tool) => ({
+            name: tool.tool,
+            value: tool.resultChars,
+            // Characters, not tokens: no estimator ran during the sweep, and
+            // labelling these as tokens would invent precision.
+            note: `${formatTokens(tool.resultChars)} chars · ${tool.calls.toLocaleString()} calls${
+              tool.errors ? ` · ${tool.errors} failed` : ""
+            }`,
+          }))}
+        />
+        <CorpusBars
+          label="Turns per day"
+          rows={report.byDay.slice(-14).map((day) => ({
+            name: day.day,
+            value: day.turns,
+            note: `${day.turns.toLocaleString()} turns · ${day.sessions} sessions`,
+          }))}
+        />
+        <div className="corpus-bars" aria-label="Peak context pressure">
+          <h3>Peak context pressure</h3>
+          {[
+            { name: "under 50%", value: pressure.comfortable },
+            { name: "50–75%", value: pressure.warming },
+            { name: "75–90%", value: pressure.tight },
+            { name: "over 90%", value: pressure.critical },
+          ].map((band) => (
+            <div className="corpus-bar-row" key={band.name}>
+              <span>{band.name}</span>
+              <div>
+                <i style={{ width: `${Math.max(2, (band.value / Math.max(1, measuredPressure)) * 100)}%` }} />
+              </div>
+              <strong>{band.value}</strong>
+            </div>
+          ))}
+          {/* Named, not omitted: the share of a corpus this question cannot be
+              asked of is part of the answer, and it is usually large. */}
+          <p className="corpus-note">
+            {pressure.unmeasured} of {report.sessions} sessions never recorded both a prompt size
+            and a context window, so no band applies to them.
+          </p>
+        </div>
+      </section>
+
+      <section className="corpus-ranked">
+        <h3>Sessions that ran closest to their ceiling</h3>
+        <ol>
+          {report.largestSessions.map((rank) => (
+            <li key={`${rank.agent}:${rank.id}`}>
+              <AgentMark agent={rank.agent} />
+              <span>
+                <strong>{rank.title ?? projectName(rank.project)}</strong>
+                <small>
+                  {projectName(rank.project)} · {shortId(rank.id)} · {rank.turns} turns
+                </small>
+              </span>
+              <b>{formatTokens(rank.peakPromptTokens)}</b>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </main>
+  );
+}
+
+const TRANSCRIPT_KIND_LABELS: Record<TranscriptKind, string> = {
+  user: "You",
+  assistant: "Agent",
+  reasoning: "Reasoning",
+  toolCall: "Tool call",
+  toolResult: "Tool result",
+  injection: "Injected",
+  compaction: "Compaction",
+};
+
+/**
+ * One entry of the conversation.
+ *
+ * Collapsed entries state their size instead of their content, which is the
+ * reading that makes an oversized tool result obvious: a row saying
+ * `152,480 chars` next to five rows saying `130 chars` is the finding. Expanding
+ * one asks the backend for the rest rather than having shipped it in the page.
+ */
+function TranscriptRow({
+  entry,
+  session,
+  onTurn,
+}: {
+  entry: TranscriptEntry;
+  session: SessionSummary;
+  onTurn: (turn: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(!entry.collapsed);
+  const [full, setFull] = useState<TranscriptEntry | null>(null);
+  const [loading, setLoading] = useState(false);
+  const shown = full ?? entry;
+  const needsFetch = expanded && entry.truncated && !full && !loading;
+
+  useEffect(() => {
+    if (!needsFetch) return;
+    setLoading(true);
+    api.getTranscriptEntry(session.agent, session.id, entry.index)
+      .then(setFull)
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, [needsFetch, session.agent, session.id, entry.index]);
+
+  return (
+    <li className={`transcript-entry ${entry.kind}${entry.error ? " failed" : ""}`}>
+      <div className="transcript-head">
+        <span className="transcript-role">{TRANSCRIPT_KIND_LABELS[entry.kind]}</span>
+        {entry.label && <span className="transcript-label" title={entry.label}>{entry.label}</span>}
+        {entry.sidechain && <span className="transcript-flag">subagent</span>}
+        {entry.error && <span className="transcript-flag error">error</span>}
+        <span className="transcript-meta">
+          {entry.chars != null && `${entry.chars.toLocaleString()} chars`}
+          {entry.turn != null && (
+            <>
+              {" · "}
+              <button type="button" onClick={() => onTurn(entry.turn!)}>
+                turn {entry.turn}
+              </button>
+            </>
+          )}
+          {" · "}line {entry.line}
+        </span>
+        <button
+          type="button"
+          className="transcript-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? "Collapse" : "Expand"}
+        </button>
+      </div>
+      {expanded ? (
+        <>
+          <pre className="transcript-text">{shown.text}</pre>
+          {loading && <Spinner label="Reading the rest of this entry…" />}
+          {shown.truncated && !loading && (
+            <p className="transcript-truncation">
+              Showing the first {shown.text.length.toLocaleString()} of{" "}
+              {shown.chars?.toLocaleString() ?? "?"} characters.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="transcript-collapsed">{entry.text.split("\n")[0].slice(0, 140) || "—"}</p>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The session, read back as the conversation it was.
+ *
+ * Fetches its own data rather than taking it from `SessionWorkspace`: the
+ * transcript is paged and independently scrolled, and threading four more
+ * pieces of state through a component that already takes fifty props would
+ * make both harder to follow.
+ */
+function TranscriptPanel({
+  session,
+  onTurn,
+}: {
+  session: SessionSummary;
+  onTurn: (turn: number) => void;
+}) {
+  const [page, setPage] = useState<TranscriptPage | null>(null);
+  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const key = `${session.agent}:${session.id}`;
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    setEntries([]);
+    setPage(null);
+    api.getTranscript(session.agent, session.id, 0)
+      .then((first) => {
+        if (!live) return;
+        setPage(first);
+        setEntries(first.entries);
+      })
+      .catch((problem: unknown) => live && setError(errorMessage(problem)))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+    // Keyed on the session, not on the objects: a re-render must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const loadMore = () => {
+    if (!page?.hasMore || loading) return;
+    setLoading(true);
+    api.getTranscript(session.agent, session.id, entries.length)
+      .then((next) => {
+        setPage(next);
+        setEntries((current) => [...current, ...next.entries]);
+      })
+      .catch((problem: unknown) => setError(errorMessage(problem)))
+      .finally(() => setLoading(false));
+  };
+
+  if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
+  if (error) return <p className="empty-inline">{error}</p>;
+  if (!entries.length) {
+    return <p className="empty-inline">This session recorded no messages.</p>;
+  }
+
+  return (
+    <section className="transcript" aria-label="Session conversation">
+      <header className="transcript-header">
+        <div>
+          <span className="eyebrow">Conversation</span>
+          <h2>{sessionName(session)}</h2>
+        </div>
+        {/* Injected content and tool results are entries here, so this count
+            is larger than the number of messages exchanged. Saying "entries"
+            rather than "messages" is the difference. */}
+        <p>{entries.length} of {page?.total ?? entries.length} entries</p>
+      </header>
+      <ol className="transcript-list">
+        {entries.map((entry) => (
+          <TranscriptRow
+            key={entry.index}
+            entry={entry}
+            session={session}
+            onTurn={onTurn}
+          />
+        ))}
+      </ol>
+      {page?.hasMore && (
+        <button type="button" className="load-more" onClick={loadMore} disabled={loading}>
+          {loading ? "Loading…" : `Load more (${(page.total - entries.length).toLocaleString()})`}
+        </button>
+      )}
+    </section>
+  );
+}
+
 function SessionWorkspace({
   activeView,
   detail,
@@ -2458,8 +2884,12 @@ function SessionWorkspace({
         <div>
           <div className="title-line">
             <AgentMark agent={detail.session.agent} />
-            <h1>{projectName(detail.session.project)}</h1>
+            <h1>{sessionName(detail.session)}</h1>
           </div>
+          {/* The heading is the session; the line under it is where it ran.
+              While the heading *was* the project these said the same thing
+              twice, which is how a workspace could be open on the wrong
+              session without anything on screen contradicting you. */}
           <p className="path" title={detail.session.project ?? detail.session.path}>
             {detail.session.project ?? detail.session.path}
           </p>
@@ -2664,6 +3094,12 @@ function SessionWorkspace({
       )}
       </div>
 
+      <div id="chat-panel" className="workspace-section" role="tabpanel" aria-labelledby="chat-tab" hidden={activeView !== "chat"}>
+        {/* Mounted only while selected: reading a conversation costs a page of
+            seeks per session, and every other tab would otherwise pay for it. */}
+        {activeView === "chat" && <TranscriptPanel session={detail.session} onTurn={onTurn} />}
+      </div>
+
       <div id="evidence-panel" className="workspace-section" role="tabpanel" aria-labelledby="evidence-tab" hidden={activeView !== "evidence"}>
         <ArchivePanel
           holding={archive}
@@ -2711,6 +3147,67 @@ const NOTIFICATION_RULES: Array<{
   { id: 'contextWaste', label: 'Context waste', detail: 'Duplicate or low-information content exceeds budget.', unit: 'tokens' },
   { id: 'costBudget', label: 'Cost budget', detail: 'Observed or projected session cost crosses the configured budget.', unit: 'USD' },
 ];
+
+/**
+ * What to say about OS delivery in one line.
+ *
+ * Not the raw permission: the notification plugin answers `granted` on Windows
+ * whatever the truth is, so showing it alone told every user their toasts were
+ * fine. Deliverability is the half of the answer that can be negative, so it
+ * leads whenever it is.
+ */
+function osDeliveryLabel(status: NotificationStatus): string {
+  switch (status.deliverability.state) {
+    case 'ready':
+      return status.osPermission === 'denied' ? 'denied' : 'ready';
+    case 'unregistered':
+      return 'app not installed';
+    case 'unsupported':
+      return 'unsupported';
+  }
+}
+
+/**
+ * One toast, on demand, reported as it happened.
+ *
+ * Waiting for one of eleven rules to fire is a poor way to answer "do OS
+ * notifications reach me", and the feed could not answer it either while every
+ * send was recorded as delivered. This is the falsifiable version: press it,
+ * and either a toast appears and this says so, or it names the reason none did.
+ */
+function NotificationDeliveryTest() {
+  const [result, setResult] = useState<TestNotificationResult | null>(null);
+  const [sending, setSending] = useState(false);
+  return (
+    <div className='notification-delivery-test'>
+      <button
+        type='button'
+        disabled={sending}
+        onClick={() => {
+          setSending(true);
+          setResult(null);
+          api.sendTestNotification()
+            .then(setResult)
+            .catch((error: unknown) => setResult({
+              delivered: false,
+              reason: errorMessage(error),
+              deliverability: { state: 'unsupported' },
+            }))
+            .finally(() => setSending(false));
+        }}
+      >
+        {sending ? 'Sending…' : 'Send test notification'}
+      </button>
+      {result && (
+        <p className={result.delivered ? 'delivery-result' : 'delivery-result failed'} role='status'>
+          {result.delivered
+            ? 'Windows accepted the toast. If nothing appeared, check Windows notification settings for ContextTrace.'
+            : result.reason ?? 'No notification was sent.'}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function NotificationCenter({
   open,
@@ -2787,12 +3284,18 @@ function NotificationCenter({
             <div className='notification-health' role='status'>
               <i className={status?.monitoring ? 'healthy' : ''} />
               <span>{status?.monitoring ? 'Monitoring' : 'Not monitoring'}</span>
-              <small>OS: {status?.osPermission ?? 'unknown'}</small>
+              <small>OS: {status ? osDeliveryLabel(status) : 'unknown'}</small>
             </div>
             {status?.osPermission === 'denied' && (
               <p className='notification-permission-note'>OS permission is denied. Feed entries will still be recorded.</p>
             )}
+            {status?.obstacle && (
+              <p className='notification-permission-note danger'>
+                <strong>OS notifications cannot be delivered from this build.</strong> {status.obstacle}
+              </p>
+            )}
             {status?.error && <p className='notification-permission-note danger'>{status.error}</p>}
+            <NotificationDeliveryTest />
             <label className='notification-master-toggle compact'>
               <span><strong>Subagent OS alerts</strong><small>Subagent findings always remain available in the feed.</small></span>
               <input
@@ -2863,6 +3366,10 @@ function NotificationCenter({
                         <span className='notification-title-line'>
                           <strong>{notification.title}</strong>
                           {notification.catchUp && <em>catch-up</em>}
+                          {notification.osDelivery.status === 'delivered' && <em className='os-delivered'>OS sent</em>}
+                          {notification.osDelivery.status === 'failed' && (
+                            <em className='os-failed' title={notification.osDelivery.reason}>OS failed</em>
+                          )}
                         </span>
                         <span>{notification.description}</span>
                         <small>
@@ -2870,6 +3377,9 @@ function NotificationCenter({
                           {notification.location.turn != null ? ` · turn ${notification.location.turn}` : ''}
                           {' · '}{formatActivity(notification.occurredAt)} · {notification.confidence}
                         </small>
+                        {notification.osDelivery.status === 'failed' && (
+                          <small className='notification-os-reason'>No OS notification: {notification.osDelivery.reason}</small>
+                        )}
                       </span>
                     </button>
                     <button type='button' className='notification-dismiss' onClick={() => onDismiss(notification.id)} aria-label={`Dismiss ${notification.title}`}>×</button>
@@ -2961,6 +3471,8 @@ export default function App() {
   const [loadingResidual, setLoadingResidual] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
+  /** Whether the workspace is showing the corpus instead of one session. */
+  const [corpusOpen, setCorpusOpen] = useState(false);
   // Which session the turn-comparison panel's right side names, when it is
   // not the currently open session's own slider turn. `crossTurnInput` stays
   // a string rather than a number so the field can sit empty mid-edit
@@ -3982,7 +4494,7 @@ export default function App() {
             <>
               <span className="topbar-divider" />
               <div className="breadcrumbs" aria-label="Current session">
-                <span>{projectName(visibleDetail.session.project)}</span>
+                <span>{sessionName(visibleDetail.session)}</span>
                 <i>/</i>
                 <span>{visibleDetail.session.agent === "codex" ? "codex" : "claude"}</span>
                 <i>/</i>
@@ -4023,6 +4535,19 @@ export default function App() {
       <div className="app-body">
       <aside className="sidebar">
         <div className="sidebar-caption"><span>Sessions</span><span>{sessionTotal}</span></div>
+
+        {/* The one control that leaves a single session behind. Above the
+            list rather than in the tab strip, because those tabs are all
+            views *of* the selected session and this is not. */}
+        <button
+          type="button"
+          className={corpusOpen ? "corpus-entry active" : "corpus-entry"}
+          aria-pressed={corpusOpen}
+          onClick={() => setCorpusOpen((open) => !open)}
+        >
+          <span aria-hidden="true">◫</span>
+          <span>{corpusOpen ? "Back to this session" : "All sessions at once"}</span>
+        </button>
 
         <div className="search-box">
           <span aria-hidden="true">⌕</span>
@@ -4159,6 +4684,9 @@ export default function App() {
         className={demoData ? "main-area demo-mode" : "main-area"}
         aria-busy={loadingDetail}
       >
+        {/* The tab strip names views of the selected session, so it is absent
+            while the corpus is open rather than sitting there disabled. */}
+        {!corpusOpen && (
         <nav className="workspace-tabs" aria-label="Session views" role="tablist">
           {WORKSPACE_VIEWS.map((view) => (
             <button
@@ -4182,6 +4710,7 @@ export default function App() {
             <button type="button" onClick={() => stepTurn(1)} disabled={!canStepForward} aria-label="Next measured turn">›</button>
           </div>
         </nav>
+        )}
 
         {demoData && (
           <div className="demo-banner" role="status">
@@ -4204,7 +4733,9 @@ export default function App() {
         {startup?.warnings.map((warning) => (
           <div className="warning-banner" key={warning} role="status">{warning}</div>
         ))}
-        {loadingDetail && !visibleDetail ? (
+        {corpusOpen ? (
+          <CorpusPanel demoData={demoData} />
+        ) : loadingDetail && !visibleDetail ? (
           <div className="workspace-centered">
             <Spinner label="Reading session…" />
           </div>
