@@ -23,6 +23,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_startup,
             commands::search_sessions,
+            commands::list_projects,
             commands::search_memory,
             commands::inspect_session,
             commands::get_context,
