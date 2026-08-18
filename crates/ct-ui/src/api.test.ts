@@ -24,6 +24,7 @@ import {
   listNotifications,
   listenForNotificationUpdates,
   listenForSessionUpdates,
+  listProjects,
   markNotificationsRead,
   runDoctor,
   searchSessions,
@@ -176,6 +177,8 @@ describe("desktop IPC response validation", () => {
     expect(invoke).toHaveBeenCalledWith("search_sessions", {
       agent: "codex",
       query: "older",
+      project: null,
+      includeSubagents: false,
       offset: 500,
       limit: 200,
       refresh: false,
@@ -269,6 +272,124 @@ describe("desktop IPC response validation", () => {
 
     await expect(searchSessions()).resolves.toMatchObject({ total: demoSessions.length });
     expect(demoSessions.some((session) => session.threadRole.kind === "subagent")).toBe(true);
+  });
+
+  it('sends the project filter in the shape the backend deserialises', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue({ sessions: [], total: 0, offset: 0, hasMore: false });
+
+    await searchSessions(undefined, undefined, 0, 200, false, { kind: 'path', path: 'C:\\work\\api' }, true);
+    expect(invoke).toHaveBeenLastCalledWith('search_sessions', expect.objectContaining({
+      project: { path: 'C:\\work\\api' },
+      includeSubagents: true,
+    }));
+
+    // "Every project" and "the ones with no recorded folder" are different
+    // requests, and null cannot mean both.
+    await searchSessions(undefined, undefined, 0, 200, false, { kind: 'unrecorded' }, false);
+    expect(invoke).toHaveBeenLastCalledWith('search_sessions', expect.objectContaining({
+      project: 'unrecorded',
+    }));
+
+    await searchSessions(undefined, undefined, 0, 200, false, { kind: 'any' }, false);
+    expect(invoke).toHaveBeenLastCalledWith('search_sessions', expect.objectContaining({
+      project: null,
+    }));
+  });
+
+  it('rejects a project list that is missing its counts', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue([{ path: 'C:\\work\\api', label: 'api' }]);
+    await expect(listProjects()).rejects.toThrow('invalid response from the project list');
+  });
+
+  it('forwards listProjects arguments and validates each option, including a null path', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const options = [
+      { path: 'C:\\work\\api', label: 'api', count: 12 },
+      { path: null, label: 'No recorded folder', count: 3 },
+    ];
+    invoke.mockResolvedValue(options);
+
+    await expect(listProjects('codex', true)).resolves.toEqual(options);
+    expect(invoke).toHaveBeenCalledWith('list_projects', { agent: 'codex', includeSubagents: true });
+  });
+
+  describe('demo-path project and subagent filtering', () => {
+    // These exercise the branch `!inTauri()` takes, which has to apply the
+    // same two filters the backend does so the browser build behaves
+    // identically -- nothing above this block calls `searchSessions` or
+    // `listProjects` without first stubbing `__TAURI_INTERNALS__`, so nothing
+    // else in this suite would notice the demo path silently ignoring either
+    // filter.
+
+    it("narrows the demo catalog by project, including the 'unrecorded' arm that actually excludes something", async () => {
+      const path = demoSessions[0].project!;
+      const matchingCount = demoSessions.filter((session) => session.project === path).length;
+      // Two demo sessions share this project (a root and its subagent), so
+      // this also proves the path arm is not vacuously matching everything.
+      expect(matchingCount).toBeGreaterThan(0);
+      expect(matchingCount).toBeLessThan(demoSessions.length);
+
+      const byPath = await searchSessions(undefined, undefined, 0, 200, false, { kind: 'path', path }, true);
+      expect(byPath.total).toBe(matchingCount);
+      expect(byPath.sessions.every((session) => session.project === path)).toBe(true);
+
+      // No demo fixture has a `project: null` session, so this is a filter
+      // that genuinely excludes every row -- proof the filter runs at all,
+      // not just that it passes through an empty array unchanged.
+      expect(demoSessions.some((session) => session.project === null)).toBe(false);
+      const unrecorded = await searchSessions(undefined, undefined, 0, 200, false, { kind: 'unrecorded' }, true);
+      expect(unrecorded.total).toBe(0);
+
+      const any = await searchSessions(undefined, undefined, 0, 200, false, { kind: 'any' }, true);
+      expect(any.total).toBe(demoSessions.length);
+    });
+
+    it('excludes subagent threads from the demo catalog by default and includes them on request', async () => {
+      expect(demoSessions.some((session) => session.threadRole.kind === 'subagent')).toBe(true);
+
+      const defaultResult = await searchSessions();
+      expect(defaultResult.sessions.every((session) => session.threadRole.kind !== 'subagent')).toBe(true);
+      expect(defaultResult.total).toBe(
+        demoSessions.filter((session) => session.threadRole.kind !== 'subagent').length,
+      );
+
+      const withSubagents = await searchSessions(undefined, undefined, 0, 200, false, undefined, true);
+      expect(withSubagents.total).toBe(demoSessions.length);
+    });
+
+    it('aggregates the demo catalog into project options sorted by count then label', async () => {
+      const options = await listProjects();
+
+      // No demo session omits its project, so the "No recorded folder" entry
+      // must be absent rather than padded in at a phantom zero count.
+      expect(options.some((option) => option.path === null)).toBe(false);
+
+      const expectedPaths = new Set(
+        demoSessions
+          .filter((session) => session.threadRole.kind !== 'subagent')
+          .map((session) => session.project),
+      );
+      expect(new Set(options.map((option) => option.path))).toEqual(expectedPaths);
+
+      const total = options.reduce((sum, option) => sum + option.count, 0);
+      expect(total).toBe(demoSessions.filter((session) => session.threadRole.kind !== 'subagent').length);
+
+      for (let i = 1; i < options.length; i++) {
+        const [prev, curr] = [options[i - 1], options[i]];
+        const ordered = prev.count > curr.count ||
+          (prev.count === curr.count && prev.label.localeCompare(curr.label) <= 0);
+        expect(ordered).toBe(true);
+      }
+
+      // includeSubagents flips the same count the search filter uses, so the
+      // two must stay in lockstep rather than each having its own notion of
+      // which sessions count.
+      const withSubagents = await listProjects(undefined, true);
+      const totalWithSubagents = withSubagents.reduce((sum, option) => sum + option.count, 0);
+      expect(totalWithSubagents).toBe(demoSessions.length);
+    });
   });
 
   // A same-session comparison: both sides name one session, only the turn

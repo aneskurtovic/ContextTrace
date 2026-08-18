@@ -380,6 +380,25 @@ export type TemporalGhost =
     }
   | { status: "unavailable"; leftTurn: number; rightTurn: number; reason: string };
 
+/**
+ * Which project the session list is narrowed to.
+ *
+ * Three states rather than `string | null`, because the absence of a project
+ * is itself selectable: a Codex rollout whose log never recorded a `cwd` has
+ * no folder to name, and "every project" is not the same request.
+ */
+export type ProjectFilter =
+  | { kind: 'any' }
+  | { kind: 'unrecorded' }
+  | { kind: 'path'; path: string };
+
+export interface ProjectOption {
+  /** The full path the filter matches on; `null` for sessions with no folder. */
+  path: string | null;
+  label: string;
+  count: number;
+}
+
 export interface SessionPage {
   sessions: SessionSummary[];
   total: number;

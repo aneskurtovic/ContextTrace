@@ -27,6 +27,8 @@ import type {
   NotificationSettings,
   NotificationStatus,
   OsDelivery,
+  ProjectFilter,
+  ProjectOption,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -70,6 +72,7 @@ import {
   demoTranscript,
   demoTranscriptEntry,
 } from "./demo";
+import { projectName } from "./format";
 
 const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -264,6 +267,63 @@ function asStartup(value: unknown): StartupSummary {
     throw malformed("startup");
   }
   return value as unknown as StartupSummary;
+}
+
+/** The wire form the Rust `ProjectFilter` deserialises from. */
+function projectArgument(filter: ProjectFilter | undefined): unknown {
+  if (!filter || filter.kind === 'any') return null;
+  return filter.kind === 'unrecorded' ? 'unrecorded' : { path: filter.path };
+}
+
+function matchesProject(session: SessionSummary, filter: ProjectFilter | undefined): boolean {
+  if (!filter || filter.kind === 'any') return true;
+  if (filter.kind === 'unrecorded') return session.project == null;
+  return session.project === filter.path;
+}
+
+function asProjectOptions(value: unknown): ProjectOption[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every((option) =>
+      isRecord(option) &&
+      isStringOrNull(option.path) &&
+      typeof option.label === 'string' &&
+      typeof option.count === 'number' &&
+      Number.isInteger(option.count))
+  ) {
+    throw malformed('the project list');
+  }
+  return value as ProjectOption[];
+}
+
+/**
+ * Every project with at least one session, most populous first.
+ *
+ * A session whose log never recorded a folder is not omitted from the
+ * catalog -- it is counted under a `path: null` entry labelled "No recorded
+ * folder", so the total across every option still accounts for every
+ * matching session.
+ */
+export function listProjects(agent?: string, includeSubagents = false): Promise<ProjectOption[]> {
+  if (!inTauri()) {
+    const counts = new Map<string | null, number>();
+    for (const session of demoSessions) {
+      if (agent && session.agent !== agent) continue;
+      if (!includeSubagents && session.threadRole.kind === 'subagent') continue;
+      counts.set(session.project, (counts.get(session.project) ?? 0) + 1);
+    }
+    return Promise.resolve(
+      [...counts].map(([path, count]) => ({
+        path,
+        label: path ? projectName(path) : 'No recorded folder',
+        count,
+      })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label)),
+    );
+  }
+  return invoke<unknown>('list_projects', {
+    agent: agent || null,
+    includeSubagents,
+  }).then(asProjectOptions);
 }
 
 function asSessionPage(value: unknown): SessionPage {
@@ -561,12 +621,16 @@ export function searchSessions(
   offset = 0,
   limit = 200,
   refresh = false,
+  project?: ProjectFilter,
+  includeSubagents = false,
 ): Promise<SessionPage> {
   if (!inTauri()) {
     const needle = query?.trim().toLocaleLowerCase();
     const matches = demoSessions.filter(
       (session) =>
         (!agent || session.agent === agent) &&
+        (includeSubagents || session.threadRole.kind !== 'subagent') &&
+        matchesProject(session, project) &&
         (!needle ||
           [session.project, session.id, session.path, session.agent]
             .filter(Boolean)
@@ -583,6 +647,8 @@ export function searchSessions(
   return invoke<unknown>("search_sessions", {
     agent: agent || null,
     query: query?.trim() || null,
+    project: projectArgument(project),
+    includeSubagents,
     offset,
     limit,
     refresh,
