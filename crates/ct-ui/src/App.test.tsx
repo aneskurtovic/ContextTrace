@@ -660,19 +660,36 @@ describe("desktop accessibility and state handling", () => {
     expect(screen.queryByText(/a tool registered, an MCP server connected/)).toBeNull();
   });
 
-  it('measures the session when Turns opens, once per session', async () => {
+  it("measures the session when Turns opens, once per session", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions.slice(0, 2)));
     render(<App />);
 
-    const turnsTab = await screen.findByRole('tab', { name: 'Turns' });
-    await waitFor(() => expect(turnsTab.hasAttribute('disabled')).toBe(false));
-    fireEvent.click(turnsTab);
+    await openView("Turns");
     await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
 
     // Leaving and returning is not a new question about the same session.
-    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Turns' }));
+    await openView("Overview");
+    await openView("Turns");
     await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
+  });
+
+  it("measures a newly selected session even though the previous one was already measured", async () => {
+    const [first, second] = demoSessions;
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([first, second]));
+    render(<App />);
+
+    await openView("Turns");
+    await waitFor(() =>
+      expect(mockedApi.getResidual).toHaveBeenCalledWith(first.agent, first.id),
+    );
+
+    // A different session is a new question, even though Turns is already open.
+    const secondRow = await screen.findByRole("button", { name: new RegExp(second.title!.text) });
+    fireEvent.click(secondRow);
+    await waitFor(() =>
+      expect(mockedApi.getResidual).toHaveBeenCalledWith(second.agent, second.id),
+    );
+    expect(mockedApi.getResidual).toHaveBeenCalledTimes(2);
   });
 
   it("exposes the redesigned views as an accessible tab set", async () => {

@@ -2768,6 +2768,7 @@ function SessionWorkspace({
   residual,
   residualLoading,
   onRunResidual,
+  measuredSessions,
   demoData,
   archive,
   archiveLoading,
@@ -2830,6 +2831,7 @@ function SessionWorkspace({
   residual: ResidualReport | null;
   residualLoading: boolean;
   onRunResidual: () => void;
+  measuredSessions: { current: Set<string> };
   demoData: boolean;
   archive: ArchiveHolding | null;
   archiveLoading: boolean;
@@ -2870,14 +2872,15 @@ function SessionWorkspace({
   // The tab exists to answer where a session's context went, and opening it
   // with the answer missing made the reader ask for it every time. Keyed on the
   // session so returning to the tab is not a new question, and guarded on the
-  // in-flight state so a slow reconstruction is not started twice.
-  const measured = useRef<Set<string>>(new Set());
+  // in-flight state so a slow reconstruction is not started twice. The set
+  // itself lives in the parent, not here, because this component remounts on
+  // every session switch -- see the comment beside its declaration in App.
   const sessionKey = `${detail.session.agent}:${detail.session.id}`;
   useEffect(() => {
-    if (activeView !== "turns" || residualLoading || measured.current.has(sessionKey)) return;
-    measured.current.add(sessionKey);
+    if (activeView !== "turns" || residualLoading || measuredSessions.current.has(sessionKey)) return;
+    measuredSessions.current.add(sessionKey);
     onRunResidual();
-  }, [activeView, onRunResidual, residualLoading, sessionKey]);
+  }, [activeView, onRunResidual, residualLoading, sessionKey, measuredSessions]);
   const measuredTurns = growth.filter((point) => point.promptTokens != null);
   const selectedIndex = Math.max(
     0,
@@ -3575,6 +3578,13 @@ export default function App() {
   const compactionRequest = useRef(0);
   const turnDiffRequest = useRef(0);
   const residualRequest = useRef(0);
+  // Lives here rather than inside SessionWorkspace: that panel remounts on
+  // every session switch (detail is nulled out while the next one loads), so
+  // a ref kept there would forget a session was already measured the moment
+  // its own unmount happened to intervene. Keeping the memory at the level
+  // that survives a session switch makes "already measured" a fact about the
+  // session, not a fact about how long the panel that asked has stayed mounted.
+  const measuredSessions = useRef<Set<string>>(new Set());
   const catalogRequest = useRef(0);
   const archiveRequest = useRef(0);
   const evidenceRequest = useRef(0);
@@ -4929,6 +4939,7 @@ export default function App() {
             residual={residual}
             residualLoading={loadingResidual}
             onRunResidual={runResidual}
+            measuredSessions={measuredSessions}
             demoData={demoData}
             archive={archive}
             archiveLoading={loadingArchive}
