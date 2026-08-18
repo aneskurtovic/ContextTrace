@@ -2858,6 +2858,10 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .filter-row button:hover,
 .filter-row button.active { border-color: var(--line); background: var(--raise); color: var(--text); }
 .filter-row .refresh { flex: 0 0 27px; margin-left: 7px; border: 0; border-radius: 5px; font-size: 14px; }
+.filter-row.secondary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 0 8px 7px; }
+.filter-row.secondary select { min-width: 0; height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--text-2); font-size: 10px; }
+.subagent-toggle { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: 10px; white-space: nowrap; }
+.subagent-toggle input { width: 13px; height: 13px; accent-color: var(--blue); }
 .session-list-heading { padding: 5px 12px 4px; border-top: 1px solid var(--line-soft); color: var(--text-3); font-size: 9px; }
 .session-list { padding: 0 4px 8px; }
 .session-row { grid-template-columns: 25px minmax(0, 1fr) auto; gap: 7px; padding: 7px 8px; border: 0; border-left: 3px solid transparent; border-radius: 5px; }

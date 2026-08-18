@@ -45,6 +45,8 @@ import type {
   NotificationRuleId,
   NotificationSettings,
   NotificationStatus,
+  ProjectFilter,
+  ProjectOption,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -3465,6 +3467,9 @@ export default function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActiveIndex, setPaletteActiveIndex] = useState(0);
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter>({ kind: "any" });
+  const [showSubagents, setShowSubagents] = useState(false);
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [memoryHits, setMemoryHits] = useState<MemoryHit[]>([]);
@@ -3589,6 +3594,17 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [closePalette, notificationDrawerOpen, openPalette, paletteOpen]);
 
+  // Recomputed when the agent or subagent filter changes, so the count beside
+  // an option always describes what selecting it would actually show.
+  useEffect(() => {
+    if (typeof api.listProjects !== "function") return;
+    let cancelled = false;
+    api.listProjects(agentFilter === "all" ? undefined : agentFilter, showSubagents)
+      .then((options) => { if (!cancelled) setProjectOptions(options); })
+      .catch(() => { if (!cancelled) setProjectOptions([]); });
+    return () => { cancelled = true; };
+  }, [agentFilter, showSubagents]);
+
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
       const request = ++catalogRequest.current;
@@ -3602,6 +3618,8 @@ export default function App() {
           0,
           200,
           forceRefresh,
+          projectFilter,
+          showSubagents,
         );
         if (request !== catalogRequest.current) return;
         setSessions(page.sessions);
@@ -3623,7 +3641,7 @@ export default function App() {
         if (request === catalogRequest.current) setLoadingSessions(false);
       }
     },
-    [agentFilter, debouncedQuery],
+    [agentFilter, debouncedQuery, projectFilter, showSubagents],
   );
 
   const loadMoreSessions = useCallback(async () => {
@@ -3638,6 +3656,8 @@ export default function App() {
         sessions.length,
         200,
         false,
+        projectFilter,
+        showSubagents,
       );
       if (request !== catalogRequest.current) return;
       setSessions((current) => {
@@ -3661,7 +3681,9 @@ export default function App() {
     debouncedQuery,
     hasMoreSessions,
     loadingMore,
+    projectFilter,
     sessions.length,
+    showSubagents,
   ]);
 
   useEffect(() => {
@@ -4625,6 +4647,40 @@ export default function App() {
           </button>
         </div>
 
+        <div className="filter-row secondary">
+          <select
+            aria-label="Filter sessions by project"
+            value={projectFilter.kind === "path" ? projectFilter.path : projectFilter.kind}
+            onChange={(event) => {
+              const chosen = event.target.value;
+              setProjectFilter(
+                chosen === "any"
+                  ? { kind: "any" }
+                  : chosen === "unrecorded"
+                    ? { kind: "unrecorded" }
+                    : { kind: "path", path: chosen },
+              );
+            }}
+          >
+            <option value="any">All projects</option>
+            {projectOptions.map((option) => (
+              <option key={option.path ?? "unrecorded"} value={option.path ?? "unrecorded"}>
+                {option.label} · {option.count}
+              </option>
+            ))}
+          </select>
+          <label className="subagent-toggle">
+            <input
+              type="checkbox"
+              aria-label="Show subagent sessions"
+              checked={showSubagents}
+              onChange={(event) => setShowSubagents(event.target.checked)}
+            />
+            {/* A subagent thread has its own context window and is rarely the
+                run the reader went looking for, so it is off by default. */}
+            <span>Subagents</span>
+          </label>
+        </div>
 
         <div className="session-list-heading" aria-live="polite" aria-atomic="true">
           <span>{demoData ? "Demonstration sessions" : "Your sessions"}</span>

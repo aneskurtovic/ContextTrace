@@ -34,6 +34,7 @@ vi.mock("./api", () => ({
   isDemoData: vi.fn(),
   getStartup: vi.fn(),
   searchSessions: vi.fn(),
+  listProjects: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
   getCorpus: vi.fn(),
@@ -107,6 +108,7 @@ beforeEach(() => {
   mockedApi.isDemoData.mockReturnValue(false);
   mockedApi.getStartup.mockResolvedValue(startup);
   mockedApi.searchSessions.mockResolvedValue(sessionPage([]));
+  mockedApi.listProjects.mockResolvedValue([]);
   mockedApi.inspectSession.mockImplementation(async (_agent, id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
   mockedApi.getCorpus.mockResolvedValue(demoCorpus);
@@ -256,6 +258,8 @@ describe("desktop accessibility and state handling", () => {
           0,
           200,
           false,
+          { kind: "any" },
+          false,
         ),
       { timeout: 1_000 },
     );
@@ -274,12 +278,39 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Load more (1)" }));
 
     await waitFor(() =>
-      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 1, 200, false),
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+        undefined, "", 1, 200, false, { kind: "any" }, false,
+      ),
     );
     expect(
       await screen.findByRole("button", { name: /Claude Code session: .*atlas-dashboard/ }),
     ).not.toBeNull();
     expect(screen.queryByRole("button", { name: /Load more/ })).toBeNull();
+  });
+
+  it("narrows the session list by project and by thread role", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
+    mockedApi.listProjects.mockResolvedValue([
+      { path: "C:\\work\\api", label: "api", count: 3 },
+      { path: null, label: "No recorded folder", count: 1 },
+    ]);
+    render(<App />);
+
+    // demoSessions carries several Codex rows, so wait for the list rather
+    // than a single accessible name that would be ambiguous once loaded.
+    await screen.findAllByRole("button", { name: /Codex session/ });
+
+    fireEvent.change(screen.getByLabelText("Filter sessions by project"), {
+      target: { value: "C:\\work\\api" },
+    });
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      undefined, "", 0, 200, false, { kind: "path", path: "C:\\work\\api" }, false,
+    ));
+
+    fireEvent.click(screen.getByLabelText("Show subagent sessions"));
+    await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+      undefined, "", 0, 200, false, { kind: "path", path: "C:\\work\\api" }, true,
+    ));
   });
 
   it("keeps the latest session visible when older detail and context requests finish later", async () => {
@@ -473,12 +504,16 @@ describe("desktop accessibility and state handling", () => {
 
     // Initial catalog load must not ask the backend to treat its cache as stale.
     await waitFor(() =>
-      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 0, 200, false),
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+        undefined, "", 0, 200, false, { kind: "any" }, false,
+      ),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
     await waitFor(() =>
-      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(undefined, "", 0, 200, true),
+      expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
+        undefined, "", 0, 200, true, { kind: "any" }, false,
+      ),
     );
   });
 
@@ -1060,9 +1095,13 @@ describe("comparing turns across two sessions", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
     await openView("Diff");
-    fireEvent.change(await screen.findByRole("combobox"), {
-      target: { value: JSON.stringify({ agent: claude.agent, id: claude.id }) },
-    });
+    // The sidebar's own project filter is a second combobox on screen once
+    // this view is open, so the cross-session picker needs its label to
+    // disambiguate which one the change targets.
+    fireEvent.change(
+      await screen.findByRole("combobox", { name: "Compare this turn with" }),
+      { target: { value: JSON.stringify({ agent: claude.agent, id: claude.id }) } },
+    );
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "12" } });
 
     await waitFor(() => expect(mockedApi.getTurnDiff).toHaveBeenCalled());
