@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const STATE_FILE: &str = "state.json";
-const TEMP_FILE: &str = "state.json.tmp";
 const RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const MAX_VISIBLE_RECORDS: usize = 2_000;
 
@@ -114,7 +113,16 @@ impl FileNotificationStore {
         fs::create_dir_all(&self.root).map_err(|error| io_error(&self.root, error))?;
         let bytes = serde_json::to_vec_pretty(state)
             .map_err(|error| PortError::Io(format!("serialising notification state: {error}")))?;
-        let temporary = self.root.join(TEMP_FILE);
+        // Unique per process and per call. The gate above is a process-local
+        // mutex, so a second instance of the app shares this directory with no
+        // mutual exclusion at all; when both used one fixed temp filename, each
+        // one's write truncated the file the other was about to rename, and the
+        // rename published the truncation over good state.
+        let temporary = self.root.join(format!(
+            "state.json.{}.{}.tmp",
+            std::process::id(),
+            now_ms(),
+        ));
         fs::write(&temporary, bytes).map_err(|error| io_error(&temporary, error))?;
         fs::rename(&temporary, self.state_path()).map_err(|error| io_error(&temporary, error))
     }
@@ -406,6 +414,35 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(next.id, 2, "clearing history does not reuse durable ids");
+    }
+
+    /// Two processes share this directory, and both used to write the same
+    /// `state.json.tmp` before renaming it. One writer's `fs::write` then
+    /// truncated the file the other was about to rename over good state --
+    /// which is how a 1162-record store became a 2-record store. Same-process
+    /// stand-in for that race: a temp file left behind by another writer must
+    /// not be the one this writer renames.
+    #[test]
+    fn a_write_does_not_reuse_another_writers_temp_file() {
+        let scratch = Scratch::new();
+        let store = FileNotificationStore::at(scratch.0.clone());
+        store
+            .save_settings(&NotificationSettings::default())
+            .expect("first write");
+
+        let stale = scratch.0.join("state.json.tmp");
+        fs::write(&stale, b"{ truncated").expect("plant a stale temp file");
+
+        store
+            .insert(&candidate("key"), 100, false)
+            .expect("second write");
+
+        let settings = store.settings().expect("state is still readable");
+        assert_eq!(settings, NotificationSettings::default());
+        assert!(
+            fs::read(&stale).is_ok_and(|bytes| bytes == b"{ truncated"),
+            "the stale temp file was reused instead of being left alone"
+        );
     }
 
     #[test]
