@@ -494,6 +494,10 @@ button:disabled {
   scroll-margin-top: 24px;
 }
 
+/* The conversation is the one view whose content is the full width of what was
+   said. The reading column that suits a dashboard truncates it. */
+#chat-panel { max-width: none; margin-right: 0; margin-left: 0; }
+
 .workspace-section > .workspace-header,
 .workspace-section > .metrics,
 .workspace-section > .panel,
@@ -2790,7 +2794,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .transcript-meta button:hover { text-decoration: underline; }
 .transcript-toggle { height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); color: var(--text-2); font-size: 9px; cursor: pointer; }
 .transcript-toggle:hover { border-color: var(--accent); color: var(--text); }
-.transcript-text { max-height: 420px; margin: 8px 0 0; overflow: auto; color: var(--text-2); font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.transcript-text { margin: 8px 0 0; color: var(--text-2); font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .transcript-collapsed { margin: 6px 0 0; overflow: hidden; color: var(--text-3); font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .transcript-truncation { margin-top: 6px; color: var(--text-3); font-size: 9px; }
 
