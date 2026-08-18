@@ -407,7 +407,10 @@ impl AppState {
             })
             .collect();
         projects.sort_by(|left, right| {
-            right.count.cmp(&left.count).then_with(|| left.label.cmp(&right.label))
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.label.cmp(&right.label))
         });
         Ok(projects)
     }
@@ -2956,7 +2959,15 @@ pub fn search_sessions(
     refresh: Option<bool>,
     state: tauri::State<'_, AppState>,
 ) -> Result<SessionPage, String> {
-    state.search_sessions(agent, query, project, include_subagents, offset, limit, refresh)
+    state.search_sessions(
+        agent,
+        query,
+        project,
+        include_subagents,
+        offset,
+        limit,
+        refresh,
+    )
 }
 
 /// The projects a session listing can be narrowed to, with their counts.
@@ -3300,7 +3311,15 @@ mod tests {
 
     fn all_sessions(state: &AppState) -> Vec<SessionSummary> {
         state
-            .search_sessions(None, None, None, None, Some(0), Some(MAX_SESSION_PAGE_SIZE), None)
+            .search_sessions(
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+                Some(MAX_SESSION_PAGE_SIZE),
+                None,
+            )
             .expect("list committed synthetic fixtures")
             .sessions
     }
@@ -3464,7 +3483,11 @@ mod tests {
     /// construct descriptors directly, the same way
     /// `session_summary_reports_a_subagent_thread_and_its_parent` does.
     fn filter_fixture_descriptors() -> Vec<SessionDescriptor> {
-        fn descriptor(id: &str, project: Option<&str>, thread_role: ThreadRole) -> SessionDescriptor {
+        fn descriptor(
+            id: &str,
+            project: Option<&str>,
+            thread_role: ThreadRole,
+        ) -> SessionDescriptor {
             SessionDescriptor {
                 id: ct_domain::SessionId::new(id).unwrap(),
                 agent: AgentKind::Codex,
@@ -3777,11 +3800,16 @@ mod tests {
             "asking for subagents adds exactly the one subagent thread"
         );
         assert!(
-            without.sessions.iter().all(|session| session.thread_role.kind == "root"),
+            without
+                .sessions
+                .iter()
+                .all(|session| session.thread_role.kind == "root"),
             "a subagent thread is not a run the reader started"
         );
         assert!(
-            with.sessions.iter().any(|session| session.thread_role.kind == "subagent"),
+            with.sessions
+                .iter()
+                .any(|session| session.thread_role.kind == "subagent"),
             "asking for subagents must actually surface one"
         );
     }
@@ -3800,7 +3828,10 @@ mod tests {
         let all = state
             .search_sessions(None, None, None, None, None, None, None)
             .expect("a page");
-        assert_eq!(all.total, 3, "three root sessions before any project filter");
+        assert_eq!(
+            all.total, 3,
+            "three root sessions before any project filter"
+        );
 
         let filtered = state
             .search_sessions(
@@ -3874,7 +3905,15 @@ mod tests {
         let state = catalog_state(sessions);
 
         let first_page = state
-            .search_sessions(Some("codex".into()), None, None, None, Some(0), Some(500), None)
+            .search_sessions(
+                Some("codex".into()),
+                None,
+                None,
+                None,
+                Some(0),
+                Some(500),
+                None,
+            )
             .expect("list the first page");
         assert_eq!(first_page.total, 501);
         assert_eq!(first_page.sessions.len(), 500);
@@ -4136,8 +4175,7 @@ mod tests {
             None,
             None,
             None,
-        )
-        {
+        ) {
             Err(error) => error,
             Ok(_) => panic!("unsupported agents are rejected before discovery"),
         };
@@ -4150,7 +4188,15 @@ mod tests {
         assert_eq!(error, "no session matching 'does-not-exist'");
 
         let sessions = state
-            .search_sessions(Some("codex".to_string()), None, None, None, None, None, None)
+            .search_sessions(
+                Some("codex".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .expect("list Codex fixture")
             .sessions;
         let codex_id = session_id(&sessions, "codex");
