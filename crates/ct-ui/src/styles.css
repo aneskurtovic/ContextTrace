@@ -2678,8 +2678,12 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .notification-drawer-header h2 { margin: 2px 0 0; font-size: 17px; }
 .notification-header-actions { display: flex; gap: 6px; }
 /* Reported as hard to find at 10px in a 5px box. The pressed state is styled
-   too: it is a toggle, and one that never looks pressed reads as decoration. */
-.notification-settings-toggle { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; font-size: 11px; font-weight: 600; }
+   too: it is a toggle, and one that never looks pressed reads as decoration.
+   Qualified with the parent class (0,2,0) rather than left as a bare class
+   (0,1,0): the shared `.notification-header-actions button` rule below is
+   class+type (0,1,1), which otherwise wins on specificity regardless of
+   source order and silently drops this rule's font-size and padding. */
+.notification-header-actions .notification-settings-toggle { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; font-size: 11px; font-weight: 600; }
 .notification-settings-toggle[aria-pressed='true'] { border-color: var(--accent-line); background: var(--raise); color: var(--text); }
 .notification-settings-missing { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .notification-settings-missing strong { font-size: 12px; }
