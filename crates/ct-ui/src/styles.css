@@ -3174,8 +3174,19 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
   .lifecycle-panel,
   .compaction-panel,
   .archive-panel,
-  .export-panel,
-  #chat-panel {
+  .export-panel {
     grid-column: 1 / -1;
+  }
+
+  /* #chat-panel is itself a .workspace-section, so the two-column rule above
+     turns it into a grid container, not a grid item -- putting it in the
+     grid-column list above would be inert, since that property positions an
+     item within its parent's grid, and #chat-panel's parent (.workspace) has
+     no grid of its own. The conversation is one continuous stream, not two
+     dashboard panels side by side, so instead we keep #chat-panel's own grid
+     to a single column, which leaves its one child (.transcript) the full
+     panel width at every viewport. */
+  #chat-panel {
+    grid-template-columns: 1fr;
   }
 }
