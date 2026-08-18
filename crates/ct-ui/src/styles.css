@@ -494,10 +494,6 @@ button:disabled {
   scroll-margin-top: 24px;
 }
 
-/* The conversation is the one view whose content is the full width of what was
-   said. The reading column that suits a dashboard truncates it. */
-#chat-panel { max-width: none; margin-right: 0; margin-left: 0; }
-
 .workspace-section > .workspace-header,
 .workspace-section > .metrics,
 .workspace-section > .panel,
@@ -3178,7 +3174,8 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
   .lifecycle-panel,
   .compaction-panel,
   .archive-panel,
-  .export-panel {
+  .export-panel,
+  #chat-panel {
     grid-column: 1 / -1;
   }
 }
