@@ -598,19 +598,14 @@ describe("desktop accessibility and state handling", () => {
     expect(codexRow.getAttribute("aria-current")).toBeNull();
   });
 
-  it("measures unlogged context only when asked, and states the spread beside the ratio", async () => {
+  it("measures unlogged context automatically when Turns opens, and states the spread beside the ratio", async () => {
     const claudeSession = demoSessions.find((session) => session.agent === "claude-code")!;
     mockedApi.searchSessions.mockResolvedValue(sessionPage([claudeSession]));
 
     render(<App />);
     await openView("Turns");
 
-    const run = await screen.findByRole("button", { name: "Measure this session" });
-    // Selecting a session must not pay for a full-session reconstruction.
-    expect(mockedApi.getResidual).not.toHaveBeenCalled();
-
-    fireEvent.click(run);
-
+    // Opening the tab is itself the question; no click is required to ask it.
     await waitFor(() =>
       expect(mockedApi.getResidual).toHaveBeenCalledWith(claudeSession.agent, claudeSession.id),
     );
@@ -636,8 +631,6 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
     await openView("Turns");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
-
     expect(
       await screen.findByText(/all 41 turns reconstruct to more content than their prompts held/),
     ).not.toBeNull();
@@ -659,8 +652,6 @@ describe("desktop accessibility and state handling", () => {
     render(<App />);
     await openView("Turns");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Measure this session" }));
-
     expect(
       await screen.findByText("A compaction occurred here, which explains it."),
     ).not.toBeNull();
@@ -668,6 +659,22 @@ describe("desktop accessibility and state handling", () => {
     // unrecorded harness change would invent a second cause for one event.
     expect(screen.queryByText(/a tool registered, an MCP server connected/)).toBeNull();
   });
+
+  it('measures the session when Turns opens, once per session', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions.slice(0, 2)));
+    render(<App />);
+
+    const turnsTab = await screen.findByRole('tab', { name: 'Turns' });
+    await waitFor(() => expect(turnsTab.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(turnsTab);
+    await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
+
+    // Leaving and returning is not a new question about the same session.
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Turns' }));
+    await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
+  });
+
   it("exposes the redesigned views as an accessible tab set", async () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 

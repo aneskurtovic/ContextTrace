@@ -834,7 +834,8 @@ function UnloggedContext({
           A prompt is larger than everything the log records. The difference is the system
           prompt and tool schemas the agent never wrote down, recovered by fitting this
           session's own characters-per-token ratio to its usage figures. Reconstructing every
-          turn takes a moment, so it runs when you ask.
+          turn takes a moment, so it runs once when this tab opens and is
+          repeated only when you ask.
         </p>
       )}
       {loading && <Spinner label="Reconstructing every turn to fit this session's ratio…" />}
@@ -2866,6 +2867,17 @@ function SessionWorkspace({
   onLiveFollow: (value: boolean) => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
+  // The tab exists to answer where a session's context went, and opening it
+  // with the answer missing made the reader ask for it every time. Keyed on the
+  // session so returning to the tab is not a new question, and guarded on the
+  // in-flight state so a slow reconstruction is not started twice.
+  const measured = useRef<Set<string>>(new Set());
+  const sessionKey = `${detail.session.agent}:${detail.session.id}`;
+  useEffect(() => {
+    if (activeView !== "turns" || residualLoading || measured.current.has(sessionKey)) return;
+    measured.current.add(sessionKey);
+    onRunResidual();
+  }, [activeView, onRunResidual, residualLoading, sessionKey]);
   const measuredTurns = growth.filter((point) => point.promptTokens != null);
   const selectedIndex = Math.max(
     0,
