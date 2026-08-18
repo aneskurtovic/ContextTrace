@@ -3680,18 +3680,22 @@ export default function App() {
       typeof api.getNotificationStatus !== 'function'
     ) return;
     let cancelled = false;
-    Promise.all([
-      api.getNotificationSettings(),
-      api.getNotificationStatus(),
-      typeof api.listNotifications === 'function' ? api.listNotifications(null, 30, false) : Promise.resolve(null),
-    ]).then(([settings, status, page]) => {
-      if (cancelled) return;
-      setNotificationSettings(settings);
-      setNotificationStatus(status);
-      if (page) setNotificationPage(page);
-    }).catch((loadError) => {
-      if (!cancelled) setNotificationError(errorMessage(loadError));
-    });
+    // Settled independently rather than as one Promise.all: these three are
+    // unrelated reads, and joining them meant a single malformed payload blanked
+    // all three. That is how an invalid status left the settings panel rendering
+    // nothing at all when its button was pressed.
+    const apply = <T,>(
+      load: Promise<T>,
+      accept: (value: T) => void,
+    ) => load
+      .then((value) => { if (!cancelled) accept(value); })
+      .catch((loadError) => { if (!cancelled) setNotificationError(errorMessage(loadError)); });
+
+    void apply(api.getNotificationSettings(), setNotificationSettings);
+    void apply(api.getNotificationStatus(), setNotificationStatus);
+    if (typeof api.listNotifications === 'function') {
+      void apply(api.listNotifications(null, 30, false), setNotificationPage);
+    }
     return () => { cancelled = true; };
   }, []);
 

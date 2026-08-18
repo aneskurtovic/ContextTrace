@@ -867,6 +867,23 @@ describe('notifications', () => {
     ));
   });
 
+  it('still loads the settings when the status payload is rejected', async () => {
+    // One bad payload used to reject the whole Promise.all, which left settings
+    // null -- and the panel is gated on settings, so pressing Settings redrew
+    // the feed and looked like a dead button.
+    mockedApi.getNotificationStatus.mockRejectedValue(
+      new Error('ContextTrace received an invalid response from notification status.'),
+    );
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(drawer.querySelector('.notification-settings')).not.toBeNull();
+    expect(drawer.querySelectorAll('.notification-rule')).toHaveLength(11);
+  });
+
   it('refreshes a followed session only after its matching backend event', async () => {
     let update: ((event: SessionUpdatedEvent) => void) | undefined;
     mockedApi.listenForSessionUpdates.mockImplementation(async (callback) => {
