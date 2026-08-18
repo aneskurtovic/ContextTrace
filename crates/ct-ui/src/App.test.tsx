@@ -852,6 +852,20 @@ describe('notifications', () => {
     expect(await screen.findByText(/no installed shortcut carries the app id/)).not.toBeNull();
   });
 
+  it('explains an empty settings panel instead of redrawing the feed', async () => {
+    mockedApi.getNotificationSettings.mockRejectedValue(new Error('store unreadable'));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+
+    // A control that changes nothing when pressed is worse than one that says why.
+    expect(await screen.findByText(/store unreadable/)).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry loading settings' })).not.toBeNull();
+    const drawer = screen.getByRole('dialog', { name: 'Notifications' });
+    expect(drawer.querySelector('.notification-feed')).toBeNull();
+  });
+
   it('requires an explicit local-monitoring onboarding decision', async () => {
     mockedApi.getNotificationSettings.mockResolvedValue({
       ...demoNotificationSettings,

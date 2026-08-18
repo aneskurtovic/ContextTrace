@@ -3220,6 +3220,7 @@ function NotificationCenter({
   onClose,
   onToggleSettings,
   onSettings,
+  onRetrySettings,
   onSelect,
   onReadAll,
   onDismiss,
@@ -3236,6 +3237,7 @@ function NotificationCenter({
   onClose: () => void;
   onToggleSettings: () => void;
   onSettings: (settings: NotificationSettings) => void;
+  onRetrySettings: () => void;
   onSelect: (notification: NotificationRecord) => void;
   onReadAll: () => void;
   onDismiss: (id: string) => void;
@@ -3256,6 +3258,9 @@ function NotificationCenter({
   }, [open]);
   if (!open) return null;
   const notifications = page?.notifications ?? [];
+  // The missing-settings arm below prints its own copy of `error`, so the
+  // shared banner would otherwise duplicate the same sentence on screen.
+  const settingsMissing = settingsOpen && !settings;
   return (
     <>
       <button className='notification-scrim' type='button' aria-label='Close notifications' onClick={onClose} />
@@ -3266,12 +3271,21 @@ function NotificationCenter({
             <h2>Notifications</h2>
           </div>
           <div className='notification-header-actions'>
-            <button type='button' onClick={onToggleSettings} aria-pressed={settingsOpen}>Settings</button>
+            <button type='button' className='notification-settings-toggle' onClick={onToggleSettings} aria-pressed={settingsOpen}>
+              <span aria-hidden='true'>⚙</span>
+              <span>Settings</span>
+            </button>
             <button type='button' onClick={onClose} aria-label='Close notification drawer'>×</button>
           </div>
         </header>
 
-        {settingsOpen && settings ? (
+        {/* Above both branches: a settings failure used to report itself on the
+            feed, which is the screen the reader was trying to leave. The
+            missing-settings arm shows this same string itself, so it is
+            skipped here to avoid printing it twice. */}
+        {error && !settingsMissing && <p className='notification-feed-error' role='alert'>{error}</p>}
+
+        {settingsOpen ? (settings ? (
           <div className='notification-settings'>
             <label className='notification-master-toggle'>
               <span><strong>Monitor live sessions</strong><small>Reads changed local logs while ContextTrace is open.</small></span>
@@ -3349,13 +3363,18 @@ function NotificationCenter({
             </div>
           </div>
         ) : (
+          <div className='notification-settings notification-settings-missing' role='status'>
+            <strong>These settings could not be read</strong>
+            <p>{error ?? 'The desktop bridge did not answer.'}</p>
+            <button type='button' onClick={onRetrySettings}>Retry loading settings</button>
+          </div>
+        )) : (
           <div className='notification-feed'>
             <div className='notification-feed-tools'>
               <span>{page?.unreadCount ?? 0} unread</span>
               <button type='button' onClick={onReadAll} disabled={!page?.unreadCount}>Mark all read</button>
               <button type='button' onClick={onClear} disabled={!notifications.length}>Clear history</button>
             </div>
-            {error && <p className='notification-feed-error' role='alert'>{error}</p>}
             {loading && !notifications.length ? <Spinner label='Loading notifications…' /> : notifications.length ? (
               <ol className='notification-list'>
                 {notifications.map((notification) => (
@@ -3724,6 +3743,16 @@ export default function App() {
       if (typeof api.getNotificationSettings === 'function') {
         try { setNotificationSettings(await api.getNotificationSettings()); } catch { /* retain the actionable save error */ }
       }
+    }
+  }, []);
+
+  const retryNotificationSettings = useCallback(async () => {
+    if (typeof api.getNotificationSettings !== 'function') return;
+    setNotificationError(null);
+    try {
+      setNotificationSettings(await api.getNotificationSettings());
+    } catch (loadError) {
+      setNotificationError(errorMessage(loadError));
     }
   }, []);
 
@@ -4438,6 +4467,7 @@ export default function App() {
         onClose={() => setNotificationDrawerOpen(false)}
         onToggleSettings={() => setNotificationSettingsOpen((current) => !current)}
         onSettings={(settings) => void saveNotificationSettings(settings)}
+        onRetrySettings={() => void retryNotificationSettings()}
         onSelect={openFeedNotification}
         onReadAll={() => void markAllNotificationsRead()}
         onDismiss={(id) => void dismissFeedNotification(id)}
