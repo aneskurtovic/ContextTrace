@@ -2580,15 +2580,41 @@ const TRANSCRIPT_KIND_LABELS: Record<TranscriptKind, string> = {
  * `152,480 chars` next to five rows saying `130 chars` is the finding. Expanding
  * one asks the backend for the rest rather than having shipped it in the page.
  */
+/**
+ * The nearest ancestor that actually scrolls.
+ *
+ * `scrollIntoView` is specified to scroll every scrollable ancestor until the
+ * element is visible, and the app shell is one of them -- so bringing a record
+ * into view also slid the top bar, search box and notification bell off the top
+ * of the window. Moving one pane by hand is what keeps the chrome still.
+ */
+function scrollingParent(node: HTMLElement): HTMLElement | null {
+  let parent = node.parentElement;
+  while (parent) {
+    const overflow = getComputedStyle(parent).overflowY;
+    if (
+      (overflow === "auto" || overflow === "scroll") &&
+      parent.scrollHeight > parent.clientHeight
+    ) {
+      return parent;
+    }
+    parent = parent.parentElement;
+  }
+  return null;
+}
+
 function TranscriptRow({
   entry,
   session,
   onTurn,
+  highlighted,
 }: {
   entry: TranscriptEntry;
   session: SessionSummary;
   onTurn: (turn: number) => void;
+  highlighted: boolean;
 }) {
+  const row = useRef<HTMLLIElement | null>(null);
   const [expanded, setExpanded] = useState(!entry.collapsed);
   const [full, setFull] = useState<TranscriptEntry | null>(null);
   const [loading, setLoading] = useState(false);
@@ -2604,8 +2630,29 @@ function TranscriptRow({
       .finally(() => setLoading(false));
   }, [needsFetch, session.agent, session.id, entry.index]);
 
+  // A notification names one record, and that record is usually collapsed and
+  // a long way down the conversation. Opening it and bringing it into view is
+  // the whole point of following the notification, so the highlight drives
+  // both rather than only painting a border on something off-screen.
+  useEffect(() => {
+    if (!highlighted) return;
+    setExpanded(true);
+    const node = row.current;
+    const pane = node && scrollingParent(node);
+    if (!node || !pane) return;
+    const nodeBox = node.getBoundingClientRect();
+    const paneBox = pane.getBoundingClientRect();
+    pane.scrollBy?.({
+      top: nodeBox.top - paneBox.top - (paneBox.height - nodeBox.height) / 2,
+      behavior: "smooth",
+    });
+  }, [highlighted]);
+
   return (
-    <li className={`transcript-entry ${entry.kind}${entry.error ? " failed" : ""}`}>
+    <li
+      ref={row}
+      className={`transcript-entry ${entry.kind}${entry.error ? " failed" : ""}${highlighted ? " highlighted" : ""}`}
+    >
       <div className="transcript-head">
         <span className="transcript-role">{TRANSCRIPT_KIND_LABELS[entry.kind]}</span>
         {entry.label && <span className="transcript-label" title={entry.label}>{entry.label}</span>}
@@ -2661,9 +2708,11 @@ function TranscriptRow({
 function TranscriptPanel({
   session,
   onTurn,
+  highlightLine,
 }: {
   session: SessionSummary;
   onTurn: (turn: number) => void;
+  highlightLine: number | null;
 }) {
   const [page, setPage] = useState<TranscriptPage | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -2704,6 +2753,19 @@ function TranscriptPanel({
       .finally(() => setLoading(false));
   };
 
+  // The named record can sit past the first page, and a page that was never
+  // fetched cannot be scrolled to. Keep pulling pages until the line arrives
+  // or the transcript runs out; landing the reader at the top of a long
+  // conversation with nothing highlighted is the failure this avoids.
+  const highlightLoaded =
+    highlightLine != null && entries.some((entry) => entry.line === highlightLine);
+  useEffect(() => {
+    if (highlightLine == null || highlightLoaded || loading || !page?.hasMore) return;
+    loadMore();
+    // loadMore is redefined on every render; depending on it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightLine, highlightLoaded, loading, page?.hasMore]);
+
   if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
   if (error) return <p className="empty-inline">{error}</p>;
   if (!entries.length) {
@@ -2729,6 +2791,7 @@ function TranscriptPanel({
             entry={entry}
             session={session}
             onTurn={onTurn}
+            highlighted={highlightLine != null && entry.line === highlightLine}
           />
         ))}
       </ol>
@@ -2804,6 +2867,7 @@ function SessionWorkspace({
   onCompareSession,
   liveFollow,
   onLiveFollow,
+  transcriptHighlightLine,
 }: {
   activeView: WorkspaceView;
   detail: SessionDetail;
@@ -2817,6 +2881,7 @@ function SessionWorkspace({
   compactionDiff: CompactionDiff | null;
   compactionLoading: boolean;
   compactionLineNo: number | null;
+  transcriptHighlightLine: number | null;
   turnDiff: TurnDiff | null;
   turnDiffLoading: boolean;
   pinnedTurn: number | null;
@@ -3114,7 +3179,7 @@ function SessionWorkspace({
       <div id="chat-panel" className="workspace-section" role="tabpanel" aria-labelledby="chat-tab" hidden={activeView !== "chat"}>
         {/* Mounted only while selected: reading a conversation costs a page of
             seeks per session, and every other tab would otherwise pay for it. */}
-        {activeView === "chat" && <TranscriptPanel session={detail.session} onTurn={onTurn} />}
+        {activeView === "chat" && <TranscriptPanel session={detail.session} onTurn={onTurn} highlightLine={transcriptHighlightLine} />}
       </div>
 
       <div id="evidence-panel" className="workspace-section" role="tabpanel" aria-labelledby="evidence-tab" hidden={activeView !== "evidence"}>
@@ -3571,6 +3636,13 @@ export default function App() {
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const [pendingNotificationTurn, setPendingNotificationTurn] = useState<number | null>(null);
+  // The line is meaningless without the session it was found in: line 191 of
+  // another conversation is a different record, and a highlight left pointing
+  // at it would send the transcript paging through a session nobody asked
+  // about. Keeping the two together lets the render gate on identity.
+  const [notificationHighlight, setNotificationHighlight] = useState<
+    { agent: Agent; id: string; line: number } | null
+  >(null);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
@@ -4107,7 +4179,21 @@ export default function App() {
     setNotificationSettingsOpen(false);
     const destination = { agent: notification.location.agent, id: notification.location.sessionId };
     setSelected((current) => sameSession(current, destination) ? current : destination);
-    if (notification.location.turn != null) {
+    // A compaction also names a line, but it already has a destination: the
+    // turn view opens its replacement-history inspector on that line. Only the
+    // rules that point at the *content* of one record -- a secret, a run of
+    // failing tools -- have nowhere better to land than the conversation.
+    const recordRoute =
+      notification.location.sourceLine != null &&
+      (notification.ruleId === 'secretExposure' || notification.ruleId === 'toolErrorStreak');
+    setNotificationHighlight(
+      recordRoute
+        ? { ...destination, line: notification.location.sourceLine! }
+        : null,
+    );
+    if (recordRoute) {
+      setActiveView('chat');
+    } else if (notification.location.turn != null) {
       setActiveView('turns');
       setPendingNotificationTurn(notification.location.turn);
     }
@@ -4953,6 +5039,11 @@ export default function App() {
         ) : visibleDetail ? (
           <SessionWorkspace
             activeView={activeView}
+            transcriptHighlightLine={
+              sameSession(notificationHighlight, visibleDetail.session)
+                ? notificationHighlight!.line
+                : null
+            }
             detail={visibleDetail}
             context={context}
             contextLoading={loadingContext}

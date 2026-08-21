@@ -948,6 +948,133 @@ describe('notifications', () => {
     expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
   });
 
+  it('follows a secret finding to the record it names, across a page boundary', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+
+    // `scrollIntoView` scrolls every scrollable ancestor, and the app shell is
+    // one of them -- calling it slid the top bar, search and notification bell
+    // off the top of the window. The row has to move its own pane instead, so
+    // reaching for this API at all is the regression.
+    const previousScrollIntoView = Element.prototype.scrollIntoView;
+    const scrolledEveryAncestor = vi.fn();
+    Element.prototype.scrollIntoView = scrolledEveryAncestor;
+    try {
+
+    const entry = (index: number, line: number, text: string) => ({
+      index, line, text,
+      kind: 'toolResult' as const,
+      turn: 25,
+      label: null,
+      truncated: false,
+      chars: text.length,
+      sidechain: false,
+      error: false,
+      collapsed: true,
+    });
+
+    // The named record sits on the second page. A highlight that only lands
+    // when the entry happens to be in the first fetch is not a highlight.
+    mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset = 0) =>
+      offset === 0
+        ? { entries: [entry(0, 12, 'an earlier record')], total: 2, offset: 0, hasMore: true }
+        : { entries: [entry(1, 191, 'assignment to UserSecretEncrypted')], total: 2, offset: 1, hasMore: false });
+
+    mockedApi.listNotifications.mockResolvedValue({
+      ...demoNotificationPage,
+      unreadCount: 1,
+      notifications: [{
+        ...demoNotificationPage.notifications[1],
+        id: 'test-notification-secret',
+        ruleId: 'secretExposure' as const,
+        severity: 'critical' as const,
+        title: 'Secret entered model context',
+        description: 'secret-like assignment detected at line 191.',
+        readAt: null,
+        location: {
+          agent: demoSessions[0].agent,
+          sessionId: demoSessions[0].id,
+          project: demoSessions[0].project,
+          turn: 25,
+          sourceLine: 191,
+        },
+      }],
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    fireEvent.click(drawer.querySelectorAll('.notification-card')[0]);
+
+    // Reaching the record at all requires the second page to be pulled in.
+    const text = await screen.findByText(/UserSecretEncrypted/);
+    await waitFor(() =>
+      expect(text.closest('.transcript-entry')!.className).toContain('highlighted'));
+    expect(scrolledEveryAncestor).not.toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = previousScrollIntoView;
+    }
+  });
+  it('drops a record highlight when the reader moves to another session', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0], demoSessions[1]]));
+
+    const entry = (index: number, line: number, text: string) => ({
+      index, line, text,
+      kind: 'toolResult' as const,
+      turn: 25,
+      label: null,
+      truncated: false,
+      chars: text.length,
+      sidechain: false,
+      error: false,
+      collapsed: true,
+    });
+
+    // The session the reader moves to always claims another page. A highlight
+    // that is not tied to the session it came from would chase line 191
+    // through every page of a conversation the alert was never about.
+    const calls: string[] = [];
+    mockedApi.getTranscript.mockImplementation(async (_agent, id, offset = 0) => {
+      calls.push(id + ':' + offset);
+      if (id === demoSessions[0].id) {
+        return offset === 0
+          ? { entries: [entry(0, 12, 'an earlier record')], total: 2, offset: 0, hasMore: true }
+          : { entries: [entry(1, 191, 'assignment to UserSecretEncrypted')], total: 2, offset: 1, hasMore: false };
+      }
+      return { entries: [entry(0, 5, 'an unrelated conversation')], total: 500, offset, hasMore: true };
+    });
+
+    mockedApi.listNotifications.mockResolvedValue({
+      ...demoNotificationPage,
+      unreadCount: 1,
+      notifications: [{
+        ...demoNotificationPage.notifications[1],
+        id: 'test-notification-secret-switch',
+        ruleId: 'secretExposure' as const,
+        severity: 'critical' as const,
+        readAt: null,
+        location: {
+          agent: demoSessions[0].agent,
+          sessionId: demoSessions[0].id,
+          project: demoSessions[0].project,
+          turn: 25,
+          sourceLine: 191,
+        },
+      }],
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    fireEvent.click(drawer.querySelectorAll('.notification-card')[0]);
+    await screen.findByText(/UserSecretEncrypted/);
+
+    fireEvent.click(document.querySelectorAll('.session-row')[1]);
+    await screen.findByText(/an unrelated conversation/);
+
+    const others = calls.filter((call) => call.startsWith(demoSessions[1].id));
+    expect(others).toEqual([demoSessions[1].id + ':0']);
+    expect(document.querySelectorAll('.transcript-entry.highlighted')).toHaveLength(0);
+  });
   it('says which findings reached the OS and why the others did not', async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);

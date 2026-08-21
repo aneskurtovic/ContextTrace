@@ -2778,6 +2778,10 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 .transcript-entry.injection, .transcript-entry.reasoning { border-left-color: var(--line); background: var(--raise); }
 .transcript-entry.compaction { border-left-color: var(--warn); }
 .transcript-entry.failed { border-left-color: var(--bad); }
+/* The ring sits on the whole record, not on the matched text. Secret findings
+   deliberately carry no offsets and no matched value, so the record is the
+   smallest unit the UI is allowed to point at. */
+.transcript-entry.highlighted { border-left-color: var(--warn); outline: 2px solid var(--warn); outline-offset: 1px; }
 .transcript-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .transcript-role { color: var(--text); font-size: 10.5px; font-weight: 600; }
 .transcript-label { overflow: hidden; max-width: 46ch; color: var(--text-2); font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
