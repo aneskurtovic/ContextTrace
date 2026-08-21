@@ -572,6 +572,14 @@ fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
         if !matches!(bytes.get(value_start), Some(b'=') | Some(b':')) {
             continue;
         }
+        // `SecretKind::EnvironmentSecret` is a path, not a binding. Rust and
+        // C++ spell the qualifier with the same colon JSON uses for a member,
+        // so the doubled form has to be rejected explicitly -- without this,
+        // every enum whose name contains SECRET reports itself, and the first
+        // corpus that happens to is this crate's own source.
+        if bytes[value_start] == b':' && bytes.get(value_start + 1) == Some(&b':') {
+            continue;
+        }
         value_start += 1;
         while bytes.get(value_start).is_some_and(u8::is_ascii_whitespace) {
             value_start += 1;
@@ -590,7 +598,7 @@ fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
             end += 1;
         }
         let value = &text[value_start..end];
-        if value.len() >= 12 && !looks_like_placeholder(value) {
+        if value.len() >= 12 && !looks_like_placeholder(value) && !looks_like_code(value) {
             found.push(SecretMatch {
                 kind: SecretKind::EnvironmentSecret,
                 start: value_start,
@@ -670,6 +678,20 @@ fn looks_like_placeholder(value: &str) -> bool {
         || lower.starts_with("changeme")
         || lower.starts_with("replace_me")
         || lower.starts_with("your_")
+}
+
+/// Reject a value that is source code rather than a credential.
+///
+/// Grepping a codebase puts lines like
+/// `applicant.UserSecretEncrypted = Crypto.Encrypt(user1.Value)` into the
+/// context, and on names alone the generic assignment detector cannot tell
+/// that apart from `api_secret = <literal>`. The bracket is what settles it:
+/// a call expression carries one and a credential does not. Keying on the
+/// bracket rather than on the dot is what leaves JWT bodies, whose segments
+/// are dot-separated, firing as before. The cost is a literal password that
+/// happens to contain a bracket, which this no longer reports.
+fn looks_like_code(value: &str) -> bool {
+    value.bytes().any(|byte| matches!(byte, b'(' | b')'))
 }
 
 /// A name may be written `api_key`, `api-key` or `apiKey`; all three continue
@@ -809,6 +831,34 @@ mod tests {
         );
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].kind, SecretKind::EnvironmentSecret);
+    }
+
+    #[test]
+    fn skips_a_path_qualifier_that_is_not_an_assignment() {
+        // This crate's own source is the corpus that proves it: every variant
+        // of an enum named for secrets reported itself once.
+        let matches =
+            find_secrets("matched SecretKind::EnvironmentSecret and SecretKind::AnthropicApiKey");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn skips_assignments_whose_value_is_a_call_expression() {
+        // Grep output over a C# codebase, which is how this reached the
+        // detector: the name promises a credential and the value is code.
+        let matches =
+            find_secrets("applicant.UserSecretEncrypted = Crypto.Encrypt(user1.RawValue)");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn still_finds_a_dotted_token_that_is_not_code() {
+        // The guard above keys on the bracket, not on the dot, so a JWT body
+        // -- three dot-separated base64url segments -- still fires.
+        let matches = find_secrets(
+            "session_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        );
+        assert!(!matches.is_empty());
     }
 
     #[test]
