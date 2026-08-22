@@ -701,6 +701,22 @@ export function getCorpus(refresh = false): Promise<CorpusReport> {
   return invoke<unknown>('get_corpus', { refresh }).then(asCorpus);
 }
 
+/**
+ * The last sweep as it stands, without checking whether it still holds.
+ *
+ * Returns `null` when nothing has ever been swept. Used to paint the
+ * dashboard before a real sweep runs: a fingerprint is all-or-nothing, so one
+ * session that grew by a line invalidates the whole report, and on a machine
+ * running agents that is most launches. The report is flagged `cached`, and
+ * the header says so, so the numbers are never presented as current.
+ */
+export function getCorpusCached(): Promise<CorpusReport | null> {
+  if (!inTauri()) return Promise.resolve(null);
+  return invoke<unknown>('get_corpus_cached').then((value) =>
+    value == null ? null : asCorpus(value),
+  );
+}
+
 /** Progress of a running sweep, so seconds of work are not silent. */
 export async function listenForCorpusProgress(
   callback: (progress: CorpusProgress) => void,

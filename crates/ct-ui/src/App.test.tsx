@@ -23,6 +23,7 @@ import {
 } from "./demo";
 import type {
   ContextDetail,
+  CorpusReport,
   SessionDetail,
   SessionPage,
   SessionSummary,
@@ -38,6 +39,7 @@ vi.mock("./api", () => ({
   inspectSession: vi.fn(),
   getContext: vi.fn(),
   getCorpus: vi.fn(),
+  getCorpusCached: vi.fn(),
   listenForCorpusProgress: vi.fn(),
   getTranscript: vi.fn(),
   getTranscriptEntry: vi.fn(),
@@ -94,7 +96,17 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+/** Leave the corpus view, which is what the app now opens on. */
+function leaveCorpus() {
+  const corpus = screen.queryByRole("button", { name: "All sessions" });
+  if (corpus?.getAttribute("aria-pressed") === "true") fireEvent.click(corpus);
+}
+
 async function openView(name: "Overview" | "Turns" | "Chat" | "Diff" | "Evidence") {
+  // The session tab strip does not exist while the corpus is showing, so
+  // leaving it is a precondition of every view assertion rather than
+  // something each test has to remember.
+  leaveCorpus();
   const tab = await screen.findByRole("tab", { name });
   await waitFor(() => expect(tab.hasAttribute("disabled")).toBe(false));
   fireEvent.click(tab);
@@ -112,6 +124,9 @@ beforeEach(() => {
   mockedApi.inspectSession.mockImplementation(async (_agent, id) => demoDetail(id));
   mockedApi.getContext.mockImplementation(async (_agent, _id, turn) => demoContext(turn));
   mockedApi.getCorpus.mockResolvedValue(demoCorpus);
+  // No remembered sweep by default: tests that care about the cached-first
+  // paint say so, and the rest should exercise the real sweep path.
+  mockedApi.getCorpusCached.mockResolvedValue(null);
   mockedApi.listenForCorpusProgress.mockResolvedValue(() => undefined);
   mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset = 0, limit = 40) =>
     demoTranscript(offset, limit),
@@ -162,6 +177,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockReturnValueOnce(sessions.promise);
 
     render(<App />);
+    leaveCorpus();
 
     expect(
       screen.getByRole("navigation", { name: "Sessions" }).getAttribute("aria-busy"),
@@ -199,6 +215,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
+    leaveCorpus();
 
     expect(
       await screen.findByText("No context categories were reported for this turn."),
@@ -212,6 +229,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
+    leaveCorpus();
 
     const filters = screen.getByRole("group", { name: "Filter sessions by agent" });
     expect(filters).not.toBeNull();
@@ -441,6 +459,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
+    leaveCorpus();
 
     fireEvent.click(await screen.findByRole("button", { name: /Inspect turn 1:/ }));
     fireEvent.click(screen.getByRole("button", { name: /Inspect turn 2:/ }));
@@ -470,6 +489,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.getContext.mockResolvedValueOnce(observed);
 
     render(<App />);
+    leaveCorpus();
 
     expect(await screen.findByText(/Confidence labels: observed = logged/)).not.toBeNull();
     expect(screen.getAllByText("observed").length).toBeGreaterThan(0);
@@ -481,6 +501,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.getContext.mockResolvedValueOnce(demoContext());
 
     render(<App />);
+    leaveCorpus();
 
     const measurement = await screen.findByText(/Confidence labels: observed = logged/);
     expect(measurement.textContent).toContain(
@@ -499,6 +520,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
+    leaveCorpus();
 
     expect(
       await screen.findByText(
@@ -516,6 +538,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
+    leaveCorpus();
 
     expect(
       await screen.findByText("Unattributed remainder: 0 tokens for this reconstruction."),
@@ -768,6 +791,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
+    leaveCorpus();
 
     const overview = await screen.findByRole("tab", { name: "Overview" });
     await waitFor(() => expect(overview.hasAttribute("disabled")).toBe(false));
@@ -838,11 +862,38 @@ describe("desktop accessibility and state handling", () => {
 });
 
 describe("corpus overview", () => {
+  it("paints the remembered sweep first, then replaces it with the real one", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+
+    // A fingerprint is all-or-nothing, so one session that grew by a line
+    // sends the dashboard back to a full sweep. The view the app opens on
+    // cannot begin with seconds of spinner, so last time's numbers go up
+    // first -- labelled as last time's.
+    mockedApi.getCorpusCached.mockResolvedValue({
+      ...demoCorpus,
+      sessions: 391,
+      cached: true,
+    });
+    const sweep = deferred<CorpusReport>();
+    mockedApi.getCorpus.mockReturnValueOnce(sweep.promise);
+
+    render(<App />);
+
+    // Remembered numbers, on screen while the sweep is still running.
+    expect(await screen.findByRole("heading", { name: "391 sessions" })).not.toBeNull();
+    expect(screen.getByText(/from the last sweep/)).not.toBeNull();
+    expect(screen.getByText(/re-reading now/)).not.toBeNull();
+
+    sweep.resolve({ ...demoCorpus, sessions: 392, cached: false });
+
+    // ...and replaced once it lands, with the caveat gone.
+    expect(await screen.findByRole("heading", { name: "392 sessions" })).not.toBeNull();
+    await waitFor(() => expect(screen.queryByText(/from the last sweep/)).toBeNull());
+  });
   it("summarises every session and states what it could not measure", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /All sessions at once/ }));
 
     expect(await screen.findByRole("heading", { name: "134 sessions" })).not.toBeNull();
     // A cost total without its unpriced count reads as complete when it is a
@@ -862,7 +913,6 @@ describe("corpus overview", () => {
   it("reuses the last sweep until asked to re-run it", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /All sessions at once/ }));
     await screen.findByRole("heading", { name: "134 sessions" });
 
     expect(mockedApi.getCorpus).toHaveBeenCalledWith(false);
@@ -1166,6 +1216,7 @@ describe('notifications', () => {
     });
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
+    leaveCorpus();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Follow live' }));
     await waitFor(() => expect(update).toBeDefined());
@@ -1296,6 +1347,7 @@ describe("comparing turns across two sessions", () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([codex, claude]));
 
     render(<App />);
+    leaveCorpus();
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
     expect(await screen.findByText(/^Baseline pinned at/)).not.toBeNull();
@@ -1317,6 +1369,7 @@ describe("comparing turns across two sessions", () => {
     mockedApi.getTurnDiff.mockImplementation(async (left, right) => demoTurnDiff(left, right));
 
     render(<App />);
+    leaveCorpus();
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
     await openView("Diff");

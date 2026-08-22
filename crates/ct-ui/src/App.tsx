@@ -2353,9 +2353,12 @@ function EvidenceTools({
 function CorpusBars({
   label,
   rows,
+  note,
 }: {
   label: string;
   rows: Array<{ name: string; value: number; note: string }>;
+  /** Names the part of the corpus the panel could not account for. */
+  note?: string;
 }) {
   const largest = Math.max(1, ...rows.map((row) => row.value));
   return (
@@ -2370,6 +2373,7 @@ function CorpusBars({
           <strong>{row.note}</strong>
         </div>
       ))}
+      {note && <p className="corpus-note">{note}</p>}
     </div>
   );
 }
@@ -2400,6 +2404,14 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
   }, []);
 
   useEffect(() => {
+    // Paint last time's numbers immediately, then let the sweep below replace
+    // them. Without this the view the app opens on begins with a spinner for
+    // as long as the corpus takes to read.
+    api.getCorpusCached()
+      .then((remembered) => {
+        if (remembered) setReport((current) => current ?? remembered);
+      })
+      .catch(() => undefined);
     load(false);
     let unlisten: (() => void) | undefined;
     api.listenForCorpusProgress(setProgress).then((stop) => {
@@ -2425,6 +2437,8 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
   if (!report) return null;
 
   const pressure = report.pressure;
+  const modelTurns = report.models.reduce((sum, [, turns]) => sum + turns, 0);
+  const unattributedModelTurns = Math.max(0, report.turns - modelTurns);
   const measuredPressure =
     pressure.comfortable + pressure.warming + pressure.tight + pressure.critical;
 
@@ -2440,6 +2454,10 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
           <p>
             {report.turns.toLocaleString()} turns · {report.events.toLocaleString()} events ·{" "}
             {report.cached ? "from the last sweep" : "swept just now"}
+            {loading && report.cached &&
+              (progress
+                ? ` · re-reading ${progress.done} of ${progress.total}`
+                : " · re-reading now")}
             {demoData && " · fabricated"}
           </p>
         </div>
@@ -2495,6 +2513,23 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
             value: project.turns,
             note: `${project.turns.toLocaleString()} turns · $${(project.costMicros / 1_000_000).toFixed(2)}`,
           }))}
+        />
+        <CorpusBars
+          label="Turns by model"
+          rows={report.models.map(([model, turns]) => ({
+            name: model,
+            value: turns,
+            note: `${turns.toLocaleString()} turns`,
+          }))}
+          // A turn is counted only where the log named the model on that turn,
+          // so the rows can sum to less than the corpus. Saying which share is
+          // unattributed is the difference between a model breakdown and a
+          // claim that every turn ran on one of these.
+          note={
+            unattributedModelTurns > 0
+              ? `${unattributedModelTurns.toLocaleString()} of ${report.turns.toLocaleString()} turns recorded no model, so no row counts them.`
+              : undefined
+          }
         />
         <CorpusBars
           label="Text returned by tool"
@@ -3598,7 +3633,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showRoots, setShowRoots] = useState(false);
   /** Whether the workspace is showing the corpus instead of one session. */
-  const [corpusOpen, setCorpusOpen] = useState(false);
+  // The app opens on the whole corpus rather than on one session, because
+  // "what happened across everything" is the question you have before you know
+  // which session to look at. The sweep behind it is cached to disk, so this
+  // costs a read rather than a rescan on every launch.
+  const [corpusOpen, setCorpusOpen] = useState(true);
   // Which session the turn-comparison panel's right side names, when it is
   // not the currently open session's own slider turn. `crossTurnInput` stays
   // a string rather than a number so the field can sit empty mid-edit
@@ -4165,6 +4204,19 @@ export default function App() {
     [context?.turn, selected],
   );
 
+  /**
+   * Open a session, leaving the corpus view if it is showing.
+   *
+   * The corpus panel replaces the workspace rather than sitting beside it, so
+   * without this a click on a session row would select a session nobody can
+   * see. Harmless while the corpus was a detour; a dead end now that it is
+   * where the app starts.
+   */
+  const selectSession = useCallback((session: SessionKey) => {
+    setCorpusOpen(false);
+    setSelected((current) => (sameSession(current, session) ? current : session));
+  }, []);
+
   const openFeedNotification = useCallback((notification: NotificationRecord) => {
     const readAt = notification.readAt ?? new Date().toISOString();
     setNotificationPage((current) => current ? {
@@ -4178,6 +4230,7 @@ export default function App() {
     setNotificationDrawerOpen(false);
     setNotificationSettingsOpen(false);
     const destination = { agent: notification.location.agent, id: notification.location.sessionId };
+    setCorpusOpen(false);
     setSelected((current) => sameSession(current, destination) ? current : destination);
     // A compaction also names a line, but it already has a destination: the
     // turn view opens its replacement-history inspector on that line. Only the
@@ -4756,9 +4809,12 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-caption"><span>Sessions</span><span>{sessionTotal}</span></div>
 
-        {/* The one control that leaves a single session behind. Above the
-            list rather than in the tab strip, because those tabs are all
-            views *of* the selected session and this is not. */}
+        {/* Above the list rather than in the tab strip, because those tabs are
+            all views *of* the selected session and this is not. The label is
+            fixed and the state lives in `aria-pressed` and the styling: a
+            control that renames itself as you use it reads as two different
+            controls, which is what "All sessions at once" / "Back to this
+            session" did. */}
         <button
           type="button"
           className={corpusOpen ? "corpus-entry active" : "corpus-entry"}
@@ -4766,7 +4822,7 @@ export default function App() {
           onClick={() => setCorpusOpen((open) => !open)}
         >
           <span aria-hidden="true">◫</span>
-          <span>{corpusOpen ? "Back to this session" : "All sessions at once"}</span>
+          <span>All sessions</span>
         </button>
 
         <div className="search-box">
@@ -4787,7 +4843,7 @@ export default function App() {
         <MemorySearchResults
           hits={memoryHits}
           loading={memoryLoading}
-          onSelect={(hit) => setSelected({ agent: hit.agent, id: hit.sessionId })}
+          onSelect={(hit) => selectSession({ agent: hit.agent, id: hit.sessionId })}
         />
 
         <div className="filter-row" role="group" aria-label="Filter sessions by agent">
@@ -4865,7 +4921,7 @@ export default function App() {
                   key={`${session.agent}-${session.id}`}
                   session={session}
                   selected={selected?.agent === session.agent && selected?.id === session.id}
-                  onSelect={() => setSelected({ agent: session.agent, id: session.id })}
+                  onSelect={() => selectSession({ agent: session.agent, id: session.id })}
                 />
               ))}
               {hasMoreSessions && (

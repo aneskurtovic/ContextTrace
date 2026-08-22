@@ -16,6 +16,12 @@ afterEach(() => {
   cleanup();
 });
 
+/** Leave the corpus view, which is what the app now opens on. */
+function leaveCorpus() {
+  const corpus = screen.queryByRole("button", { name: "All sessions" });
+  if (corpus?.getAttribute("aria-pressed") === "true") fireEvent.click(corpus);
+}
+
 describe("desktop without the Tauri bridge", () => {
   it("labels fabricated data wherever it is rendered", async () => {
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
@@ -42,6 +48,7 @@ describe("desktop without the Tauri bridge", () => {
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 
     render(<App />);
+    leaveCorpus();
     const evidence = await screen.findByRole("tab", { name: "Evidence" });
     await waitFor(() => expect(evidence.hasAttribute("disabled")).toBe(false));
     fireEvent.click(evidence);
