@@ -90,7 +90,7 @@ model did not need.
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented |
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
-| `ct-cli` — the thirteen commands in the [README](../README.md#commands) | Implemented |
+| `ct-cli` — the twenty-three commands in the [README](../README.md#commands) | Implemented |
 | `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Desktop MVP accepted: real-corpus installed search/filtering and native 1024×680/1440×900 checks; new panels pass responsive acceptance |
 | Standalone JSONL fixture files | Implemented |
 | Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |

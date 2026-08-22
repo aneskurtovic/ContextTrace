@@ -57,6 +57,7 @@ What runs today:
 | NDJSON export | The whole session as typed records, cross-checked against the totals | CLI + desktop |
 | Session archive | A copy that outlives the log, and whether it still matches its source | CLI + desktop |
 | Desktop app | The same measurements in a native Windows browsing and inspection UI | Desktop |
+| Notifications | Which sessions crossed a threshold while you were away, and whether the toast actually arrived | Desktop |
 
 ## Install
 
@@ -232,6 +233,7 @@ filters: --source <kind[:text]>  --category <name>
 | `ct archive <id>` | Keep a copy of a session so it outlives its log |
 | `ct sessions` | Which sessions exist, filtered by agent, project, date or count |
 | `ct families` | Group recorded root and subagent sessions into families |
+| `ct stats` | Summarise every local session at once |
 | `ct cost <id>` | Estimate category costs, or compare a model/token-cap what-if |
 | `ct ghost <id> <from> <to>` | Show context items gained, retained and removed between turns |
 | `ct fidelity <id>` | Show parse fidelity per turn and unassigned events |
@@ -239,6 +241,7 @@ filters: --source <kind[:text]>  --category <name>
 | `ct instruction-files <id>` | Compare recorded instruction bodies with current files on disk |
 | `ct mcp` | Serve read-only session queries over local stdio JSON-RPC |
 | `ct inspect <id>` | The raw session structure and events, for debugging |
+| `ct transcript <id>` | Read a session back as the conversation it was |
 | `ct compactions <id>` | [What a Codex compaction dropped, kept or replaced](docs/guide.md#exact-codex-compaction-diffs-without-printing-prompt-content) |
 | `ct context <id>` | What filled a turn's context window, by category and confidence |
 | `ct largest <id>` | [The biggest contributors to a turn, narrowed by provenance or size](docs/guide.md#filtering-without-lying-about-the-whole) |
@@ -371,6 +374,7 @@ redact by default applies to it unchanged.
 | [MVP status](docs/MVP-STATUS.md) | What's implemented, what's gated, and the release plan |
 | [Release procedure](docs/RELEASING.md) | How Windows release candidates are built, checked and optionally signed |
 | [Continuous integration](docs/CI.md) | What runs on Linux, what needs real Windows, and what a green pipeline still does not prove |
+| [Notifications](docs/notifications.md) | The twelve rules, how delivery is decided, and why a delivered toast is not assumed |
 
 ## Contributing
 

@@ -76,6 +76,17 @@ above, pass through unflagged. The matched value is never stored in a finding,
 shown in a preview, or made serializable; this is why the command deliberately
 has no `--json` mode.
 
+Two shapes that look like assignments are deliberately not reported, because a
+session log carries source code as often as it carries configuration. A value
+holding a bracket is a call expression -- `UserSecretEncrypted =
+Crypto.Encrypt(user1.RawValue)`, arriving from a grep over a codebase -- and a
+doubled colon is a path qualifier rather than a binding, so
+`SecretKind::EnvironmentSecret` is a name being discussed and not a credential
+being set. The test keys on the bracket rather than on the dot, which is what
+leaves JWT bodies -- three dot-separated segments -- reported as before. The
+cost is a literal password that happens to contain a bracket, which is no
+longer reported here or masked on export.
+
 Records are scanned once even when their content survives for hundreds of
 turns. Codex replacement histories and the recorded base instructions are
 included because they can be placed into a later prompt. Findings are
