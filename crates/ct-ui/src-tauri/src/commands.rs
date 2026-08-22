@@ -901,6 +901,17 @@ impl AppState {
             {
                 return Ok(CorpusSummary::from_cached(&cached.1, true));
             }
+            // An in-memory cache dies with the process, so without this every
+            // launch pays for the dashboard again -- and the dashboard is what
+            // the app now opens on.
+            if let Some(report) = read_corpus_cache(&fingerprint) {
+                let summary = CorpusSummary::from_cached(&report, true);
+                *self
+                    .corpus
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
+                return Ok(summary);
+            }
         }
 
         let report = self.app.sweep_corpus(|done, total| {
@@ -910,11 +921,31 @@ impl AppState {
             );
         });
         let summary = CorpusSummary::from_cached(&report, false);
+        write_corpus_cache(&fingerprint, &report);
         *self
             .corpus
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
         Ok(summary)
+    }
+
+    /// The last sweep as it stands, without asking whether it still holds.
+    ///
+    /// A fingerprint is all-or-nothing: one session that grew by a line
+    /// invalidates the whole report, and on a machine running agents that is
+    /// most launches. So the dashboard paints these numbers first and lets a
+    /// real sweep reconcile behind them. It is offered as last time's answer
+    /// -- `cached` is true -- and never as a claim about now.
+    fn corpus_remembered(&self) -> Option<CorpusSummary> {
+        if let Some((_, report)) = self
+            .corpus
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+        {
+            return Some(CorpusSummary::from_cached(report, true));
+        }
+        read_corpus_cache_file().map(|cached| CorpusSummary::from_cached(&cached.report, true))
     }
 
     /// What the corpus looked like when a sweep ran.
@@ -3011,6 +3042,68 @@ pub fn get_context(
     state.context(parse_agent(&agent)?, &id, turn)
 }
 
+/// The remembered sweep, as it sits on disk.
+///
+/// Split into a borrowing writer and an owning reader so remembering a sweep
+/// does not have to clone a report describing hundreds of sessions.
+#[derive(Serialize)]
+struct CorpusCacheRef<'a> {
+    fingerprint: &'a [ct_domain::SessionFingerprint],
+    report: &'a ct_application::CorpusReport,
+}
+
+#[derive(Deserialize)]
+struct CorpusCache {
+    fingerprint: Vec<ct_domain::SessionFingerprint>,
+    report: ct_application::CorpusReport,
+}
+
+/// Read back the last sweep, but only if it described exactly this corpus.
+///
+/// Every failure returns `None` and costs a sweep: no file yet, a cache left
+/// by an older build whose report shape has since changed, a partial write.
+/// None of those deserve an error, because the sweep is always available as
+/// the answer -- this is a cache, and a cache that can fail loudly is worse
+/// than no cache.
+fn read_corpus_cache_file() -> Option<CorpusCache> {
+    let raw = fs::read(ct_runtime::corpus_cache_path()).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
+/// The remembered sweep, but only if it still describes this corpus.
+fn read_corpus_cache(
+    fingerprint: &[ct_domain::SessionFingerprint],
+) -> Option<ct_application::CorpusReport> {
+    let cached = read_corpus_cache_file()?;
+    (cached.fingerprint == fingerprint).then_some(cached.report)
+}
+
+/// Remember this sweep for the next launch. Best effort, by design.
+///
+/// Written to a temporary file and renamed, so a process killed mid-write
+/// leaves the previous cache intact rather than a truncated one that would
+/// then be parsed and trusted.
+fn write_corpus_cache(
+    fingerprint: &[ct_domain::SessionFingerprint],
+    report: &ct_application::CorpusReport,
+) {
+    let path = ct_runtime::corpus_cache_path();
+    let Some(dir) = path.parent() else { return };
+    if fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let Ok(body) = serde_json::to_vec(&CorpusCacheRef {
+        fingerprint,
+        report,
+    }) else {
+        return;
+    };
+    let scratch = dir.join(format!("report.json.{}.tmp", std::process::id()));
+    if fs::write(&scratch, body).is_ok() && fs::rename(&scratch, &path).is_err() {
+        let _ = fs::remove_file(&scratch);
+    }
+}
+
 /// Summarise every local session at once.
 ///
 /// Runs on the command's own thread, which Tauri dispatches off the UI thread,
@@ -3023,6 +3116,12 @@ pub fn get_corpus(
     state: tauri::State<'_, AppState>,
 ) -> Result<CorpusSummary, String> {
     state.corpus(refresh.unwrap_or(false), &app)
+}
+
+/// The remembered sweep, for painting the dashboard before a real one runs.
+#[tauri::command]
+pub fn get_corpus_cached(state: tauri::State<'_, AppState>) -> Option<CorpusSummary> {
+    state.corpus_remembered()
 }
 
 #[tauri::command]

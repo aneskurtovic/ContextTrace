@@ -110,6 +110,18 @@ pub fn notification_store() -> FileNotificationStore {
     FileNotificationStore::at(root)
 }
 
+/// Where the last corpus sweep is remembered.
+///
+/// Nested under the archive root for the same reason the notification store
+/// is: `ct roots` names one written directory, and a cache written elsewhere
+/// would falsify that sentence. This file is derived data and is safe to
+/// delete -- a missing or stale one costs a sweep, never an answer.
+pub fn corpus_cache_path() -> PathBuf {
+    Path::new(&archive_store().root())
+        .join("corpus")
+        .join("report.json")
+}
+
 /// Where an exported session is written, given the archive root.
 ///
 /// Nested under the archive root deliberately. `ct roots` names *one* written

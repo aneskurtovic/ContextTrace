@@ -29,7 +29,7 @@ use crate::cost;
 use ct_domain::model::event::EventKind;
 use ct_domain::ports::AgentAdapter;
 use ct_domain::{AgentKind, AgentSession, SessionDescriptor};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// How many entries each ranking keeps. A ranking is read to find the
@@ -41,7 +41,7 @@ const TOP_N: usize = 12;
 /// Bands rather than an average: an average utilization across a corpus is a
 /// number no session ever had, while "nine sessions ran past 90% of their
 /// window" is a fact about nine specific sessions.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PressureBands {
     /// Sessions whose peak prompt stayed under half the window.
@@ -58,7 +58,7 @@ pub struct PressureBands {
     pub unmeasured: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentTotals {
     pub agent: String,
@@ -68,7 +68,7 @@ pub struct AgentTotals {
     pub output_tokens: u64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTotals {
     pub project: String,
@@ -80,7 +80,7 @@ pub struct ProjectTotals {
 }
 
 /// A tool's whole footprint across the corpus.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolTotals {
     pub tool: String,
@@ -93,7 +93,7 @@ pub struct ToolTotals {
 }
 
 /// Sessions and turns on one calendar day, from turn timestamps.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DayTotals {
     /// `YYYY-MM-DD`, UTC.
@@ -104,7 +104,7 @@ pub struct DayTotals {
 }
 
 /// A session worth looking at, and the figure that earned it the place.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRank {
     pub id: String,
@@ -118,7 +118,7 @@ pub struct SessionRank {
 }
 
 /// Everything the sweep found.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorpusReport {
     pub sessions: usize,
@@ -680,5 +680,47 @@ mod tests {
             report.costliest_sessions.is_empty(),
             "a session with no priced turn does not belong in a cost ranking"
         );
+    }
+    #[test]
+    fn a_fingerprint_compares_equal_after_a_round_trip_through_json() {
+        // The desktop decides whether a remembered sweep is still valid by
+        // comparing a fingerprint it wrote to disk against one it just
+        // computed. A timestamp that lost precision on the way out would make
+        // that comparison fail forever, and the symptom would be a slow launch
+        // rather than an error -- which nobody reads as a bug.
+        let fingerprints = vec![ct_domain::SessionFingerprint {
+            path: "/logs/a.jsonl".into(),
+            size_bytes: 46_652,
+            last_activity: Some(
+                "2026-07-28T12:56:17.529662300Z"
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .expect("a fixed timestamp parses"),
+            ),
+        }];
+
+        let json = serde_json::to_string(&fingerprints).expect("serialises");
+        let read: Vec<ct_domain::SessionFingerprint> =
+            serde_json::from_str(&json).expect("reads back");
+
+        assert_eq!(read, fingerprints);
+    }
+
+    #[test]
+    fn a_report_survives_a_round_trip_through_json() {
+        // The desktop remembers a sweep on disk so a launch does not have to
+        // repeat it. That only works while every part of the report can be
+        // read back: a field added with `Serialize` alone would compile, ship,
+        // and silently turn the cache into a permanent miss.
+        let mut corpus = Corpus::new();
+        corpus.add(
+            &descriptor("a", "p"),
+            &session(None, vec![turn(1, Some(1_000), Some(100))], Vec::new()),
+        );
+        let report = corpus.finish();
+
+        let json = serde_json::to_string(&report).expect("a report serialises");
+        let read: CorpusReport = serde_json::from_str(&json).expect("and reads back");
+
+        assert_eq!(read, report);
     }
 }

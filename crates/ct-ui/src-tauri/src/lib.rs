@@ -28,6 +28,7 @@ pub fn run() {
             commands::inspect_session,
             commands::get_context,
             commands::get_corpus,
+            commands::get_corpus_cached,
             commands::get_transcript,
             commands::get_transcript_entry,
             commands::run_doctor,
