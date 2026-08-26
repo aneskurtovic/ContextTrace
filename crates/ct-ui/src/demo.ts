@@ -402,6 +402,11 @@ export function demoDetail(id: string): SessionDetail {
   return {
     session,
     model: session.agent === "codex" ? "gpt-5.4" : "claude-opus-4.5",
+    modelUsage: [{
+      model: session.agent === "codex" ? "gpt-5.4" : "claude-opus-4.5",
+      turns: growth.length,
+    }],
+    unattributedModelTurns: 0,
     agentVersion: "0.1-preview",
     gitBranch: "main",
     turnCount: growth.length,

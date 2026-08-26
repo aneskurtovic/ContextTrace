@@ -826,6 +826,16 @@ describe("desktop IPC response validation", () => {
     expect(compaction?.lineNo).toEqual(expect.any(Number));
   });
 
+  it("rejects a session detail that omits model usage attribution", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { modelUsage: _missing, ...detail } = demoDetail(demoSessions[0].id);
+    invoke.mockResolvedValue(detail);
+
+    await expect(inspectSession("codex", demoSessions[0].id)).rejects.toThrow(
+      "invalid response from session inspection",
+    );
+  });
+
   it("validates and forwards an available compaction diff, camelCase all the way into each disposition", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     invoke.mockResolvedValue({

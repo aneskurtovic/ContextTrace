@@ -549,10 +549,14 @@ impl AppState {
         let growth = timeline(session);
         let peak_turn = session.peak_turn().map(|turn| turn.get());
         let metadata = session.metadata();
+        let (model_usage, unattributed_model_turns) =
+            model_usage(session, metadata.model.as_deref());
 
         Ok(SessionDetail {
             session: cached.descriptor.clone().into(),
             model: metadata.model.clone(),
+            model_usage,
+            unattributed_model_turns,
             agent_version: metadata.agent_version.clone(),
             git_branch: metadata.git_branch.clone(),
             turn_count: session.turn_count(),
@@ -2079,6 +2083,8 @@ pub struct GrowthPointSummary {
 pub struct SessionDetail {
     session: SessionSummary,
     model: Option<String>,
+    model_usage: Vec<ModelUsageSummary>,
+    unattributed_model_turns: usize,
     agent_version: Option<String>,
     git_branch: Option<String>,
     turn_count: usize,
@@ -2092,6 +2098,50 @@ pub struct SessionDetail {
     unplaced_compactions: usize,
     growth: Vec<GrowthPointSummary>,
     source: Option<SessionSourceSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsageSummary {
+    model: String,
+    turns: usize,
+}
+
+/// Count models on completed turns, keeping missing per-turn model records
+/// visible instead of assigning them the session metadata model. The metadata
+/// fallback only keeps a known session model visible when no turn recorded one;
+/// its zero count makes clear that it is not evidence for individual turns.
+fn model_usage(
+    session: &ct_domain::AgentSession,
+    session_model: Option<&str>,
+) -> (Vec<ModelUsageSummary>, usize) {
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut unattributed = 0;
+    for turn in session.turns() {
+        if let Some(model) = &turn.model {
+            *counts.entry(model.clone()).or_default() += 1;
+        } else {
+            unattributed += 1;
+        }
+    }
+
+    if counts.is_empty() {
+        if let Some(model) = session_model {
+            counts.entry(model.to_string()).or_default();
+        }
+    }
+
+    let mut usage: Vec<_> = counts
+        .into_iter()
+        .map(|(model, turns)| ModelUsageSummary { model, turns })
+        .collect();
+    usage.sort_by(|left, right| {
+        right
+            .turns
+            .cmp(&left.turns)
+            .then_with(|| left.model.cmp(&right.model))
+    });
+    (usage, unattributed)
 }
 
 #[derive(Serialize)]
@@ -3633,6 +3683,12 @@ mod tests {
             .expect("inspect fixture session");
         assert_eq!(detail.session.agent, agent);
         assert_eq!(detail.model.as_deref(), Some(model));
+        assert!(detail.model_usage.iter().any(|entry| entry.model == model));
+        assert_eq!(detail.unattributed_model_turns, 0);
+        let detail_json = serde_json::to_value(&detail).expect("detail serializes for IPC");
+        assert!(detail_json["modelUsage"].is_array());
+        assert!(detail_json["unattributedModelTurns"].is_number());
+        assert!(detail_json.get("model_usage").is_none());
         assert!(detail.turn_count > 0);
         assert!(detail.event_count > 0);
         let peak_turn = detail.peak_turn.expect("fixture has prompt usage");
@@ -3808,6 +3864,43 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn model_usage_is_sorted_and_keeps_unattributed_turns_visible() {
+        let turn = |number: u32, model: Option<&str>| ct_domain::Turn {
+            number: TurnNumber::new(number).unwrap(),
+            timestamp: None,
+            model: model.map(str::to_string),
+            usage: Default::default(),
+            event_indices: Vec::new(),
+            anchor_index: None,
+        };
+        let session = ct_domain::AgentSession::new(
+            ct_domain::SessionId::new("model-usage").unwrap(),
+            AgentKind::Codex,
+            Default::default(),
+            Vec::new(),
+            vec![
+                turn(1, Some("zeta")),
+                turn(2, Some("alpha")),
+                turn(3, None),
+                turn(4, Some("alpha")),
+                turn(5, Some("beta")),
+                turn(6, Some("zeta")),
+            ],
+            Vec::new(),
+        );
+
+        let (usage, unattributed) = model_usage(&session, None);
+        assert_eq!(
+            usage
+                .iter()
+                .map(|entry| (entry.model.as_str(), entry.turns))
+                .collect::<Vec<_>>(),
+            vec![("alpha", 2), ("zeta", 2), ("beta", 1)]
+        );
+        assert_eq!(unattributed, 1);
     }
 
     #[test]

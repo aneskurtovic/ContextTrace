@@ -269,18 +269,28 @@ pub fn load(
     include_content_analysis: bool,
 ) -> PortResult<AgentSession> {
     let mut events: Vec<Event> = Vec::new();
+    let mut event_models: Vec<Option<String>> = Vec::new();
     let mut metadata = SessionMetadata::default();
+    let mut active_model: Option<String> = None;
     let mut unrecognised: BTreeMap<String, u32> = BTreeMap::new();
 
     jsonl::read_lines(path, |record, raw| {
         let event = translate(&record, raw, &mut metadata, include_content_analysis);
+        if matches!(event.kind, EventKind::TurnStarted) {
+            active_model = record
+                .value
+                .as_ref()
+                .and_then(|value| value.get("payload"))
+                .and_then(|payload| str_field(payload, "model"));
+        }
         if matches!(event.kind, EventKind::Unrecognised) {
             *unrecognised.entry(event.raw_type.clone()).or_insert(0) += 1;
         }
         events.push(event);
+        event_models.push(active_model.clone());
     })?;
 
-    let turns = derive_turns(&mut events, &metadata);
+    let turns = derive_turns(&mut events, &event_models);
 
     if metadata.last_activity.is_none() {
         metadata.last_activity = events.iter().rev().find_map(|e| e.timestamp);
@@ -1011,7 +1021,7 @@ fn absorb_session_meta(
 /// A turn is one model request, and Codex marks the end of each with a
 /// `token_count` event carrying `last_token_usage`. So each `token_count`
 /// anchors a turn, and the events since the previous one belong to it.
-fn derive_turns(events: &mut [Event], metadata: &SessionMetadata) -> Vec<Turn> {
+fn derive_turns(events: &mut [Event], event_models: &[Option<String>]) -> Vec<Turn> {
     let mut turns = Vec::new();
     let mut pending: Vec<usize> = Vec::new();
     let mut number = 1u32;
@@ -1032,7 +1042,7 @@ fn derive_turns(events: &mut [Event], metadata: &SessionMetadata) -> Vec<Turn> {
         turns.push(Turn {
             number: turn_number,
             timestamp: events[index].timestamp,
-            model: metadata.model.clone(),
+            model: event_models.get(index).cloned().flatten(),
             usage,
             event_indices: std::mem::take(&mut pending),
             anchor_index: Some(index),
@@ -1648,6 +1658,34 @@ mod tests {
             other => panic!("expected a token report, got {other:?}"),
         }
         assert_eq!(meta.context_window, Some(258_400));
+    }
+
+    #[test]
+    fn model_is_tracked_per_codex_turn() {
+        let path = std::env::temp_dir().join(format!(
+            "ct-codex-models-{}-{}.jsonl",
+            std::process::id(),
+            1
+        ));
+        let session_meta = r#"{"timestamp":"2026-08-17T14:56:40.465Z","type":"session_meta","payload":{"id":"model-session","cwd":"C:\\work"}}"#;
+        let first_context = r#"{"timestamp":"2026-08-17T14:56:41.465Z","type":"turn_context","payload":{"model":"gpt-5.4","cwd":"C:\\work"}}"#;
+        let first_usage = r#"{"timestamp":"2026-08-17T14:56:42.465Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10}}}}"#;
+        let second_context = r#"{"timestamp":"2026-08-17T14:57:41.465Z","type":"turn_context","payload":{"model":"gpt-5.3","cwd":"C:\\work"}}"#;
+        let second_usage = r#"{"timestamp":"2026-08-17T14:57:42.465Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"output_tokens":20}}}}"#;
+        fs::write(
+            &path,
+            format!(
+                "{session_meta}\n{first_context}\n{first_usage}\n{second_context}\n{second_usage}\n"
+            ),
+        )
+        .unwrap();
+
+        let session = load(&path, SessionId::new("model-session").unwrap(), false).unwrap();
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(session.turns().len(), 2);
+        assert_eq!(session.turns()[0].model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(session.turns()[1].model.as_deref(), Some("gpt-5.3"));
     }
 
     // -----------------------------------------------------------------------

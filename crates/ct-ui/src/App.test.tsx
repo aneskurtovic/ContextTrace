@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import * as api from "./api";
 import {
@@ -172,6 +172,36 @@ afterEach(() => {
 afterEach(() => window.localStorage.clear());
 
 describe("desktop accessibility and state handling", () => {
+  it("shows the models used in both Overview and Chat", async () => {
+    const detail = demoDetail(demoSessions[0].id);
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+    mockedApi.inspectSession.mockResolvedValueOnce({
+      ...detail,
+      modelUsage: [
+        { model: "gpt-5.4", turns: 3 },
+        { model: "gpt-5.3", turns: 1 },
+      ],
+      unattributedModelTurns: 1,
+    });
+
+    render(<App />);
+    await openView("Overview");
+
+    const overview = document.getElementById("overview-panel");
+    expect(overview).not.toBeNull();
+    expect(within(overview!).getByRole("heading", { name: "Models used" })).not.toBeNull();
+    expect(within(overview!).getByText("gpt-5.4")).not.toBeNull();
+    expect(within(overview!).getByText("gpt-5.3")).not.toBeNull();
+    expect(within(overview!).getByText("1 turn did not record a model.")).not.toBeNull();
+
+    await openView("Chat");
+    const chat = document.getElementById("chat-panel");
+    expect(chat).not.toBeNull();
+    expect(within(chat!).getByLabelText("Models used")).not.toBeNull();
+    expect(within(chat!).getByText("gpt-5.4")).not.toBeNull();
+    expect(within(chat!).getByText("gpt-5.3")).not.toBeNull();
+  });
+
   it("announces loading and renders a deterministic empty state", async () => {
     const sessions = deferred<SessionPage>();
     mockedApi.searchSessions.mockReturnValueOnce(sessions.promise);

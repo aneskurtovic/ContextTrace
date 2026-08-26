@@ -60,6 +60,12 @@ export interface SessionSummary {
   threadRole: ThreadRole;
 }
 
+/** A model recorded on one or more turns of a session. */
+export interface ModelUsage {
+  model: string;
+  turns: number;
+}
+
 /**
  * How close sessions came to their context window, in bands.
  *
@@ -439,6 +445,9 @@ export interface SessionDetail {
     differsFromSource: boolean | null;
   };
   model: string | null;
+  modelUsage: ModelUsage[];
+  /** Turns whose records did not identify a model. */
+  unattributedModelTurns: number;
   agentVersion: string | null;
   gitBranch: string | null;
   turnCount: number;

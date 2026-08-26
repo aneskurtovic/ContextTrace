@@ -685,6 +685,75 @@ h2 {
   white-space: nowrap;
 }
 
+.models-used-panel {
+  padding: 16px 18px;
+}
+
+.models-used-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.models-used-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.models-used-item code {
+  overflow: hidden;
+  color: var(--text);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.models-used-item span,
+.models-used-note,
+.models-used-empty {
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.models-used-note {
+  margin-top: 9px;
+}
+
+.models-used.compact {
+  margin-top: 6px;
+}
+
+.models-used.compact .models-used-list {
+  gap: 5px;
+  margin-top: 0;
+}
+
+.models-used.compact .models-used-item {
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.models-used.compact .models-used-item code,
+.models-used.compact .models-used-item span,
+.models-used.compact .models-used-note,
+.models-used.compact .models-used-empty {
+  font-size: 9px;
+}
+
+.models-used.compact .models-used-note {
+  margin-top: 4px;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -2766,6 +2835,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
 /* ---- Conversation ---------------------------------------------------- */
 .transcript { display: flex; flex-direction: column; gap: 12px; }
 .transcript-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
+.transcript-title { min-width: 0; }
 .transcript-header h2 { margin: 2px 0 0; font-size: 15px; }
 .transcript-header p { color: var(--text-3); font-size: 10px; white-space: nowrap; }
 .transcript-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }

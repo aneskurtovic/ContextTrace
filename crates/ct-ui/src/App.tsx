@@ -39,6 +39,7 @@ import type {
   InstructionFileReport,
   LifecycleReport,
   MemoryHit,
+  ModelUsage,
   NotificationDelivery,
   NotificationPage,
   NotificationRecord,
@@ -131,6 +132,38 @@ function Metric({
       <span className="metric-label">{label}</span>
       <strong>{value}</strong>
       <span className="metric-note">{note}</span>
+    </div>
+  );
+}
+
+function ModelsUsed({
+  usage,
+  unattributedTurns,
+  compact = false,
+}: {
+  usage: ModelUsage[];
+  unattributedTurns: number;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "models-used compact" : "models-used"} aria-label="Models used">
+      {usage.length ? (
+        <ul className="models-used-list">
+          {usage.map((entry) => (
+            <li className="models-used-item" key={entry.model}>
+              <code>{entry.model}</code>
+              <span>{entry.turns ? `${entry.turns.toLocaleString()} turns` : "session metadata"}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="models-used-empty">Model not recorded</p>
+      )}
+      {unattributedTurns > 0 && (
+        <p className="models-used-note">
+          {unattributedTurns.toLocaleString()} {unattributedTurns === 1 ? "turn did" : "turns did"} not record a model.
+        </p>
+      )}
     </div>
   );
 }
@@ -2742,10 +2775,14 @@ function TranscriptRow({
  */
 function TranscriptPanel({
   session,
+  modelUsage,
+  unattributedModelTurns,
   onTurn,
   highlightLine,
 }: {
   session: SessionSummary;
+  modelUsage: ModelUsage[];
+  unattributedModelTurns: number;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
 }) {
@@ -2810,9 +2847,14 @@ function TranscriptPanel({
   return (
     <section className="transcript" aria-label="Session conversation">
       <header className="transcript-header">
-        <div>
+        <div className="transcript-title">
           <span className="eyebrow">Conversation</span>
           <h2>{sessionName(session)}</h2>
+          <ModelsUsed
+            usage={modelUsage}
+            unattributedTurns={unattributedModelTurns}
+            compact
+          />
         </div>
         {/* Injected content and tool results are entries here, so this count
             is larger than the number of messages exchanged. Saying "entries"
@@ -3011,7 +3053,7 @@ function SessionWorkspace({
             {detail.session.project ?? detail.session.path}
           </p>
           <div className="session-tags">
-            <span>{detail.model ?? "Model not recorded"}</span>
+            <span>default model: {detail.model ?? "not recorded"}</span>
             {detail.gitBranch && <span>branch: {detail.gitBranch}</span>}
             <span>{shortId(detail.session.id)}</span>
             {detail.session.threadRole.kind === "subagent" && (
@@ -3067,6 +3109,24 @@ function SessionWorkspace({
               ? `${detail.unrecognisedEvents} unrecognised`
               : "Every event understood"
           }
+        />
+      </section>
+
+      <section className="panel models-used-panel" aria-labelledby="models-used-heading">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">Session metadata</span>
+            <h2 id="models-used-heading">Models used</h2>
+          </div>
+          <p className="panel-total">
+            {detail.modelUsage.length
+              ? `${detail.modelUsage.length} recorded model${detail.modelUsage.length === 1 ? "" : "s"}`
+              : "Not recorded"}
+          </p>
+        </div>
+        <ModelsUsed
+          usage={detail.modelUsage}
+          unattributedTurns={detail.unattributedModelTurns}
         />
       </section>
 
@@ -3214,7 +3274,15 @@ function SessionWorkspace({
       <div id="chat-panel" className="workspace-section" role="tabpanel" aria-labelledby="chat-tab" hidden={activeView !== "chat"}>
         {/* Mounted only while selected: reading a conversation costs a page of
             seeks per session, and every other tab would otherwise pay for it. */}
-        {activeView === "chat" && <TranscriptPanel session={detail.session} onTurn={onTurn} highlightLine={transcriptHighlightLine} />}
+        {activeView === "chat" && (
+          <TranscriptPanel
+            session={detail.session}
+            modelUsage={detail.modelUsage}
+            unattributedModelTurns={detail.unattributedModelTurns}
+            onTurn={onTurn}
+            highlightLine={transcriptHighlightLine}
+          />
+        )}
       </div>
 
       <div id="evidence-panel" className="workspace-section" role="tabpanel" aria-labelledby="evidence-tab" hidden={activeView !== "evidence"}>
@@ -4773,7 +4841,11 @@ export default function App() {
                 <i>/</i>
                 <span>{shortId(visibleDetail.session.id)}</span>
               </div>
-              <span className="topbar-tag">{visibleDetail.model ?? "model unknown"}</span>
+              <span className="topbar-tag" title="Models used">
+                {visibleDetail.modelUsage.length
+                  ? visibleDetail.modelUsage.map((entry) => entry.model).join(", ")
+                  : visibleDetail.model ?? "model unknown"}
+              </span>
               {visibleDetail.contextWindow && <span className="topbar-tag">{formatTokens(visibleDetail.contextWindow)} window</span>}
             </>
           )}

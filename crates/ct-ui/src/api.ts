@@ -21,6 +21,7 @@ import type {
   ExportOutcome,
   LifecycleReport,
   MemoryHit,
+  ModelUsage,
   NotificationPage,
   NotificationRecord,
   NotificationRuleId,
@@ -150,6 +151,16 @@ function isSession(value: unknown): value is SessionSummary {
     isStringOrNull(value.startedAt) &&
     isStringOrNull(value.lastActivity) &&
     isThreadRole(value.threadRole)
+  );
+}
+
+function isModelUsage(value: unknown): value is ModelUsage {
+  return (
+    isRecord(value) &&
+    typeof value.model === 'string' &&
+    typeof value.turns === 'number' &&
+    Number.isInteger(value.turns) &&
+    value.turns >= 0
   );
 }
 
@@ -368,6 +379,11 @@ function asDetail(value: unknown): SessionDetail {
     !isRecord(value) ||
     !isSession(value.session) ||
     !isStringOrNull(value.model) ||
+    !Array.isArray(value.modelUsage) ||
+    !value.modelUsage.every(isModelUsage) ||
+    typeof value.unattributedModelTurns !== 'number' ||
+    !Number.isInteger(value.unattributedModelTurns) ||
+    value.unattributedModelTurns < 0 ||
     !isStringOrNull(value.agentVersion) ||
     !isStringOrNull(value.gitBranch) ||
     typeof value.turnCount !== "number" ||
