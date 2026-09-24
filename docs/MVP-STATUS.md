@@ -52,7 +52,7 @@ certificate procurement is deferred until the production-release decision.
 | Privacy architecture | No application upload/telemetry code; core-only Tauri capability and local-IPC CSP. Agent directories are read-only. ContextTrace-owned writes go under `%LOCALAPPDATA%\ContextTrace-archive`: explicit archive/export copies, durable notification state, the remembered corpus sweep and exports. The directory is a sibling of the install directory, so uninstall cannot take archived evidence with it; `ct roots` names the one write root, and credential shapes are replaced on ingest unless `--raw` is asked for and recorded. |
 | Desktop acceptance | Real-corpus budgets, race handling, measurement-limit copy, keyboard semantics, loading/empty/error/malformed states and reduced motion pass; installed search and Codex/Claude filtering plus native 1024×680/1440×900 layouts pass against 816 sessions. Context Doctor's new responsive panel passes the same two viewport widths. |
 | Desktop differentiation | On-demand Context Doctor exposes exact repeats, low-entropy ranking and value-free potential-secret locations. Contributor rows open an observed lifecycle with compaction/branch/unknown departure semantics. The desktop also archives a session and verifies a copy, exports NDJSON, compares turns across two sessions, estimates local cost with an explicit forecast, compares recorded instruction files and shows temporal context ghosts. |
-| Distribution | Woodpecker pipeline 44 is green across frontend, Rust format/Clippy/tests/MSRV and Windows smokes. Source is 0.1.1; the only local tag remains `v0.1.0`. The isolated candidate check passed; independent clean-host and downloaded-asset acceptance remain. |
+| Distribution | Woodpecker pipeline 46 is green across frontend, Rust format/Clippy/tests/MSRV and Windows smokes. Source is 0.1.1; the only local tag remains `v0.1.0`. The isolated candidate check passed; independent clean-host and downloaded-asset acceptance remain. |
 | Legal packaging | MIT `LICENSE` is present and included in the CLI archive |
 | crates.io packaging | `cargo package -p ct-cli --no-verify` fails because internal path dependencies have no registry version requirement |
 
@@ -119,4 +119,3 @@ ghost views are implemented. Exact Codex compaction diffs (CT-027) are implement
 - **Distribution may expose platform assumptions.** The NSIS artifact upgrades
   and runs locally on Windows/MSVC, but a separate clean Windows installation
   and downloaded-asset pass have not yet been demonstrated.
-
