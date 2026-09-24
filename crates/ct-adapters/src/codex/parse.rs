@@ -339,6 +339,10 @@ fn translate(
                 replacement_recorded: true,
                 ..Default::default()
             }),
+            ("response_item", Some("compaction"), _) => EventKind::Compacted(CompactionFacts {
+                replacement_recorded: true,
+                ..Default::default()
+            }),
             (
                 "response_item",
                 Some("function_call_output" | "custom_tool_call_output" | "tool_search_output"),
@@ -416,7 +420,13 @@ fn translate(
         // Session-lifecycle records that are written to the log but never sent
         // to the model. Classified rather than left unrecognised so the
         // fidelity score stays a signal about *context* reconstruction.
-        "world_state" | "inter_agent_communication_metadata" => EventKind::SessionEvent {
+        "world_state"
+        | "inter_agent_communication_metadata"
+        // Newer Codex builds persist per-response usage alongside the
+        // long-standing event_msg/token_count telemetry. It is deliberately
+        // non-context metadata; token_count remains the turn boundary because
+        // one usage record can be emitted for each streamed response item.
+        | "token_usage_record" => EventKind::SessionEvent {
             subtype: raw_outer.clone(),
         },
         _ => EventKind::Unrecognised,
@@ -885,6 +895,14 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
             char_len,
             redacted: false,
         },
+        // Newer Codex builds persist the encrypted compaction marker as a
+        // response item. The replacement history is still represented by the
+        // existing `compacted` envelope when available; this marker is enough
+        // to keep the boundary readable when it is the only record present.
+        Some("compaction") => EventKind::Compacted(CompactionFacts {
+            replacement_recorded: payload.get("encrypted_content").is_some(),
+            ..Default::default()
+        }),
         Some("function_call") | Some("custom_tool_call") | Some("tool_search_call") => {
             EventKind::ToolCall {
                 tool: str_field(payload, "name").unwrap_or_else(|| "unknown".into()),
@@ -1863,3 +1881,4 @@ mod tests {
         );
     }
 }
+

@@ -11,9 +11,9 @@ Codex app-server JSONL, and Claude Code `--output-format stream-json` need
 separate adapters and are not included in the persisted-transcript support
 claim.
 
-## What â€œsupportedâ€ means
+## What “supported” means
 
-â€œAll versionsâ€ cannot be certified literally: future producers can add event
+“All versions” cannot be certified literally: future producers can add event
 types or change field meanings. The defensible promise is:
 
 1. preserve backward compatibility for every format family we have retained;
@@ -54,8 +54,24 @@ has a declared capability set. It is a catalog guard, not a substitute for
 semantic tests.
 
 The current fixtures are deliberately synthetic and therefore provide
-**parser-contract evidence only**. Their embedded version strings must not be
-reported as proof that those real releases have been captured or certified.
+**parser-contract evidence only**, except for the explicitly marked
+`reviewed-local-capture` entries. Those entries are minimal, redacted shape
+captures derived from real local JSONL and contain no prompts, source, tool
+output, identifiers or credentials.
+
+The current local evidence is:
+
+- Codex CLI **0.156.1**: a redacted persisted-rollout shape capture covering
+  `token_usage_record` and `response_item/compaction`.
+- Claude Code **2.1.282**: a real persisted `sdk-cli` transcript capture,
+  redacted to its structural shape, including the new queue/title/attachment
+  envelope, `atis-latch`, assistant API-error and `cost-state` records.
+- Claude Code **2.1.268** remains as a historical local capture covering the
+  artifact-ledger sidecars.
+
+The installed version is now backed by a reviewed persisted capture. A release
+may claim a producer version only when a redacted persisted capture or an
+equivalent reviewed local corpus is available.
 
 The adapters are intentionally tolerant of known outer envelopes. For example,
 an unrecognised `event_msg` subtype or Claude `system` subtype may still be

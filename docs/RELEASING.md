@@ -79,6 +79,13 @@ Local acceptance on 2026-08-01 completed in-place upgrade, uninstall/fresh
 reinstall, native layout and real-corpus workflow portions of this sequence.
 It does not replace the separate clean-host and downloaded-asset checks.
 
+On 2026-09-24 an isolated same-machine clean-host simulation passed checksum
+verification, installation of the prior 0.1.0 candidate, in-place upgrade to
+0.1.1, portable desktop startup, and `ct.exe --version` from the extracted CLI
+archive. This is useful release evidence, but it is not a substitute for a
+separate Windows VM or physical host: WebView2, SmartScreen, user-profile
+permissions and a downloaded-artifact path still need that independent pass.
+
 ## Optional Windows code signing
 
 The desktop installer, portable desktop executable and portable `ct.exe` are
@@ -99,3 +106,4 @@ timestamp. No certificate, thumbprint, or signing command is committed. An
 unsigned browser download can show Windows SmartScreen warnings; do not publish
 a release as signed unless the release artifact has been independently verified
 with the chosen signing service.
+

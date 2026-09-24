@@ -327,7 +327,15 @@ fn translate(
                 | "worktree-state"
                 | "bridge-session"
                 | "relocated"
-                | "summary" => EventKind::SessionEvent {
+                | "summary"
+                // Claude Code 2.1.x writes these account, artifact and
+                // session-state records beside the transcript. They are not
+                // model messages and therefore must not lower context
+                // reconstruction fidelity.
+                | "atis-latch"
+                | "cost-state"
+                | "artifact-autoreact-ledger"
+                | "artifact-comment-monitor" => EventKind::SessionEvent {
                     subtype: raw_type.clone(),
                 },
                 _ => EventKind::Unrecognised,
@@ -1437,3 +1445,4 @@ mod tests {
         assert_eq!(content_chars(&blocks), 8);
     }
 }
+

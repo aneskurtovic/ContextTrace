@@ -14,6 +14,15 @@
   },
   "fixtures": [
     {
+      "path": "tests/fixtures/codex/current-0.156.1.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.156.1",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-shape-redacted",
+      "capabilities": ["session-meta", "token-usage-record", "response-compaction", "token-count", "redacted-content"]
+    },
+    {
       "path": "tests/fixtures/codex/rollout.jsonl",
       "agent": "codex",
       "surface": "codex-persisted-rollout",
@@ -48,6 +57,24 @@
       "provenance": "synthetic",
       "verification": "privacy-smoke-only",
       "capabilities": ["session-meta", "responses-items", "credential-shaped-content", "token-count"]
+    },
+    {
+      "path": "tests/fixtures/claude_code/current-2.1.282.jsonl",
+      "agent": "claude-code",
+      "surface": "claude-persisted-transcript",
+      "producer_version": "2.1.282",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-capture-redacted",
+      "capabilities": ["sdk-cli-envelope", "user-assistant-dag", "sidecar-state", "atis-latch", "cost-state", "redacted-content"]
+    },
+    {
+      "path": "tests/fixtures/claude_code/current-2.1.268.jsonl",
+      "agent": "claude-code",
+      "surface": "claude-persisted-transcript",
+      "producer_version": "2.1.268",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-shape-redacted",
+      "capabilities": ["user-assistant-dag", "sidecar-state", "cost-state", "artifact-ledger", "redacted-content"]
     },
     {
       "path": "tests/fixtures/claude_code/session.jsonl",

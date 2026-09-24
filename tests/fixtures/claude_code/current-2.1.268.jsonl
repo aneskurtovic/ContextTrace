@@ -1,0 +1,8 @@
+{"parentUuid":null,"isSidechain":false,"type":"user","uuid":"00000000-0000-0000-0000-000000000001","timestamp":"2026-09-12T03:00:00.000Z","userType":"external","entrypoint":"cli","cwd":"C:\\redacted\\contexttrace","sessionId":"00000000-0000-0000-0000-000000000002","version":"2.1.268","gitBranch":"redacted","message":{"role":"user","content":"[REDACTED]"}}
+{"type":"mode","mode":"default","sessionId":"00000000-0000-0000-0000-000000000002"}
+{"type":"atis-latch","atis":{},"sessionId":"00000000-0000-0000-0000-000000000002"}
+{"parentUuid":"00000000-0000-0000-0000-000000000001","isSidechain":false,"type":"assistant","uuid":"00000000-0000-0000-0000-000000000003","timestamp":"2026-09-12T03:00:01.000Z","requestId":"redacted-request","userType":"external","entrypoint":"cli","cwd":"C:\\redacted\\contexttrace","sessionId":"00000000-0000-0000-0000-000000000002","version":"2.1.268","message":{"id":"redacted-message","model":"redacted-model","role":"assistant","content":[{"type":"text","text":"[REDACTED]"}],"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}
+{"type":"cost-state","sessionId":"00000000-0000-0000-0000-000000000002","totalCostUSD":0,"totalAPIDuration":0,"totalAPIDurationWithoutRetries":0,"totalToolDuration":0,"totalLinesAdded":0,"totalLinesRemoved":0,"totalDuration":0,"startTime":0,"modelUsage":{},"hasUnknownModelCost":false}
+{"type":"artifact-autoreact-ledger","v":1,"sessionId":"00000000-0000-0000-0000-000000000002","accountUuid":"redacted-account","artifacts":{}}
+{"type":"artifact-comment-monitor","v":1,"sessionId":"00000000-0000-0000-0000-000000000002","artifacts":{}}
+
