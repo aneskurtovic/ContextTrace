@@ -90,8 +90,9 @@ const SHA256_INITIAL_STATE: [u32; 8] = [
 
 fn sha256_compress(state: &mut [u32; 8], block: &[u8], k: &[u32; 64]) {
     let mut w = [0u32; 64];
-    for (i, bytes) in block.chunks_exact(4).take(16).enumerate() {
-        w[i] = u32::from_be_bytes(bytes.try_into().expect("four-byte chunk"));
+    let (words, _) = block.as_chunks::<4>();
+    for (i, bytes) in words.iter().take(16).enumerate() {
+        w[i] = u32::from_be_bytes(*bytes);
     }
     for i in 16..64 {
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -172,12 +173,11 @@ impl Sha256 {
             }
         }
 
-        let mut chunks = bytes.chunks_exact(64);
-        for block in &mut chunks {
+        let (chunks, remainder) = bytes.as_chunks::<64>();
+        for block in chunks {
             sha256_compress(&mut self.state, block, &SHA256_K);
         }
 
-        let remainder = chunks.remainder();
         if !remainder.is_empty() {
             self.buffer[..remainder.len()].copy_from_slice(remainder);
             self.buffer_len = remainder.len();
@@ -191,13 +191,15 @@ impl Sha256 {
         tail[self.buffer_len] = 0x80;
         let padded_len = if self.buffer_len < 56 { 64 } else { 128 };
         tail[padded_len - 8..padded_len].copy_from_slice(&bit_len);
-        for block in tail[..padded_len].chunks_exact(64) {
+        let (blocks, _) = tail[..padded_len].as_chunks::<64>();
+        for block in blocks {
             sha256_compress(&mut self.state, block, &SHA256_K);
         }
 
         let mut digest = [0u8; 32];
-        for (bytes, word) in digest.chunks_exact_mut(4).zip(self.state) {
-            bytes.copy_from_slice(&word.to_be_bytes());
+        let (words, _) = digest.as_chunks_mut::<4>();
+        for (bytes, word) in words.iter_mut().zip(self.state) {
+            *bytes = word.to_be_bytes();
         }
         digest
     }
@@ -302,3 +304,4 @@ mod tests {
         );
     }
 }
+

@@ -62,6 +62,15 @@ jobs:
             throw "All workspace packages must have version '$version' before this release is packaged; found: $($workspaceVersions -join ', ')."
           }
 
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/check-fixture-manifest.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Fixture compatibility manifest validation failed with exit code $LASTEXITCODE."
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/test-fixture-manifest.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Fixture compatibility regression validation failed with exit code $LASTEXITCODE."
+          }
+
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "ASSET_PREFIX=ContextTrace-$version-windows-x64" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -231,3 +240,4 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release-assets/*
+

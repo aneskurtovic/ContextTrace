@@ -36,6 +36,11 @@ if ($workspaceVersions.Count -ne 1 -or $workspaceVersions[0] -ne $version) {
     throw "All workspace packages must have version '$version'; found: $($workspaceVersions -join ', ')."
 }
 
+& powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/check-fixture-manifest.ps1
+if ($LASTEXITCODE -ne 0) { throw "Fixture compatibility manifest validation failed with exit code $LASTEXITCODE." }
+& powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/test-fixture-manifest.ps1
+if ($LASTEXITCODE -ne 0) { throw "Fixture compatibility regression validation failed with exit code $LASTEXITCODE." }
+
 $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
 $stageRoot = Join-Path $cacheRoot 'release-assets'
 $publishedStage = Join-Path $stageRoot $tag
@@ -116,3 +121,4 @@ Move-Item -LiteralPath $stage -Destination $publishedStage
 
 Write-Host "Release assets staged at $publishedStage"
 Get-ChildItem -LiteralPath $publishedStage -File | Select-Object Name, Length | Format-Table -AutoSize
+

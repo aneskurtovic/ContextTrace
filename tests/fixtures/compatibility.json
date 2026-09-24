@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "last_reviewed": "2026-09-24",
+  "fixtures_are": "redacted synthetic parser contracts unless provenance says otherwise",
+  "surfaces": {
+    "codex-persisted-rollout": {
+      "agent": "codex",
+      "description": "Codex CLI persisted rollout JSONL under the sessions or archived_sessions roots"
+    },
+    "claude-persisted-transcript": {
+      "agent": "claude-code",
+      "description": "Claude Code persisted transcript JSONL under the projects root"
+    }
+  },
+  "fixtures": [
+    {
+      "path": "tests/fixtures/codex/rollout.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.9.0",
+      "provenance": "synthetic",
+      "verification": "parser-contract-only",
+      "capabilities": ["session-meta", "turn-context", "responses-items", "token-count", "compaction", "unknown-event"]
+    },
+    {
+      "path": "tests/fixtures/codex/subagent-root.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.9.0",
+      "provenance": "synthetic",
+      "verification": "parser-contract-only",
+      "capabilities": ["session-meta", "subagent-root", "turn-context", "token-count"]
+    },
+    {
+      "path": "tests/fixtures/codex/subagent-child.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.9.0",
+      "provenance": "synthetic",
+      "verification": "parser-contract-only",
+      "capabilities": ["session-meta", "subagent-child", "turn-context", "token-count"]
+    },
+    {
+      "path": "tests/fixtures/secrets/codex/rollout.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.9.0",
+      "provenance": "synthetic",
+      "verification": "privacy-smoke-only",
+      "capabilities": ["session-meta", "responses-items", "credential-shaped-content", "token-count"]
+    },
+    {
+      "path": "tests/fixtures/claude_code/session.jsonl",
+      "agent": "claude-code",
+      "surface": "claude-persisted-transcript",
+      "producer_version": "2.1.199",
+      "provenance": "synthetic",
+      "verification": "parser-contract-only",
+      "capabilities": ["user-assistant-dag", "attachments", "tool-use", "usage", "iterations", "compaction", "unknown-event"]
+    }
+  ]
+}
+
