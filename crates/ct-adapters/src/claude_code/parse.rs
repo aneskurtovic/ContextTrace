@@ -1445,4 +1445,3 @@ mod tests {
         assert_eq!(content_chars(&blocks), 8);
     }
 }
-
