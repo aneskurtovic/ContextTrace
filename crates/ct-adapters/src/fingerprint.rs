@@ -13,7 +13,6 @@ use serde_json::Value;
 pub(crate) fn text(value: &str) -> ContentMeasurement {
     bytes(value.as_bytes())
 }
-
 /// Measure a JSON value in the representation the parser received.
 ///
 /// `serde_json`'s `preserve_order` feature is enabled workspace-wide, so object
