@@ -1,10 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import UpdaterNotice from "./UpdaterNotice";
 import "./styles.css";
+import "./updater.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />
+    <UpdaterNotice />
   </StrictMode>,
 );

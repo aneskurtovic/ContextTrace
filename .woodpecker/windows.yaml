@@ -31,10 +31,11 @@
 # twice back to back on the owner's actual desktop, delaying anything else
 # queued on that machine.
 #
-# So: every PR, and `main` after merge. A push to a topic branch with no PR open
-# is not covered here; open the PR, or trigger this workflow manually.
+# This backend executes directly on the owner's persistent Windows host. With
+# a public repository, untrusted pull-request code must never run here. Linux
+# workflows validate pull requests; Windows validation runs after merge on main
+# or by an explicit manual trigger.
 when:
-  - event: pull_request
   - event: [push, manual]
     branch: main
 

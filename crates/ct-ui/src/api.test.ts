@@ -785,9 +785,9 @@ describe("desktop IPC response validation", () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     invoke.mockResolvedValue({
       id: "codex:42",
-      label: "Read BACKLOG.md",
+      label: "Read README.md",
       category: "File contents",
-      source: "file: BACKLOG.md",
+      source: "file: README.md",
       firstPresent: 3,
       lastPresent: 8,
       turnsPresent: 6,

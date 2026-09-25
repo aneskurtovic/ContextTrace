@@ -90,47 +90,31 @@ model did not need.
 | `ct-adapters` — Codex ACL, Claude Code ACL, tokenizers, raw source, tool targets | Implemented |
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
-| `ct-cli` — the twenty-three commands in the [README](../README.md#commands) | Implemented |
-| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Desktop MVP accepted: real-corpus installed search/filtering and native 1024×680/1440×900 checks; new panels pass responsive acceptance |
+| `ct-cli` — the commands listed in the [README](../README.md#commands) | Implemented |
+| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented; 0.1.2 clean-host install/update acceptance remains a release gate |
 | Standalone JSONL fixture files | Implemented |
-| Reproducible CI, installable release artifacts, release documentation | Windows CI is green; unsigned NSIS/CLI/checksum draft packaging implemented |
+| Reproducible CI, installable release artifacts, release documentation | CI and packaging workflows are configured; 0.1.2 artifacts are not yet published |
 | Session metadata search | Implemented server-side with explicit paging |
 | SQLite index | Deferred until measured desktop performance requires it |
 
-`cargo fmt --check` clean, `clippy` clean at zero warnings, the React
-production bundle and Tauri command bridge build, the release CLI answers
-`ct --help`, and `ct doctor --dir` recognises every event type across the
-current local corpus. Three [Woodpecker](CI.md) workflows enforce these gates:
-formatting, lint, tests and the 1.88 MSRV check run on Linux, and a Windows
-agent covers what only Windows proves — the Tauri desktop build, `ct-ui`'s own
-Rust, and the CLI fixture smokes. Work is queued in
-[BACKLOG.md](../BACKLOG.md), which is the authoritative list. [IDEAS.md](../IDEAS.md) is an idea pool and nothing in it
-is scheduled until it is pulled in there with a `CT-nnn` id.
+Formatting, Rust lint/tests, frontend tests/build and the fixture compatibility
+validators are the repeatable local gates. CI runs portable checks on Linux and
+the native Tauri/MSVC build plus Windows-specific CLI smokes on Windows. See
+[CI](CI.md) for the current commands and the limits of what those checks prove.
+The [roadmap](ROADMAP.md) records non-committal future areas; current release
+gates are in [MVP status](MVP-STATUS.md).
 
 ## Fixtures
 
-Committed fixtures are hand-authored synthetic sessions, never captured, each
-encoding one way the real formats mislead a reader: a rewound branch that must
-not appear in a reconstruction, a compaction boundary the walk must stop at, one
-response split across lines under a shared `requestId`, a turn whose cache
-figures are the sum of several API calls, a thinking block stripped to its
-signature, a tool result whose full output went to disk instead of the model, and
-an event type from the future.
+The fixture set combines synthetic parser contracts with explicitly catalogued,
+minimal redacted captures. The compatibility manifest records each fixture's
+producer version, provenance and semantic capabilities. It contains no
+unredacted prompts, source, tool output, identifiers or credentials.
 
 ## Testing approach
 
-The fixtures also cover each event shape found in the format probe, including a
-deliberate unknown-event-type case asserting graceful degradation. Real session
-logs are never committed; they are used only as a local, gitignored corpus for a
-zero-panic smoke test that also reports a histogram of unrecognised event
-types — which is how a format change upstream surfaces as a count rather than a
-crash.
-
-That histogram has already paid for itself twice. It auto-detected five
-previously unseen event types (`relocated`, `file-history-delta`,
-`custom-title`, `frame-link`, `inter_agent_communication_metadata`) as counts
-rather than crashes. And the accuracy defects in [formats](./formats.md) — the
-multi-call sums, the redacted thinking, the JSON-escaping inflation — were all
-found by measuring the corpus against its own reported usage. None of them
-would have failed a unit test written from the format alone, which is the
-argument for keeping a real-data check in the loop.
+Fixtures include a deliberate unknown-event case to assert graceful
+degradation. Private session corpora are never committed; optional local
+format-drift sweeps run against user-selected data and are not part of the CI
+fixture corpus. The fixture catalog is the reproducible public compatibility
+evidence; it is not an automatic capture of upstream agent releases.

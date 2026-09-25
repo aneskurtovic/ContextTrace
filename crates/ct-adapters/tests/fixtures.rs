@@ -72,6 +72,41 @@ fn codex() -> (CodexAdapter, AgentSession) {
 }
 
 #[test]
+fn codex_0_156_1_capture_classifies_usage_and_opaque_compaction() {
+    let adapter = CodexAdapter::new();
+    let d = descriptor(
+        fixture("codex", "current-0.156.1.jsonl"),
+        AgentKind::Codex,
+        "fixture-codex-0-156-1",
+    );
+    let session = adapter
+        .load(&d)
+        .expect("the current Codex capture must parse");
+
+    assert_eq!(session.metadata().agent_version.as_deref(), Some("0.156.1"));
+    assert_eq!(session.unrecognised_total(), 0);
+    assert!(session.events().iter().any(|event| {
+        matches!(
+            &event.kind,
+            EventKind::SessionEvent { subtype } if subtype == "token_usage_record"
+        )
+    }));
+
+    let compaction = session
+        .events()
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::Compacted(facts) => Some(facts),
+            _ => None,
+        })
+        .expect("the encrypted response-item compaction is retained");
+    assert!(
+        !compaction.replacement_recorded,
+        "encrypted_content is not verbatim replacement history"
+    );
+}
+
+#[test]
 fn content_measurements_are_opt_in_to_the_analyses_that_use_them() {
     let adapter = CodexAdapter::new();
     let d = descriptor(
@@ -104,6 +139,72 @@ fn content_measurements_are_opt_in_to_the_analyses_that_use_them() {
 // ---------------------------------------------------------------------------
 // Claude Code
 // ---------------------------------------------------------------------------
+
+#[test]
+fn claude_2_1_268_capture_classifies_current_sidecar_state() {
+    let adapter = ClaudeCodeAdapter::new();
+    let d = descriptor(
+        fixture("claude_code", "current-2.1.268.jsonl"),
+        AgentKind::ClaudeCode,
+        "fixture-claude-2-1-268",
+    );
+    let session = adapter
+        .load(&d)
+        .expect("the current Claude capture must parse");
+
+    assert_eq!(session.metadata().agent_version.as_deref(), Some("2.1.268"));
+    assert_eq!(session.unrecognised_total(), 0);
+    for subtype in [
+        "atis-latch",
+        "cost-state",
+        "artifact-autoreact-ledger",
+        "artifact-comment-monitor",
+    ] {
+        assert!(
+            session.events().iter().any(|event| {
+                matches!(
+                    &event.kind,
+                    EventKind::SessionEvent { subtype: actual } if actual == subtype
+                )
+            }),
+            "sidecar type {subtype} must remain classified"
+        );
+    }
+}
+
+#[test]
+fn claude_2_1_282_capture_keeps_sdk_injections_and_api_error_records() {
+    let adapter = ClaudeCodeAdapter::new();
+    let d = descriptor(
+        fixture("claude_code", "current-2.1.282.jsonl"),
+        AgentKind::ClaudeCode,
+        "fixture-claude-2-1-282",
+    );
+    let session = adapter
+        .load(&d)
+        .expect("the current Claude capture must parse");
+
+    assert_eq!(session.metadata().agent_version.as_deref(), Some("2.1.282"));
+    assert_eq!(session.unrecognised_total(), 0);
+    for mechanism in ["nested_memory", "deferred_tools_delta"] {
+        assert!(
+            session.events().iter().any(|event| {
+                matches!(
+                    &event.kind,
+                    EventKind::ContextInjection { mechanism: actual, .. } if actual == mechanism
+                )
+            }),
+            "injected context {mechanism} must remain visible"
+        );
+    }
+    assert!(
+        session.events().iter().any(|event| {
+            event.raw_type == "assistant"
+                && matches!(&event.kind, EventKind::Message { char_len: 0, .. })
+        }),
+        "an empty API-error assistant record must not become an unknown event"
+    );
+}
 
 #[test]
 fn an_unknown_event_type_is_counted_rather_than_fatal() {

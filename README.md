@@ -3,22 +3,21 @@
 **DevTools for AI coding-agent context.**
 
 ContextTrace is a local-first tool for inspecting what an AI coding agent
-actually had in its context window, turn by turn â€” what was in it, where
+actually had in its context window, turn by turn — what was in it, where
 each piece came from, how large it was, and how it evolved during the
 session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: 0.1 is not released.** The CLI is complete, and the desktop app
-> runs the same discovery-to-diagnosis workflow through a native Windows UI.
-> The current build has been exercised against a broad local corpus and
-> recognises all event shapes covered by the committed fixtures. See [MVP
-> status](docs/MVP-STATUS.md) for the evidence, gates and distance to a public
-> release.
+> **Status: source is public; 0.1.2 is not yet a published binary release.**
+> The CLI and Windows desktop app implement the discovery-to-diagnosis
+> workflow. Compatibility is limited to the persisted JSONL formats and
+> producer versions covered by committed fixtures. See [MVP status](docs/MVP-STATUS.md)
+> for current verification and release gates.
 
-![ContextTrace desktop app â€” redesigned dark overview with prompt growth and live context monitoring](docs/images/desktop-overview-dark.png)
+![ContextTrace desktop app — redesigned dark overview with prompt growth and live context monitoring](docs/images/desktop-overview-dark.png)
 
-![ContextTrace desktop app â€” redesigned light overview](docs/images/desktop-overview-light.png)
+![ContextTrace desktop app — redesigned light overview](docs/images/desktop-overview-light.png)
 
 *The redesigned desktop app provides the same local-first measurements in
 dark and light themes, with overview, turns, diff and evidence views.*
@@ -27,8 +26,8 @@ dark and light themes, with overview, turns, diff and evidence views.*
 
 It is not a chat-history viewer. The workflow it exists for is:
 
-> *Why did the agent do that?* â†’ inspect the turn â†’ see the context â†’ trace
-> each item to its source â†’ find the 38k-token garbage tool result â†’
+> *Why did the agent do that?* → inspect the turn → see the context → trace
+> each item to its source → find the 38k-token garbage tool result →
 > understand the behaviour.
 
 Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
@@ -47,7 +46,7 @@ What runs today:
 | Named sessions | Which session is which, from the log's own title or first prompt | CLI + desktop |
 | Context composition | What filled a turn's context window, by category and confidence | CLI + desktop |
 | Largest contributors | Which items are biggest, ranked and named by what they acted on | CLI + desktop |
-| Item lifecycle tracing | When an item entered context, and when â€” or why â€” it left | CLI + desktop |
+| Item lifecycle tracing | When an item entered context, and when — or why — it left | CLI + desktop |
 | Codex compaction diffs | Exactly what a compaction dropped, kept or replaced | CLI + desktop |
 | Turn and session comparison | What changed between two turns, with measurement skew bounded | CLI + desktop |
 | Unlogged context | The prompt an agent never wrote down, and when its harness changed | CLI + desktop |
@@ -71,13 +70,12 @@ artifacts the release workflow packages.
 ### Prerequisites
 
 - **Rust 1.88+.** `rust-toolchain.toml` selects the channel and adds
-  `rustfmt` and `clippy`. On Windows the MSVC host toolchain â€” Visual
-  Studio's "Desktop development with C++" workload â€” is required, because
+  `rustfmt` and `clippy`. On Windows the MSVC host toolchain — Visual
+  Studio's "Desktop development with C++" workload — is required, because
   without it nothing links.
 - **Node.js 22**, for the desktop app only. Node 18 runs `npm ci`
   successfully and then silently omits an optional native binding, so the
-  failure surfaces much later as `Cannot find native binding`; see CT-061 in
-  [BACKLOG.md](BACKLOG.md).
+  failure surfaces much later as `Cannot find native binding`.
 
 ### The `ct` CLI
 
@@ -101,11 +99,9 @@ npm ci
 npm run tauri build
 ```
 
-Budget time for the first run: a cold release build of the workspace plus
-the native webview stack took **39 minutes** on a recent laptop, most of it
-silent. The bundling step also downloads its own NSIS toolchain from GitHub
-the first time, so that step needs network access even though nothing it
-builds does.
+Budget extra time for the first run: a cold release build compiles the
+workspace and native webview stack. The bundling step also downloads its own
+NSIS toolchain from GitHub the first time, so that step needs network access.
 
 That writes an installer to
 `target\release\bundle\nsis\ContextTrace_<version>_x64-setup.exe`. Running
@@ -114,7 +110,7 @@ never asks for administrator rights. Upgrade by running a newer installer
 over the old one; remove it through Windows "Installed apps". The build is
 unsigned, so expect a SmartScreen warning on first launch.
 
-To run the app without installing it, use `npm run tauri dev` instead â€”
+To run the app without installing it, use `npm run tauri dev` instead —
 that is the native app against the real read-only local adapters.
 
 ### From a release candidate
@@ -146,7 +142,7 @@ extract it and run `.\ct.exe --help`.
 install directory rather than a folder inside it: for sessions whose logs are
 already gone, those copies are the only remaining evidence, and an uninstaller
 must not be able to take them with it. The consequence is that they outlive the
-app, so delete that directory yourself if you want them gone â€” and note it holds
+app, so delete that directory yourself if you want them gone — and note it holds
 session content, including credentials if anything was archived with `--raw`.
 Nothing else survives removal.
 
@@ -157,24 +153,24 @@ SmartScreen to warn about the unsigned installer. See
 
 ## Quickstart
 
-The following is illustrative output. Your own `sessions`/`context` output
-will show your local sessions and paths instead.
+The following is synthetic illustrative output. The IDs, paths, dates, model
+label and measurements are placeholders; they are not copied from a user's
+session corpus. Your output contains your own local session metadata.
 
 ```
 > ct roots
 ContextTrace reads these local directories (read-only):
 
   claude-code
-    C:\Users\you\.claude\projects
+  C:\Users\you\.claude\projects
   codex
-    C:\Users\you\.codex\sessions
-    C:\Users\you\.codex\archived_sessions
+  C:\Users\you\.codex\sessions
 
 Nothing is written to them.
 
 It writes to one ContextTrace-owned directory. Archive/export copies are
 explicit; the desktop also persists notification state and the remembered
-corpus sweep there:
+format sweep there:
 
   C:\Users\you\AppData\Local\ContextTrace-archive
 
@@ -182,49 +178,35 @@ Nothing leaves this machine either way.
 
 > ct sessions --limit 10
 ID          AGENT         LAST ACTIVITY            SIZE  PROJECT
-agent-a6    claude-code   2026-08-01 19:43       1.0 MB  C:\work\ContextTrace
-03b48276    claude-code   2026-08-01 19:43       3.2 MB  C:\work\ContextTrace
-agent-ae    claude-code   2026-08-01 19:42     405.0 KB  C:\work\ContextTrace
-... 7 more of the 10 shown, same columns ...
+claude-demo claude-code   2026-01-01 12:00      12.0 KB  C:\work\example-project
+codex-demo  codex         2026-01-01 11:30       8.0 KB  C:\work\example-project
 
-10 session(s). Inspect one with: ct inspect <id>
+2 session(s). Inspect one with: ct inspect <id>
 
-> ct context 03b48276
-Context at turn 101 - 216,303 [observed]
-Model      claude-opus-5
+> ct context claude-demo
+Context at turn 3 - 12,000 [observed]
+Model      example-model
 Estimator  heuristic:chars/2.4
 
-  Tool outputs              173,749   80.3%  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆÂ·Â·Â·Â·  [estimated]
-  Tool calls                 21,419    9.9%  â–ˆâ–ˆÂ·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·  [estimated]
-  Reasoning                   7,326    3.4%  â–ˆÂ·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·Â·  [estimated]
-  ... 8 more categories; exact-duplicate and low-information sections
-      also print by default and are omitted here for length ...
+  Tool outputs                5,200  43.3%  █████████···········  [estimated]
+  Conversation                3,100  25.8%  █████···············  [estimated]
+  Tool calls                  1,200  10.0%  ██··················  [estimated]
 
-  Ratio      2.40 characters per token, measured from this session's own
-             usage across 76 turn pairs (spread 2.9x).
-  Unlogged   ~22,754 tokens the agent never wrote down -- its system prompt
-             and tool JSON schemas. Measured, not assumed.
-  The per-turn ratios varied widely, so this session mixes content that
-  tokenizes very differently. The ratio is a middle value, not a constant.
+  Ratio      2.40 characters per token, fitted from this session's turns.
+  Unlogged   ~2,500 tokens not attributed to reconstructed items.
 
-  Calibration: estimates scaled by 0.34 to meet the observed total of 216,303.
-  The estimator ran 192% high, so the scaled figures consumed the whole
-  budget and no residual remains. That does NOT mean there is no hidden
-  context -- the system prompt and tool schemas are still in the total, and their
-  share has been absorbed into the categories above. Treat the breakdown
-  as proportions, not as an inventory.
-
-367 context items. Largest contributors: ct largest <id> --turn 101
+Illustrative only. Actual output labels estimate confidence and measurement
+limits for the selected session.
 ```
 
-The `Ratio` and `Unlogged` lines are the tool's central claim â€” that the
+The `Ratio` and `Unlogged` lines are the tool's central claim — that the
 gap between what an agent logs and what it reports is measured, not
-assumed. See [methodology](docs/methodology.md#the-ratio-is-measured-not-assumed)
+assumed. See [methodology](docs/methodology.md#per-session-calibration)
 for how the ratio is derived from a session's own turn-to-turn deltas.
 
 ## Commands
 
-`ct context` and `ct largest` accept the same shared filter flags â€” a
+`ct context` and `ct largest` accept the same shared filter flags — a
 reference summary below, not captured program output:
 
 ```
@@ -250,7 +232,7 @@ filters: --source <kind[:text]>  --category <name>
 | `ct compactions <id>` | [What a Codex compaction dropped, kept or replaced](docs/guide.md#exact-codex-compaction-diffs-without-printing-prompt-content) |
 | `ct context <id>` | What filled a turn's context window, by category and confidence |
 | `ct largest <id>` | [The biggest contributors to a turn, narrowed by provenance or size](docs/guide.md#filtering-without-lying-about-the-whole) |
-| `ct trace <id>` | [When an item entered context, and when â€” or why â€” it left](docs/guide.md#one-items-lifecycle-and-the-difference-between-gone-and-evicted) |
+| `ct trace <id>` | [When an item entered context, and when — or why — it left](docs/guide.md#one-items-lifecycle-and-the-difference-between-gone-and-evicted) |
 | `ct residual <id>` | The context the agent never wrote down, turn by turn |
 | `ct diff` | [What changed between two turns or two sessions](docs/guide.md#comparing-two-turns-without-comparing-two-rulers) |
 | `ct growth <id>` | [The whole session's prompt size over time](docs/guide.md#the-whole-session-at-once-using-only-what-the-agent-reported) |
@@ -262,17 +244,17 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-Next up: an installable 0.1.0 â€” clean-machine install/upgrade validation and a
-release-candidate soak (CT-043).
+Next up: publish the updater-enabled 0.1.2 Windows candidate after signed,
+downloaded-artifact and clean-host acceptance.
 
 Configurable local pricing/forecasting, instruction-file comparisons and
 temporal ghost views are available in the CLI, MCP surface and desktop app.
 
 Deliberately deferred: a persistent SQLite index, until measured
-performance requires one; crates.io publication; Windows code signing,
-until the production-release decision.
+performance requires one; crates.io publication; an Authenticode signing
+certificate until the production-release decision.
 
-No dates, no promises. [BACKLOG.md](BACKLOG.md) is the authoritative list.
+No dates or promises. See the [public roadmap](docs/ROADMAP.md).
 
 ### Local pricing overrides
 
@@ -305,30 +287,29 @@ are not observed.
 ## How to read the numbers
 
 Percentages in `ct context` and `ct largest` are shares of an **observed**
-total â€” the agent's own reported prompt size â€” so they are trustworthy on
+total — the agent's own reported prompt size — so they are trustworthy on
 their own. Individual Claude Code item sizes are **calibrated estimates**:
 Anthropic ships no local tokenizer, so each session's characters-per-token
 ratio is fitted from its own turn-to-turn deltas, and `ct context` prints
 both the derived ratio and the scale factor it applied. Codex items can be
 measured exactly with `--exact`, but even that covers only the items whose
-content is plain text â€” encrypted, structured or image content keeps its
+content is plain text — encrypted, structured or image content keeps its
 estimate, and the header says how many did.
 
 Two limitations are stated by the tool rather than hidden by it:
 
 - On sessions where reconstruction over-counts logged content relative to
   the reported prompt, the unlogged remainder cannot be separated from the
-  over-count â€” `ct context` says so instead of printing a zero residual
+  over-count — `ct context` says so instead of printing a zero residual
   that would imply a complete inventory.
 - `ct doctor` reports turns whose figures came from several API calls
   folded into one record, and reasoning events whose text the log redacted
-  â€” both cases where a number is weaker than its presentation suggests.
+  — both cases where a number is weaker than its presentation suggests.
 
-**The main known gap** is that over-counting: on roughly one Claude Code
-session in seven, the reconstruction accounts for more content than the
-prompt held, and the cause is not established. ContextTrace detects the
-discrepancy and reports it rather than modelling a behaviour it cannot
-observe.
+**The main known gap** is that reconstruction can account for more content
+than the reported prompt held, and the cause may not be recorded. ContextTrace
+detects the discrepancy and reports it rather than modelling a behaviour it
+cannot observe.
 
 See [methodology](docs/methodology.md) for how the ratio is derived, what
 `--exact` does and does not cover, and the evidence behind each claim above.
@@ -344,7 +325,7 @@ the machine.
 **Read-only.** Agent directories are inputs. ContextTrace never writes to them.
 
 **One ContextTrace-owned directory.** `ct archive <id>` keeps a copy of a session so
-it outlives its log â€” a log that is rotated, pruned, or lost with a wiped home
+it outlives its log — a log that is rotated, pruned, or lost with a wiped home
 directory takes its evidence with it, and nothing can reconstruct a file that is
 gone. Copies go to a ContextTrace-owned directory, never back to an agent's, and
 `ct roots` prints its exact path whether or not anything has been archived yet.
@@ -364,7 +345,7 @@ of the two was used is recorded against each session. Most sessions contain no
 credentials at all, and for those the copy is byte-identical to the log.
 
 The desktop's export redacts by default too, which `ct export` does not. The
-CLI writes to stdout â€” you choose the destination in the same breath as the
+CLI writes to stdout — you choose the destination in the same breath as the
 command, and often it is a pipe that never becomes a file. The desktop writes a
 durable file into that shared directory, so the argument that made the archive
 redact by default applies to it unchanged.
@@ -373,30 +354,31 @@ redact by default applies to it unchanged.
 
 | Doc | What it answers |
 |---|---|
-| [Guide](docs/guide.md) | Worked examples, one per command, with real output |
+| [Guide](docs/guide.md) | Common workflows with fictional example IDs and values |
 | [Formats](docs/formats.md) | What Codex CLI and Claude Code actually write to disk |
+| [Compatibility](docs/FORMAT-COMPATIBILITY.md) | Versioned format evidence and the fixture update process |
 | [Methodology](docs/methodology.md) | How two agents' logs become comparable numbers, and where the tool refuses to answer |
 | [Architecture](docs/architecture.md) | Crate layout, the invariants the type system enforces, fixtures and testing |
 | [MVP status](docs/MVP-STATUS.md) | What's implemented, what's gated, and the release plan |
 | [Release procedure](docs/RELEASING.md) | How Windows release candidates are built, checked and optionally signed |
 | [Continuous integration](docs/CI.md) | What runs on Linux, what needs real Windows, and what a green pipeline still does not prove |
+| [Updater](docs/UPDATER.md) | Desktop update behavior and release-feed requirements |
+| [Documentation index](docs/README.md) | Public documentation map |
 | [Notifications](docs/notifications.md) | The twelve rules, how delivery is decided, and why a delivered toast is not assumed |
 
 ## Contributing
 
-[BACKLOG.md](BACKLOG.md) is the authoritative work list; [IDEAS.md](IDEAS.md)
-is an unscheduled pool â€” nothing in it is planned until it is pulled into
-BACKLOG.md with a `CT-nnn` id.
+The [roadmap](docs/ROADMAP.md) lists areas of interest, not commitments.
+Project-specific contributor guidance is in [CLAUDE.md](CLAUDE.md).
 
 These are the gates [CI](docs/CI.md) enforces. Most of them run on Linux, and
 need no Windows to reproduce:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --workspace --exclude ct-ui --all-targets -- -D warnings
-cargo test --workspace --exclude ct-ui --all-targets
-cargo +1.88.0 check --workspace --exclude ct-ui --all-targets
-
+cargo clippy --workspace --exclude ct-ui --all-targets --locked -- -D warnings
+cargo test --workspace --exclude ct-ui --all-targets --locked
+cargo +1.88.0 check --workspace --exclude ct-ui --all-targets --locked
 cd crates/ct-ui
 npm ci
 npm test
@@ -408,10 +390,14 @@ application and the smokes assert on Windows path handling and on the bytes
 the archive writes:
 
 ```powershell
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
-cargo build --release -p ct-cli
-cd crates/ct-ui; npm ci; npm run tauri build -- --no-bundle; cd ../..
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --all-targets --locked
+cargo build --release --locked -p ct-cli
+
+Push-Location crates/ct-ui
+npm ci
+.\node_modules\.bin\tauri.cmd build --no-bundle --ci -- --locked
+Pop-Location
 
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-cli.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-secrets.ps1
@@ -428,7 +414,7 @@ adapters.
 
 Node 18 runs `npm ci` successfully and then silently omits an optional
 native binding, so the failure surfaces later as `Cannot find native
-binding` â€” use Node 22. The minimum Rust version is **1.88**, raised from
+binding` — use Node 22. The minimum Rust version is **1.88**, raised from
 1.85 once the Tauri dependency graph made the old claim false; CI checks
 1.88 explicitly.
 

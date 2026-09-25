@@ -26,12 +26,12 @@
 //! not a repeat cold measurement. How much the two differ depends on whether
 //! a given session's load is dominated by reading bytes or by hashing and
 //! deflating them, which is a property of that session and not something this
-//! comment can state once for all of them. See CT-057's note in `BACKLOG.md`
-//! for figures, each with the session and cache state it was taken under.
+//! comment can state once for all of them. Record measurements with the input
+//! size, session identifier and cache state used for that run.
 //! Take `load_content_analysis_cold_ms` only from a run against a file
 //! this machine has not read recently, and record what state it was in;
-//! measurements taken any other way belong in the backlog note with that
-//! caveat attached, not in this comment as if they were repeatable.
+//! measurements taken any other way must carry that caveat rather than being
+//! presented as repeatable benchmark results.
 //!
 //! `content_analysis_path_total_ms` covers only the content-analysis leg up
 //! to the first rendered snapshot (it stops before the plain load and before

@@ -335,14 +335,20 @@ fn translate(
             _ => raw_outer.clone(),
         };
         let kind = match (raw_outer.as_str(), inner.as_deref(), payload_start) {
-            ("compacted", _, _) => EventKind::Compacted(CompactionFacts {
-                replacement_recorded: true,
+            ("compacted", _, payload_start) => EventKind::Compacted(CompactionFacts {
+                replacement_recorded: payload_start
+                    .and_then(|start| find_field_value(raw, b"replacement_history", start))
+                    .is_some(),
                 ..Default::default()
             }),
-            ("response_item", Some("compaction"), _) => EventKind::Compacted(CompactionFacts {
-                replacement_recorded: true,
-                ..Default::default()
-            }),
+            ("response_item", Some("compaction"), payload_start) => {
+                EventKind::Compacted(CompactionFacts {
+                    replacement_recorded: payload_start
+                        .and_then(|start| find_field_value(raw, b"replacement_history", start))
+                        .is_some(),
+                    ..Default::default()
+                })
+            }
             (
                 "response_item",
                 Some("function_call_output" | "custom_tool_call_output" | "tool_search_output"),
@@ -900,7 +906,7 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
         // existing `compacted` envelope when available; this marker is enough
         // to keep the boundary readable when it is the only record present.
         Some("compaction") => EventKind::Compacted(CompactionFacts {
-            replacement_recorded: payload.get("encrypted_content").is_some(),
+            replacement_recorded: payload.get("replacement_history").is_some(),
             ..Default::default()
         }),
         Some("function_call") | Some("custom_tool_call") | Some("tool_search_call") => {
@@ -1264,6 +1270,60 @@ mod tests {
             value: None,
             oversized: true,
             sniffed_type: Some("response_item".into()),
+        }
+    }
+
+    #[test]
+    fn oversized_compaction_uses_only_verbatim_replacement_history_evidence() {
+        for (outer_type, raw, expected) in [
+            (
+                "response_item",
+                r#"{"type":"response_item","payload":{"type":"compaction","encrypted_content":"opaque"}}"#,
+                false,
+            ),
+            (
+                "compacted",
+                r#"{"type":"compacted","payload":{"encrypted_content":"opaque"}}"#,
+                false,
+            ),
+            (
+                "compacted",
+                r#"{"type":"compacted","payload":{"replacement_history":"verbatim"}}"#,
+                true,
+            ),
+        ] {
+            let mut record = oversized_record();
+            record.sniffed_type = Some(outer_type.into());
+            let event = translate(
+                &record,
+                raw.as_bytes(),
+                &mut SessionMetadata::default(),
+                false,
+            );
+            let EventKind::Compacted(facts) = event.kind else {
+                panic!("expected a compaction marker for {outer_type}: {event:?}");
+            };
+            assert_eq!(facts.replacement_recorded, expected, "record: {raw}");
+        }
+    }
+
+    #[test]
+    fn parsed_response_compaction_requires_replacement_history() {
+        for (payload, expected) in [
+            (
+                json!({ "type": "compaction", "encrypted_content": "opaque" }),
+                false,
+            ),
+            (
+                json!({ "type": "compaction", "replacement_history": "verbatim" }),
+                true,
+            ),
+        ] {
+            let EventKind::Compacted(facts) = translate_response_item(&payload, Some("compaction"))
+            else {
+                panic!("expected a response-item compaction");
+            };
+            assert_eq!(facts.replacement_recorded, expected);
         }
     }
 

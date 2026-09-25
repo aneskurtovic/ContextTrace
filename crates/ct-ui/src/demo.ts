@@ -657,9 +657,9 @@ export function demoLifecycle(item: string): LifecycleReport {
  * return, split by agent -- Codex records replacement history and Claude
  * Code never does, so the refusal is not a fabricated edge case but the
  * ordinary answer for one whole agent. Shaped to match the committed Codex
- * fixture's one compaction (4 dropped, 1 preserved, 1 replacement-only; see
- * BACKLOG.md CT-047) so a developer running `npm run dev` sees the same mix
- * the acceptance run checks against real data.
+ * fixture's one compaction (4 dropped, 1 preserved, 1 replacement-only) so a
+ * developer running `npm run dev` sees the same mix covered by acceptance
+ * tests.
  */
 export function demoCompactionDiff(agent: Agent, lineNo: number): CompactionDiff {
   if (agent === "claude-code") {

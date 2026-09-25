@@ -1,5 +1,22 @@
 mod commands;
 
+#[tauri::command]
+fn is_installed_build() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let Ok(executable) = std::env::current_exe() else {
+            return false;
+        };
+        let Some(install_directory) = executable.parent() else {
+            return false;
+        };
+        install_directory.join("uninstall.exe").is_file()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    false
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -14,6 +31,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(commands::AppState::new())
         .manage(commands::notifications::NotificationState::new())
         .setup(|app| {
@@ -21,6 +39,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            is_installed_build,
             commands::get_startup,
             commands::search_sessions,
             commands::list_projects,

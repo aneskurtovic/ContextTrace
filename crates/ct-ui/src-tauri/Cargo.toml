@@ -34,6 +34,7 @@ serde_json.workspace = true
 chrono.workspace = true
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
 # A second instance polls the same logs and writes the same notification store
 # as the first, with no cross-process locking between them. There is no use for
 # two, so there is one.

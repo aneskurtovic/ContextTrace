@@ -202,7 +202,7 @@ pub struct Candidate {
 #[derive(Debug, Clone)]
 pub enum ResolveError {
     NotFound(String),
-    /// Labels are not unique -- two `Read BACKLOG.md` calls are two items -- so
+    /// Labels are not unique -- two `Read README.md` calls are two items -- so
     /// this is an ordinary outcome, and the candidates carry the ids needed to
     /// disambiguate.
     Ambiguous {
@@ -240,7 +240,7 @@ impl std::error::Error for ResolveError {}
 /// Presence of every context item at every turn, from one pass over the
 /// session.
 ///
-/// One pass rather than one per item: resolving `--item BACKLOG.md` needs the
+/// One pass rather than one per item: resolving `--item README.md` needs the
 /// labels anyway, and the sweep that produces them is the same sweep that
 /// produces the history.
 #[derive(Debug, Clone, Serialize)]
@@ -510,7 +510,7 @@ mod tests {
     fn sweep(turns: Vec<TurnScan>, present_in: Vec<u32>, agent: AgentKind) -> LifecycleSweep {
         let record = ItemRecord {
             id: ContextItemId::new("claude:42"),
-            label: "Read BACKLOG.md".into(),
+            label: "Read README.md".into(),
             category: ContextCategory::ToolOutputs,
             source: ContextSource::ToolExecution {
                 tool: "Read".into(),
@@ -682,7 +682,7 @@ mod tests {
     fn an_id_resolves_exactly_and_a_label_by_substring() {
         let s = sweep(vec![scan(1, true, None)], vec![1], AgentKind::ClaudeCode);
         assert_eq!(s.resolve("claude:42").unwrap().id.as_str(), "claude:42");
-        assert_eq!(s.resolve("backlog").unwrap().id.as_str(), "claude:42");
+        assert_eq!(s.resolve("readme").unwrap().id.as_str(), "claude:42");
         assert!(matches!(
             s.resolve("nothing here"),
             Err(ResolveError::NotFound(_))
@@ -691,17 +691,17 @@ mod tests {
 
     #[test]
     fn two_items_with_the_same_label_are_a_choice_not_an_error_message() {
-        // Labels are not unique: two `Read BACKLOG.md` calls are two items. The
+        // Labels are not unique: two `Read README.md` calls are two items. The
         // candidates carry the ids needed to pick one.
         let mut s = sweep(vec![scan(1, true, None)], vec![1], AgentKind::ClaudeCode);
         let mut twin = s.items.values().next().unwrap().clone();
         twin.id = ContextItemId::new("claude:99");
         s.items.insert(twin.id.clone(), twin);
 
-        match s.resolve("BACKLOG") {
+        match s.resolve("README") {
             Err(ResolveError::Ambiguous { candidates, .. }) => {
                 assert_eq!(candidates.len(), 2);
-                assert!(candidates.iter().all(|c| c.label.contains("BACKLOG")));
+                assert!(candidates.iter().all(|c| c.label.contains("README")));
             }
             other => panic!("expected an ambiguous match, got {other:?}"),
         }

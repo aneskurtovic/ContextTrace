@@ -4696,8 +4696,8 @@ mod tests {
         assert_eq!(reported_line_no, line_no);
         assert!(turn.is_some());
 
-        // The committed fixture's one compaction is documented (BACKLOG.md
-        // CT-047) as 4 dropped, 1 preserved, 1 replacement-only.
+        // The committed fixture has 4 dropped, 1 preserved and 1
+        // replacement-only item.
         let dropped = items
             .iter()
             .filter(|item| {

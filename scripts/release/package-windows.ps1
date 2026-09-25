@@ -19,6 +19,11 @@ foreach ($directory in @($env:HOME, $env:LOCALAPPDATA, $env:APPDATA, $env:TEMP))
 if ([string]::IsNullOrWhiteSpace($env:CI_COMMIT_TAG)) {
     throw 'This script must run from a Woodpecker tag pipeline.'
 }
+if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+    throw 'The TAURI_SIGNING_PRIVATE_KEY Woodpecker secret is required to build signed updater artifacts.'
+}
+$updaterSigningKey = $env:TAURI_SIGNING_PRIVATE_KEY
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY
 
 $tag = $env:CI_COMMIT_TAG
 if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
@@ -52,26 +57,40 @@ Write-Host "Building ContextTrace $version on the Windows Woodpecker agent."
 & npm ci --prefix crates/ct-ui
 if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
 
+& cargo build --release --locked -p ct-cli
+if ($LASTEXITCODE -ne 0) { throw "CLI release build failed with exit code $LASTEXITCODE." }
+
 Push-Location crates/ct-ui
 try {
-    & .\node_modules\.bin\tauri.cmd build --bundles nsis
+    # Tauri's build phase enables custom-protocol for a production binary. Keep
+    # it separate from bundling so the updater private key is absent from build
+    # scripts and the Rust compiler process tree.
+    & .\node_modules\.bin\tauri.cmd build --no-bundle --ci -- --locked
+    if ($LASTEXITCODE -ne 0) { throw "Tauri production build failed with exit code $LASTEXITCODE." }
+
+    $env:TAURI_SIGNING_PRIVATE_KEY = $updaterSigningKey
+    & .\node_modules\.bin\tauri.cmd bundle --bundles nsis --ci
     if ($LASTEXITCODE -ne 0) { throw "Tauri bundling failed with exit code $LASTEXITCODE." }
 }
 finally {
+    Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+    $updaterSigningKey = $null
     Pop-Location
 }
 
-& cargo build --release -p ct-cli
-if ($LASTEXITCODE -ne 0) { throw "CLI release build failed with exit code $LASTEXITCODE." }
-
 $installerDirectory = Join-Path $targetDir 'release/bundle/nsis'
-$installers = @(Get-ChildItem -LiteralPath $installerDirectory -File -Filter '*.exe')
-if ($installers.Count -ne 1) {
-    throw "Expected exactly one NSIS installer in '$installerDirectory'; found $($installers.Count)."
+$installer = Join-Path $installerDirectory "ContextTrace_${version}_x64-setup.exe"
+if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+    throw "Expected the versioned NSIS installer at '$installer'."
 }
 
 $assetPrefix = "ContextTrace-$version-windows-x64"
-Copy-Item -LiteralPath $installers[0].FullName -Destination (Join-Path $stage "$assetPrefix-setup.exe")
+Copy-Item -LiteralPath $installer -Destination (Join-Path $stage "$assetPrefix-setup.exe")
+$installerSignature = "$installer.sig"
+if (-not (Test-Path -LiteralPath $installerSignature -PathType Leaf)) {
+    throw "Tauri did not produce the NSIS updater signature at '$installerSignature'."
+}
+Copy-Item -LiteralPath $installerSignature -Destination (Join-Path $stage "$assetPrefix-setup.exe.sig")
 
 $uiPackage = @($metadata.packages | Where-Object { $_.name -eq 'ct-ui' })
 if ($uiPackage.Count -ne 1) {
@@ -106,6 +125,24 @@ Copy-Item -LiteralPath (Join-Path $targetDir 'release/ct.exe') -Destination (Joi
 Copy-Item -LiteralPath 'LICENSE' -Destination (Join-Path $cliStage 'LICENSE')
 Compress-Archive -Path (Join-Path $cliStage '*') -DestinationPath (Join-Path $stage "$assetPrefix-cli.zip")
 Remove-Item -LiteralPath $cliStage -Recurse -Force
+
+$signature = (Get-Content -LiteralPath (Join-Path $stage "$assetPrefix-setup.exe.sig") -Raw).Trim()
+$latest = @{
+    version = $version
+    notes = "ContextTrace $version"
+    pub_date = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    platforms = @{
+        'windows-x86_64' = @{
+            signature = $signature
+            url = "https://github.com/aneskurtovic/ContextTrace/releases/download/v$version/$assetPrefix-setup.exe"
+        }
+    }
+} | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText(
+    (Join-Path $stage 'latest.json'),
+    $latest,
+    [System.Text.UTF8Encoding]::new($false)
+)
 
 $checksums = Get-ChildItem -LiteralPath $stage -File | Sort-Object Name | ForEach-Object {
     "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.Name

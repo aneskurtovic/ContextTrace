@@ -1,7 +1,8 @@
 # Windows release packaging without GitHub-hosted minutes.
 #
 # The tag-only workflow runs on the existing self-hosted Windows local agent.
-# It creates the same installer, portable CLI ZIP, and checksum manifest as the
+# It creates the signed installer, updater manifest, portable/CLI ZIPs, and
+# checksum manifest as the
 # GitHub Actions fallback, then leaves them under the agent's durable
 # C:/woodpecker-cache/contexttrace/release-assets/<tag> directory for download
 # or manual upload to a draft GitHub release.
@@ -33,6 +34,10 @@ variables:
 steps:
   - name: package-windows
     image: *shell
-    environment: *release_env
+    environment:
+      <<: *release_env
+      TAURI_SIGNING_PRIVATE_KEY:
+        from_secret: TAURI_SIGNING_PRIVATE_KEY
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
     commands:
       - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/package-windows.ps1
