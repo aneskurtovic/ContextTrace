@@ -46,9 +46,12 @@ update is available or the feed is temporarily unreachable.
   behavior on a separate laptop.
 
 These checks validate source/build behavior, installation and startup on two
-PCs, and the quiet updater behavior on the separate laptop. Session discovery,
-upgrade/uninstall preservation, portable/CLI use, and a signed in-app update
-have not yet been confirmed.
+PCs, and the quiet updater behavior on the separate laptop. The user also
+confirmed that session discovery works at startup in both the installed and
+portable desktop apps, the portable desktop app works, and uninstall works
+both from the newer-installer flow and Windows Add or Remove Programs. CLI
+user acceptance was not requested. The signed in-app upgrade flow will be
+tested with the next version.
 
 ## Release gates
 
@@ -59,7 +62,9 @@ have not yet been confirmed.
 | Public source documentation | Organized; examples are synthetic and relative links have been checked |
 | Windows production build | Passed in this working session |
 | Signed updater package and feed | v0.1.3 stable; signed assets uploaded and checksum-verified by Woodpecker pipeline 68; quiet startup behavior confirmed on a separate laptop |
-| Clean-host installer/upgrade/uninstall | v0.1.3 installation/startup passed on a separate new laptop; discovery, upgrade and archive-preserving uninstall remain unverified |
+| Installed and portable desktop acceptance | Installed startup passed on a separate new laptop; startup session discovery works in installed and portable apps; portable app works; uninstall succeeds from both the installer update flow and Windows Add or Remove Programs |
+| Signed in-app upgrade | Pending the next version; user will test the offered upgrade flow then |
+| CLI user acceptance | Not requested; Woodpecker CLI smoke checks passed in pipeline 63 |
 | Public stable release | [ContextTrace v0.1.3](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.3) |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
