@@ -91,9 +91,9 @@ model did not need.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the commands listed in the [README](../README.md#commands) | Implemented |
-| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented; 0.1.2 clean-host install/update acceptance remains a release gate |
+| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented; 0.1.2 startup was confirmed on two Windows PCs; full installer/update acceptance remains open |
 | Standalone JSONL fixture files | Implemented |
-| Reproducible CI, installable release artifacts, release documentation | CI and packaging workflows are configured; 0.1.2 artifacts are not yet published |
+| Reproducible CI, installable release artifacts, release documentation | CI and packaging workflows are configured; 0.1.2 Windows assets are published |
 | Session metadata search | Implemented server-side with explicit paging |
 | SQLite index | Deferred until measured desktop performance requires it |
 

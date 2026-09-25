@@ -11,10 +11,12 @@ optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
 
-The repository is public, but the current updater-enabled **0.1.2 candidate is
-not yet a published release**. Users of 0.1.1 will not see a 0.1.2 update until
-its stable assets are published. A separate clean Windows host must validate the
-downloaded signed installer/feed and portable artifacts before publication.
+The updater-enabled **0.1.2 Windows release is published as stable**. The user
+confirmed that the installed app opens on both the development PC and a separate
+new laptop. The updater initially showed a fetch error while the release was a
+draft; after publication it reports the installed 0.1.2 is current. A follow-up
+0.1.3 change is in progress to keep routine startup checks quiet when there is
+no update or the feed is temporarily unreachable.
 
 ## Verification in this working session
 
@@ -27,10 +29,19 @@ downloaded signed installer/feed and portable artifacts before publication.
 - The fixture manifest and its regression validator passed.
 - The Windows production Tauri build (`tauri build --no-bundle --ci --
   --locked`) passed and produced `target/release/context-trace.exe`.
+- Woodpecker pipeline 61 uploaded all six 0.1.2 release assets to a GitHub
+  release and verified their SHA-256 digests. Creating the draft through the
+  GitHub website worked around the release-creation API's HTTP 500 response;
+  the release was then published as stable.
+- The user installed the downloaded 0.1.2 installer and confirmed the app
+  opens correctly. The installed executable's product version is 0.1.2.
+- The user separately installed and opened the app on a new laptop.
+- Directly fetching the latest feed from this development shell was blocked by
+  its network policy, so the updater check still needs confirmation from the app.
 
-These checks validate source and build behavior on the current development
-environment. They are not downloaded-artifact, independent-host, installer
-upgrade, or updater-signature acceptance.
+These checks validate source/build behavior and startup on two PCs. Session
+discovery, upgrade/uninstall preservation, portable/CLI use, and the signed
+in-app update flow have not yet been confirmed.
 
 ## Release gates
 
@@ -40,9 +51,9 @@ upgrade, or updater-signature acceptance.
 | Persisted Codex/Claude compatibility | Tested fixture/version scope only; future versions need fixtures and semantic assertions |
 | Public source documentation | Organized; examples are synthetic and relative links have been checked |
 | Windows production build | Passed in this working session |
-| Signed updater package and feed | Packaging path prepared; final artifacts not yet staged or published |
-| Clean-host installer/upgrade/uninstall | Must be repeated against downloaded 0.1.2 artifacts on a separate Windows host |
-| Public stable release | Not published; requires the above acceptance and release assets |
+| Signed updater package and feed | Six assets uploaded and digest-verified by Woodpecker pipeline 61; stable release published; in-app feed/signature acceptance pending |
+| Clean-host installer/upgrade/uninstall | Installation/startup passed on a separate new laptop; upgrade and archive-preserving uninstall are still unverified |
+| Public stable release | Published: [ContextTrace v0.1.2](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.2) |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
 `%LOCALAPPDATA%\ContextTrace-archive` data directory, which may contain the

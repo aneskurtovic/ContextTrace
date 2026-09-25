@@ -1,9 +1,10 @@
 # Desktop automatic updates
 
-The Windows desktop app checks the stable GitHub Releases feed after startup.
-An available update is shown to the user; it is not installed without
-confirmation. Tauri verifies the updater signature before launching the
-installer. Reopen the app when installation finishes.
+The Windows desktop app quietly checks the stable GitHub Releases feed after
+startup. An available update is shown to the user; a successful check with no
+new version and a failed background check stay out of the way. An update is not
+installed without confirmation. Tauri verifies the updater signature before
+launching the installer. Reopen the app when installation finishes.
 
 The feed URL is
 `https://github.com/aneskurtovic/ContextTrace/releases/latest/download/latest.json`.
@@ -13,10 +14,9 @@ asset for that exact version rather than to a moving `latest` asset URL.
 
 ## First updater-enabled version
 
-Version 0.1.0 predates the updater. Install the first updater-enabled release
-manually; subsequent compatible versions can be offered in-app. The current
-source candidate is 0.1.2, but it is not available until its signed assets are
-published as a stable release.
+Versions 0.1.0 and 0.1.1 predate the updater. Install 0.1.2 manually; it is the
+first updater-enabled stable release. Subsequent compatible versions can be
+offered in-app.
 
 ## Release key handling
 

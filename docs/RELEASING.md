@@ -21,7 +21,7 @@ publish the draft as stable (not prerelease), because the updater checks the
 stable `releases/latest/download/latest.json` feed. Keep the feed's installer
 URL pinned to its versioned release asset.
 
-For the current `v0.1.2` candidate, add a fine-grained repository token with
+For a release candidate, add a fine-grained repository token with
 Contents: write permission as the protected Woodpecker secret
 `GITHUB_RELEASE_TOKEN`, restricted to the `manual` event, then manually run the
 `release-upload` workflow on `main` with the additional variable

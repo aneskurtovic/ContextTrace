@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
-type State = "checking" | "current" | "available" | "installing" | "error";
+type State = "current" | "available" | "installing" | "error";
 
 export default function UpdaterNotice() {
   const [state, setState] = useState<State>("current");
@@ -18,7 +18,9 @@ export default function UpdaterNotice() {
     updateRef.current = null;
     setUpdate(null);
     if (previous) await previous.close();
-    setState("checking");
+    // Keep routine startup checks quiet. Only an available update should
+    // interrupt the app's normal workspace view.
+    setState("current");
     setMessage("");
     try {
       const found = await check();
@@ -29,10 +31,12 @@ export default function UpdaterNotice() {
       updateRef.current = found;
       setUpdate(found);
       setState(found ? "available" : "current");
-    } catch (error) {
+    } catch {
       if (request !== requestRef.current) return;
-      setMessage(error instanceof Error ? error.message : String(error));
-      setState("error");
+      // A release feed or network failure must not leave a permanent banner.
+      // Update installation errors remain visible in install().
+      setMessage("");
+      setState("current");
     }
   }, []);
 
@@ -77,7 +81,7 @@ export default function UpdaterNotice() {
     }
   };
 
-  if (!isTauri() || !supported) return null;
+  if (!isTauri() || !supported || state === "current") return null;
 
   return (
     <aside className="updater-notice" role="status" aria-live="polite">
@@ -89,12 +93,8 @@ export default function UpdaterNotice() {
         </>
       ) : state === "installing" ? (
         <><strong>Updating ContextTrace</strong><span>{message}</span></>
-      ) : state === "checking" ? (
-        <><strong>Checking for updates...</strong></>
       ) : state === "error" ? (
-        <><div><strong>Update check failed</strong><span>{message}</span></div><button type="button" onClick={() => void checkForUpdates()}>Retry</button></>
-      ) : (
-        <><span>ContextTrace is up to date.</span><button type="button" onClick={() => void checkForUpdates()}>Check for updates</button></>
+        <><div><strong>Update failed</strong><span>{message}</span></div><button type="button" onClick={() => void checkForUpdates()}>Retry</button></>
       )}
     </aside>
   );
