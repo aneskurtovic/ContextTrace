@@ -63,9 +63,18 @@ What runs today:
 
 ## Install
 
-Windows x64 is the supported surface. There is no public download yet, so
-the working path is a local build from source; it produces the same three
-artifacts the release workflow packages.
+Windows x64 is the supported surface. After a stable release is published,
+install the latest desktop version for the current user from PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/aneskurtovic/ContextTrace/main/scripts/install.ps1 | iex
+```
+
+The installer downloads the latest stable release, checks the installer
+against its published SHA-256 checksum and starts the per-user setup. No
+administrator rights are required. The release page also provides the
+portable desktop and CLI downloads. Until the first stable binary release is
+published, build from source using the steps below.
 
 ### Prerequisites
 
@@ -115,8 +124,8 @@ that is the native app against the real read-only local adapters.
 
 ### From a release candidate
 
-Each `v<version>` tag produces a **draft** GitHub release, not yet public,
-containing `ContextTrace-<version>-windows-x64-setup.exe` (the per-user
+Each `v<version>` tag produces staged assets for a release. Once published,
+the stable release contains `ContextTrace-<version>-windows-x64-setup.exe` (the per-user
 desktop installer), `ContextTrace-<version>-windows-x64-portable.zip` (the
 desktop executable for extract-and-run use), `ContextTrace-<version>-windows-x64-cli.zip`
 (the companion `ct.exe` and license), and `SHA256SUMS.txt`.

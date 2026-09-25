@@ -15,7 +15,7 @@
 # The `local` backend runs these commands directly on the host: same user, same
 # filesystem, no container. That is why no untrusted fork may trigger this
 # repository, and why the release pipeline -- which handles signing material --
-# deliberately stays on GitHub Actions.
+# runs on the trusted Woodpecker Windows agent after a version tag is pushed.
 #
 # There is not one backslash in this file. PowerShell accepts forward slashes in
 # paths, and commit 4ff69ee is the record of what a stray control character
@@ -24,9 +24,9 @@
 
 # Narrower than the Linux workflows on purpose. A push to a branch with an open
 # PR fires both `push` and `pull_request`, and Woodpecker cancels superseded
-# pipelines within an event type, not across them. On GitHub that cost nothing:
-# two hosted runners, in parallel, free. Here both would land on one machine
-# running WOODPECKER_MAX_WORKFLOWS=1, so the full workspace clippy, the test
+# pipelines within an event type, not across them. Running both events here
+# would land on one machine running WOODPECKER_MAX_WORKFLOWS=1, so the full
+# workspace clippy, the test
 # suite, npm ci, a Tauri build, a release CLI build and three smokes would run
 # twice back to back on the owner's actual desktop, delaying anything else
 # queued on that machine.
@@ -47,7 +47,7 @@ variables:
   # On the local backend `image` names the shell, not a container.
   - &shell powershell
   - &windows_env
-    # Woodpecker sets CI=woodpecker; GitHub Actions set CI=true. Tauri's CLI
+    # Woodpecker sets CI=woodpecker. Tauri's CLI
     # binds a `--ci` flag to this variable and parses it as a strict boolean, so
     # `woodpecker` is rejected outright:
     #
@@ -65,7 +65,7 @@ variables:
     # an in-workspace target/ means a cold build of a Tauri-sized dependency
     # graph on every push -- which on a personal machine is the difference
     # between CI that gets used and CI that gets switched off. This is the
-    # dependency cache `Swatinem/rust-cache` provided on GitHub's runners.
+    # persistent dependency cache.
     #
     # Incremental compilation stays off, so what carries over is fingerprinted
     # build output, not incremental state a clean checkout would not reproduce.

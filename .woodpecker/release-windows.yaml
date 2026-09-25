@@ -1,11 +1,10 @@
-# Windows release packaging without GitHub-hosted minutes.
+# Windows release packaging on the trusted Woodpecker runner.
 #
 # The tag-only workflow runs on the existing self-hosted Windows local agent.
 # It creates the signed installer, updater manifest, portable/CLI ZIPs, and
-# checksum manifest as the
-# GitHub Actions fallback, then leaves them under the agent's durable
+# checksum manifest, then leaves them under the agent's durable
 # C:/woodpecker-cache/contexttrace/release-assets/<tag> directory for download
-# or manual upload to a draft GitHub release.
+# or manual upload to a release page.
 
 labels:
   platform: windows/amd64
