@@ -78,13 +78,6 @@ jobs:
         working-directory: crates/ct-ui
         run: npm ci
 
-      - name: Build production desktop binary without signing key
-        shell: pwsh
-        working-directory: crates/ct-ui
-        run: |
-          & .\node_modules\.bin\tauri.cmd build --no-bundle --ci -- --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
       # With all three secrets set, use Tauri's normal Windows signtool path.
       # With none set, the release remains intentionally unsigned; no credential
       # names, thumbprints, or signing command are committed to source.
@@ -128,15 +121,10 @@ jobs:
         shell: pwsh
         working-directory: crates/ct-ui
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ steps.signing.outputs.thumbprint }}
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
         run: |
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-            throw 'Configure the TAURI_SIGNING_PRIVATE_KEY GitHub Actions secret before using this manual release workflow.'
-          }
-          $tauriArgs = @('bundle', '--bundles', 'nsis', '--ci')
+          $tauriArgs = @('build', '--bundles', 'nsis')
           if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) {
             $signingConfig = @{
               bundle = @{
@@ -206,31 +194,9 @@ jobs:
           $assets = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
           New-Item -ItemType Directory -Force -Path $assets | Out-Null
 
-          $installerName = "ContextTrace_{0}_x64-setup.exe" -f $env:RELEASE_VERSION
-          $installerPath = Join-Path 'target/release/bundle/nsis' $installerName
-          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) { throw "Expected NSIS installer '$installerPath'." }
-          Copy-Item $installerPath (Join-Path $assets "$env:ASSET_PREFIX-setup.exe")
-
-          $signaturePath = "$installerPath.sig"
-          if (-not (Test-Path -LiteralPath $signaturePath -PathType Leaf)) { throw 'Tauri updater signature was not produced.' }
-          Copy-Item $signaturePath (Join-Path $assets "$env:ASSET_PREFIX-setup.exe.sig")
-          $signature = (Get-Content -LiteralPath $signaturePath -Raw).Trim()
-          $latest = @{
-            version = $env:RELEASE_VERSION
-            notes = "ContextTrace $env:RELEASE_VERSION"
-            pub_date = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-            platforms = @{
-              'windows-x86_64' = @{
-                signature = $signature
-                url = "https://github.com/aneskurtovic/ContextTrace/releases/download/v$env:RELEASE_VERSION/$env:ASSET_PREFIX-setup.exe"
-              }
-            }
-          } | ConvertTo-Json -Depth 5
-          [System.IO.File]::WriteAllText(
-            (Join-Path $assets 'latest.json'),
-            $latest,
-            [System.Text.UTF8Encoding]::new($false)
-          )
+          $installer = @(Get-ChildItem target/release/bundle/nsis -File -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw "Expected one NSIS installer, found $($installer.Count)." }
+          Copy-Item $installer[0].FullName (Join-Path $assets "$env:ASSET_PREFIX-setup.exe")
 
           $portableDirectory = Join-Path $env:GITHUB_WORKSPACE 'release-portable'
           New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
