@@ -24,9 +24,10 @@ URL pinned to its versioned release asset.
 For a release candidate, add a fine-grained repository token with
 Contents: write permission as the protected Woodpecker secret
 `GITHUB_RELEASE_TOKEN`, restricted to the `manual` event, then manually run the
-`release-upload` workflow on `main` with the additional variable
-`RELEASE_UPLOAD=true`. This skips the normal manual validation workflows for
-that run. It verifies the staged filenames, checksums and updater manifest
+`release-upload` workflow on `main` with the additional variables
+`RELEASE_UPLOAD=true` and `RELEASE_TAG=v<version>`. This skips the normal manual
+validation workflows for that run. It verifies the staged filenames,
+checksums and updater manifest
 before creating or resuming the draft. The script fails rather than replacing
 a published release or a mismatched asset.
 

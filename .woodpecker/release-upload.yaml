@@ -20,4 +20,4 @@ steps:
       GITHUB_RELEASE_TOKEN:
         from_secret: GITHUB_RELEASE_TOKEN
     commands:
-      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/upload-draft.ps1 -Tag v0.1.2
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/upload-draft.ps1 -Tag "$env:RELEASE_TAG"
