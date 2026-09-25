@@ -71,6 +71,37 @@ $headers = @{
 }
 $apiRoot = "https://api.github.com/repos/$owner/$repository"
 
+function Get-GitHubFailureDetails {
+    param([Parameter(Mandatory = $true)]$ErrorRecord)
+
+    $response = $ErrorRecord.Exception.Response
+    if ($null -eq $response) {
+        return $ErrorRecord.Exception.Message
+    }
+
+    $body = ''
+    try {
+        $stream = $response.GetResponseStream()
+        if ($null -ne $stream) {
+            $reader = [System.IO.StreamReader]::new($stream)
+            try { $body = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        }
+    } catch {
+        $body = "Unable to read response body: $($_.Exception.Message)"
+    }
+
+    $status = [int]$response.StatusCode
+    $requestId = $response.Headers['X-GitHub-Request-Id']
+    $details = "GitHub API returned HTTP $status"
+    if (-not [string]::IsNullOrWhiteSpace($requestId)) {
+        $details += " (request ID $requestId)"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($body)) {
+        $details += ": $body"
+    }
+    return $details
+}
+
 # Refuse to create a release if the tag is missing or it already has a
 # published release. Reuse an existing draft so a transient upload failure can
 # be retried without replacing any already-uploaded asset.
@@ -92,7 +123,29 @@ if ($existingRelease.Count -gt 0) {
         prerelease = $false
         generate_release_notes = $false
     } | ConvertTo-Json
-    $release = Invoke-RestMethod -Method Post -Uri "$apiRoot/releases" -Headers $headers -ContentType 'application/json' -Body $releaseBody
+    try {
+        $release = Invoke-RestMethod -Method Post -Uri "$apiRoot/releases" -Headers $headers -ContentType 'application/json' -Body $releaseBody
+    } catch {
+        $createFailure = Get-GitHubFailureDetails -ErrorRecord $_
+
+        # A server error can be returned after GitHub has created the draft.
+        # Re-read before failing so reruns remain safe and can resume that draft.
+        try {
+            $releasesAfterFailure = Invoke-RestMethod -Uri "$apiRoot/releases?per_page=100" -Headers $headers
+        } catch {
+            $lookupFailure = Get-GitHubFailureDetails -ErrorRecord $_
+            throw "Failed to create the GitHub draft release. $createFailure. Could not check whether GitHub created it: $lookupFailure"
+        }
+        $createdDraft = @($releasesAfterFailure | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1)
+        if ($createdDraft.Count -gt 0 -and $createdDraft[0].draft) {
+            $release = $createdDraft[0]
+            Write-Warning "GitHub returned an error while creating the draft, but the draft exists and will be resumed. $createFailure"
+        } elseif ($createdDraft.Count -gt 0) {
+            throw "GitHub returned an error while creating the draft, and a published release now exists for $Tag. It will not be modified. $createFailure"
+        } else {
+            throw "Failed to create the GitHub draft release. $createFailure"
+        }
+    }
 }
 
 $uploadBase = $release.upload_url -replace '\{\?name,label\}$', ''
