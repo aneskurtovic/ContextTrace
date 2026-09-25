@@ -915,14 +915,16 @@ describe("corpus overview", () => {
     render(<App />);
 
     // Remembered numbers, on screen while the sweep is still running.
-    expect(await screen.findByRole("heading", { name: "391 sessions" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: "All sessions" })).not.toBeNull();
+    expect(screen.getByText("391", { selector: "strong" })).not.toBeNull();
     expect(screen.getByText(/from the last sweep/)).not.toBeNull();
     expect(screen.getByText(/re-reading now/)).not.toBeNull();
 
     sweep.resolve({ ...demoCorpus, sessions: 392, cached: false });
 
     // ...and replaced once it lands, with the caveat gone.
-    expect(await screen.findByRole("heading", { name: "392 sessions" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: "All sessions" })).not.toBeNull();
+    expect(screen.getByText("392", { selector: "strong" })).not.toBeNull();
     await waitFor(() => expect(screen.queryByText(/from the last sweep/)).toBeNull());
   });
   it("summarises every session and states what it could not measure", async () => {
@@ -930,12 +932,13 @@ describe("corpus overview", () => {
     render(<App />);
 
 
-    expect(await screen.findByRole("heading", { name: "134 sessions" })).not.toBeNull();
+    expect(await screen.findByRole("heading", { name: "All sessions" })).not.toBeNull();
+    expect(screen.getByText("134", { selector: "strong" })).not.toBeNull();
     // A cost total without its unpriced count reads as complete when it is a
     // floor, and a corpus with no measured compaction is not a corpus where
     // compaction freed nothing. Both caveats have to be on screen.
     expect(screen.getByText(/2,046 turns had no local rate/)).not.toBeNull();
-    expect(screen.getByText(/none recorded a before\/after size/)).not.toBeNull();
+    expect(screen.getByText(/no before\/after sizes recorded/i)).not.toBeNull();
     expect(
       screen.getByText(/53 of 134 sessions never recorded both a prompt size/),
     ).not.toBeNull();
@@ -948,7 +951,7 @@ describe("corpus overview", () => {
   it("reuses the last sweep until asked to re-run it", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
-    await screen.findByRole("heading", { name: "134 sessions" });
+    await screen.findByRole("heading", { name: "All sessions" });
 
     expect(mockedApi.getCorpus).toHaveBeenCalledWith(false);
 

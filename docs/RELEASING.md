@@ -13,23 +13,20 @@ these six files for the release:
 - `ContextTrace-<version>-windows-x64-cli.zip` — `ct.exe` and license;
 - `SHA256SUMS.txt` — checksums for the downloadable files.
 
-The tag workflow stages artifacts on the trusted Windows agent. The manual
-Woodpecker workflow `release-upload.yaml` uploads the staged files to a GitHub
-draft using the repository secret `GITHUB_RELEASE_TOKEN`. It does not rebuild
-the package or publish it. After acceptance on a separate clean Windows host,
-publish the draft as stable (not prerelease), because the updater checks the
-stable `releases/latest/download/latest.json` feed. Keep the feed's installer
-URL pinned to its versioned release asset.
+The tag pipeline waits for the `windows`, `rust` and `frontend` validation
+workflows to succeed before packaging. The Windows release workflow then signs
+and stages the six files, creates a public prerelease, uploads the files, checks
+all uploaded digests, and promotes the release to stable. The updater reads the
+stable `releases/latest/download/latest.json` feed, so the prerelease remains
+outside its update channel until all assets are verified. `latest.json` is
+uploaded last. A failed or interrupted publish can be retried: matching assets
+are reused, missing assets are uploaded, and mismatched assets stop the run.
 
-For a release candidate, add a fine-grained repository token with
-Contents: write permission as the protected Woodpecker secret
-`GITHUB_RELEASE_TOKEN`, restricted to the `manual` event, then manually run the
-`release-upload` workflow on `main` with the additional variables
-`RELEASE_UPLOAD=true` and `RELEASE_TAG=v<version>`. This skips the normal manual
-validation workflows for that run. It verifies the staged filenames,
-checksums and updater manifest
-before creating or resuming the draft. The script fails rather than replacing
-a published release or a mismatched asset.
+Add a fine-grained repository token with Contents: write permission as the
+protected Woodpecker secret `GITHUB_RELEASE_TOKEN`, restricted to the `tag`
+event. The release workflow uses it only in the final publishing step; tests
+and packaging do not receive it. Only trusted maintainers may create version
+tags, because the tag workflow also receives the updater signing key.
 
 ## Before tagging
 
@@ -42,16 +39,16 @@ a published release or a mismatched asset.
 4. Confirm only trusted maintainers can create release tags. Never run
    untrusted pull-request code on a self-hosted Windows runner with access to
    the signing secret.
-5. Ensure the release workflow is present on the target branch before pushing
-   the version-matched tag.
+5. Ensure the validation workflows and their release dependencies are present
+   on the target branch before pushing the version-matched tag.
 
 The release script builds the production desktop binary before restoring the
 updater private key to the process environment for NSIS bundling. The key is
-cleared immediately afterwards. The upload workflow reads only the staged
+cleared immediately afterwards. The publishing step reads only the staged
 assets and uses a separate token with repository Contents write permission;
 it never receives the updater private key.
 
-## Verify and publish
+## Verify the published release
 
 After packaging, check all six files exist and validate each downloaded file
 against `SHA256SUMS.txt`:
@@ -65,9 +62,10 @@ Get-FileHash .\ContextTrace-<version>-windows-x64-portable.zip -Algorithm SHA256
 Get-FileHash .\ContextTrace-<version>-windows-x64-cli.zip -Algorithm SHA256
 ```
 
-Validate the installer signature and manifest signature correspondence,
-downloaded updater feed, version-pinned installer URL, portable desktop
-startup, and `ct.exe --help`. On a separate clean Windows host:
+The tag workflow validates staged and uploaded checksums, signature and
+manifest correspondence, and the version-pinned installer URL before marking
+the stable release complete. After publication, validate the downloaded
+updater feed and portable desktop startup. On a separate clean Windows host:
 
 1. install without administrator elevation and launch from the Start menu;
 2. confirm discovery and inspection for both supported agent log formats;
@@ -80,7 +78,9 @@ startup, and `ct.exe --help`. On a separate clean Windows host:
 6. verify the signed updater offer and user-confirmed update flow, then record
    any crash, stale-data or format-drift evidence.
 
-Publish only after the separate-host downloaded-artifact checks pass. The
+The Woodpecker tag pipeline publishes automatically after its validation,
+packaging and uploaded-asset checks pass. The separate-host checks remain the
+post-publication acceptance pass; they do not control release creation. The
 unsigned development installer can trigger SmartScreen; do not describe a
 release as signed unless Windows reports a valid Authenticode signature and
 the updater's Tauri signature also verifies.

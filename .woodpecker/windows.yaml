@@ -39,6 +39,8 @@ when:
   - event: [push, manual]
     branch: main
     evaluate: 'RELEASE_UPLOAD != "true"'
+  - event: tag
+    ref: refs/tags/v*
 
 labels:
   platform: windows/amd64

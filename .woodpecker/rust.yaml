@@ -29,7 +29,7 @@ labels:
   backend: docker
 
 when:
-  - event: [push, pull_request, manual]
+  - event: [push, pull_request, manual, tag]
     evaluate: 'RELEASE_UPLOAD != "true"'
 
 variables:

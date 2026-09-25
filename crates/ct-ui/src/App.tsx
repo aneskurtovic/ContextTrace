@@ -2482,7 +2482,15 @@ function CorpusBars({
   note,
 }: {
   label: string;
-  rows: Array<{ name: string; value: number; note: string }>;
+  rows: Array<{
+    key?: string;
+    name: string;
+    value: number;
+    note: string;
+    title?: string;
+    actionLabel?: string;
+    onActivate?: () => void;
+  }>;
   /** Names the part of the corpus the panel could not account for. */
   note?: string;
 }) {
@@ -2491,8 +2499,21 @@ function CorpusBars({
     <div className="corpus-bars" aria-label={label}>
       <h3>{label}</h3>
       {rows.map((row) => (
-        <div className="corpus-bar-row" key={row.name}>
-          <span title={row.name}>{row.name}</span>
+        <div className="corpus-bar-row" key={row.key ?? row.name}>
+          {row.onActivate ? (
+            <button
+              type="button"
+              className="corpus-bar-label-action"
+              title={row.title}
+              aria-label={row.actionLabel}
+              onClick={row.onActivate}
+            >
+              <span>{row.name}</span>
+              <small>Show sessions</small>
+            </button>
+          ) : (
+            <span title={row.title ?? row.name}>{row.name}</span>
+          )}
           <div>
             <i style={{ width: `${Math.max(2, (row.value / largest) * 100)}%` }} />
           </div>
@@ -2504,16 +2525,37 @@ function CorpusBars({
   );
 }
 
+function tailTruncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? `…${value.slice(-(maxLength - 1))}` : value;
+}
+
+function projectParentName(path: string): string {
+  const parts = path.replace(/[\\/]+$/, "").split(/[\\/]+/);
+  return parts.length > 1 ? parts[parts.length - 2] : path;
+}
+
 /**
  * What the whole local corpus adds up to.
  *
  * Every other view in this app is scoped to one session. This one exists for
  * the questions a single session cannot answer -- where the month went, which
- * tool returns the most text, how close to the ceiling these sessions run --
+ * tool returns the most text, and how large recorded prompts became --
  * and it states its own limits in the same breath, because a large share of
  * any real corpus is unpriced and unmeasured.
  */
-function CorpusPanel({ demoData }: { demoData: boolean }) {
+function CorpusPanel({
+  demoData,
+  projectFilter,
+  onFilterProject,
+  onClearProjectFilter,
+  onOpenSession,
+}: {
+  demoData: boolean;
+  projectFilter: ProjectFilter;
+  onFilterProject: (path: string) => void;
+  onClearProjectFilter: () => void;
+  onOpenSession: (session: SessionKey) => void;
+}) {
   const [report, setReport] = useState<CorpusReport | null>(null);
   const [progress, setProgress] = useState<CorpusProgress | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2574,6 +2616,11 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
   const unattributedModelTurns = Math.max(0, report.turns - modelTurns);
   const measuredPressure =
     pressure.comfortable + pressure.warming + pressure.tight + pressure.critical;
+  const projectNames = new Map<string, number>();
+  for (const project of report.byProject) {
+    const name = projectName(project.project);
+    projectNames.set(name, (projectNames.get(name) ?? 0) + 1);
+  }
 
   return (
     <main className="workspace corpus" aria-busy={loading}>
@@ -2583,7 +2630,7 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
       <header className="corpus-header">
         <div>
           <span className="eyebrow">Every local session</span>
-          <h1>{report.sessions.toLocaleString()} sessions</h1>
+          <h1>All sessions</h1>
           <p>
             {report.turns.toLocaleString()} turns · {report.events.toLocaleString()} events ·{" "}
             {report.cached ? "from the last sweep" : "swept just now"}
@@ -2599,35 +2646,49 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
         </button>
       </header>
 
-      <div className="metrics">
-        <Metric label="Output tokens" value={formatTokens(report.outputTokens)} note="billed output across every session" />
-        <Metric
-          label="Priced spend"
-          value={`$${(report.costMicros / 1_000_000).toFixed(2)}`}
-          note={
-            report.unpricedTurns
-              ? `a floor — ${report.unpricedTurns.toLocaleString()} turns had no local rate`
-              : "every turn priced"
-          }
-          accent
-        />
-        <Metric
-          label="Tool calls"
-          value={report.toolCalls.toLocaleString()}
-          note={`${report.toolErrors.toLocaleString()} reported an error`}
-        />
-        <Metric
-          label="Compactions"
-          value={report.compactions.toLocaleString()}
-          note={
-            // "reclaimed 0" and "nothing recorded a size" are different
-            // statements, and a Codex-only corpus is always the second.
-            report.compactionsMeasured
+      <section className="corpus-heroes" aria-label="Key totals">
+        <div className="corpus-hero sessions-hero">
+          <span>Total sessions</span>
+          <strong>{report.sessions.toLocaleString()}</strong>
+          <small>Across your local agent history</small>
+        </div>
+        <div className="corpus-hero corpus-spend-hero">
+          <span>Priced spend</span>
+          <strong>${(report.costMicros / 1_000_000).toFixed(2)}</strong>
+          <small>
+            {report.unpricedTurns
+              ? `A floor · ${report.unpricedTurns.toLocaleString()} turns had no local rate`
+              : "Every turn priced"}
+          </small>
+        </div>
+      </section>
+
+      <section className="corpus-secondary-metrics" aria-label="More corpus totals">
+        <div><span>Output tokens</span><strong>{formatTokens(report.outputTokens)}</strong><small>Billed output across every session</small></div>
+        <div className={report.toolErrors > 0 ? "has-errors" : ""}>
+          <span>Tool calls</span><strong>{report.toolCalls.toLocaleString()}</strong>
+          <small>
+            {report.toolErrors.toLocaleString()} reported errors
+            {report.toolErrors > 0 && report.toolCalls > 0 &&
+              ` · ${((report.toolErrors / report.toolCalls) * 100).toFixed(1)}% error rate`}
+          </small>
+        </div>
+        <div>
+          <span>Compactions</span><strong>{report.compactions.toLocaleString()}</strong>
+          <small>
+            {report.compactionsMeasured
               ? `${formatTokens(report.reclaimedTokens)} reclaimed across ${report.compactionsMeasured} measured`
-              : "none recorded a before/after size"
-          }
-        />
-      </div>
+              : "No before/after sizes recorded"}
+          </small>
+        </div>
+      </section>
+
+      {projectFilter.kind === "path" && (
+        <div className="corpus-filter-notice" role="status">
+          <span>Session browser filtered to <strong title={projectFilter.path}>{projectName(projectFilter.path)}</strong>. Dashboard totals still cover all sessions.</span>
+          <button type="button" onClick={onClearProjectFilter}>Clear filter</button>
+        </div>
+      )}
 
       {(report.unreadable > 0 || report.unrecognisedEvents > 0) && (
         <p className="corpus-caveat" role="status">
@@ -2638,14 +2699,54 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
         </p>
       )}
 
+      <section className="corpus-ranked">
+        <div className="corpus-ranked-heading">
+          <div>
+            <h3>Largest measured contexts</h3>
+            <p>Sessions ranked by their largest recorded prompt size.</p>
+          </div>
+        </div>
+        <ol>
+          {report.largestSessions.map((rank) => (
+            <li key={`${rank.agent}:${rank.id}`}>
+              <button
+                type="button"
+                className="corpus-ranked-open"
+                aria-label={`Open session ${rank.title ?? projectName(rank.project)} from ${projectName(rank.project)}`}
+                onClick={() => onOpenSession({ agent: rank.agent, id: rank.id })}
+              >
+                <AgentMark agent={rank.agent} />
+                <span>
+                  <strong>{rank.title ?? projectName(rank.project)}</strong>
+                  <small>
+                    {projectName(rank.project)} · {shortId(rank.id)} · {rank.turns} turns
+                  </small>
+                </span>
+                <b>{formatTokens(rank.peakPromptTokens)} prompt tokens</b>
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
+
       <section className="corpus-grid">
         <CorpusBars
           label="Turns by project"
-          rows={report.byProject.map((project) => ({
-            name: projectName(project.project),
-            value: project.turns,
-            note: `${project.turns.toLocaleString()} turns · $${(project.costMicros / 1_000_000).toFixed(2)}`,
-          }))}
+          rows={report.byProject.map((project) => {
+            const baseName = projectName(project.project);
+            const name = projectNames.get(baseName)! > 1
+              ? `${projectParentName(project.project)} / ${baseName}`
+              : baseName;
+            return {
+              key: project.project,
+              name: tailTruncate(name, 24),
+              title: project.project,
+              actionLabel: `Filter the session browser to ${project.project}`,
+              onActivate: () => onFilterProject(project.project),
+              value: project.turns,
+              note: `${project.turns.toLocaleString()} turns · $${(project.costMicros / 1_000_000).toFixed(2)}`,
+            };
+          })}
         />
         <CorpusBars
           label="Turns by model"
@@ -2691,8 +2792,8 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
             { name: "50–75%", value: pressure.warming },
             { name: "75–90%", value: pressure.tight },
             { name: "over 90%", value: pressure.critical },
-          ].map((band) => (
-            <div className="corpus-bar-row" key={band.name}>
+          ].map((band, index) => (
+            <div className={`corpus-bar-row pressure-band-${index}`} key={band.name}>
               <span>{band.name}</span>
               <div>
                 <i style={{ width: `${Math.max(2, (band.value / Math.max(1, measuredPressure)) * 100)}%` }} />
@@ -2709,23 +2810,6 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
         </div>
       </section>
 
-      <section className="corpus-ranked">
-        <h3>Sessions that ran closest to their ceiling</h3>
-        <ol>
-          {report.largestSessions.map((rank) => (
-            <li key={`${rank.agent}:${rank.id}`}>
-              <AgentMark agent={rank.agent} />
-              <span>
-                <strong>{rank.title ?? projectName(rank.project)}</strong>
-                <small>
-                  {projectName(rank.project)} · {shortId(rank.id)} · {rank.turns} turns
-                </small>
-              </span>
-              <b>{formatTokens(rank.peakPromptTokens)}</b>
-            </li>
-          ))}
-        </ol>
-      </section>
     </main>
   );
 }
@@ -3783,6 +3867,10 @@ function storedSidebarWidth(): number {
     : SIDEBAR_DEFAULT;
 }
 
+function storedSidebarCollapsed(): boolean {
+  return window.localStorage.getItem("ct.sidebarCollapsed") === "true";
+}
+
 export default function App() {
   // Without the desktop bridge every panel below is filled from `demo.ts`.
   // A tool that argues for evidence over invention cannot render invented
@@ -3801,12 +3889,20 @@ export default function App() {
   const [focusComposition, setFocusComposition] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(storedSidebarCollapsed);
   const [resizing, setResizing] = useState(false);
 
   const applySidebarWidth = useCallback((width: number) => {
     const clamped = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
     setSidebarWidth(clamped);
     window.localStorage.setItem("ct.sidebarWidth", String(clamped));
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((collapsed) => {
+      const next = !collapsed;
+      window.localStorage.setItem("ct.sidebarCollapsed", String(next));
+      return next;
+    });
   }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -5097,9 +5193,23 @@ export default function App() {
         </div>
       </header>
 
-      <div className="app-body">
-      <aside className="sidebar">
-        <div className="sidebar-caption"><span>Sessions</span><span>{sessionTotal}</span></div>
+      <div className={sidebarCollapsed ? "app-body sidebar-collapsed" : "app-body"}>
+      <aside className={sidebarCollapsed ? "sidebar collapsed" : "sidebar"}>
+        <div className="sidebar-caption">
+          <span>Sessions <b>{sessionTotal}</b></span>
+          <button
+            type="button"
+            className="sidebar-collapse-toggle"
+            aria-label={sidebarCollapsed ? "Expand sessions sidebar" : "Collapse sessions sidebar"}
+            aria-expanded={!sidebarCollapsed}
+            aria-controls="session-sidebar-content"
+            title={sidebarCollapsed ? "Expand sessions sidebar" : "Collapse sessions sidebar"}
+            onClick={toggleSidebar}
+          >
+            {sidebarCollapsed ? "›" : "‹"}
+          </button>
+        </div>
+        <div id="session-sidebar-content" className="sidebar-content" hidden={sidebarCollapsed}>
 
         {/* Above the list rather than in the tab strip, because those tabs are
             all views *of* the selected session and this is not. The label is
@@ -5281,6 +5391,7 @@ export default function App() {
             </div>
           )}
         </footer>
+        </div>
       </aside>
 
       {/* A real separator rather than a styled ::after, so the panel can be
@@ -5380,7 +5491,13 @@ export default function App() {
           <div className="warning-banner" key={warning} role="status">{warning}</div>
         ))}
         {corpusOpen ? (
-          <CorpusPanel demoData={demoData} />
+          <CorpusPanel
+            demoData={demoData}
+            projectFilter={projectFilter}
+            onFilterProject={(path) => setProjectFilter({ kind: "path", path })}
+            onClearProjectFilter={() => setProjectFilter({ kind: "any" })}
+            onOpenSession={selectSession}
+          />
         ) : loadingDetail && !visibleDetail ? (
           <div className="workspace-centered">
             <Spinner label="Reading session…" />

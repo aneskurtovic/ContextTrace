@@ -19,10 +19,10 @@ $installerName = "$assetPrefix-setup.exe"
 $assetNames = @(
     $installerName,
     "$installerName.sig",
-    'latest.json',
     "$assetPrefix-portable.zip",
     "$assetPrefix-cli.zip",
-    'SHA256SUMS.txt'
+    'SHA256SUMS.txt',
+    'latest.json'
 )
 $stageDirectory = "C:\woodpecker-cache\contexttrace\release-assets\$Tag"
 if (-not (Test-Path -LiteralPath $stageDirectory -PathType Container)) {
@@ -102,25 +102,22 @@ function Get-GitHubFailureDetails {
     return $details
 }
 
-# Refuse to create a release if the tag is missing or it already has a
-# published release. Reuse an existing draft so a transient upload failure can
-# be retried without replacing any already-uploaded asset.
+# Stage a public prerelease only after all Woodpecker validation and package
+# steps passed. The updater ignores prereleases; after all six assets are
+# uploaded and their digests verified, the final API call promotes it to stable.
 $tagRef = Invoke-RestMethod -Uri "$apiRoot/git/ref/tags/$Tag" -Headers $headers
 $existingReleases = Invoke-RestMethod -Uri "$apiRoot/releases?per_page=100" -Headers $headers
 $existingRelease = @($existingReleases | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1)
 if ($existingRelease.Count -gt 0) {
     $release = $existingRelease[0]
-    if (-not $release.draft) {
-        throw "A published release already exists for $Tag. Refusing to modify it."
-    }
 } else {
     $releaseBody = @{
         tag_name = $Tag
         target_commitish = [string]$tagRef.object.sha
         name = "ContextTrace $Tag"
-        body = "Windows x64 release candidate. Validate the downloaded installer, updater feed, portable app and CLI before publishing this draft."
-        draft = $true
-        prerelease = $false
+        body = "Windows x64 release. Woodpecker validation, packaging and asset integrity checks passed."
+        draft = $false
+        prerelease = $true
         generate_release_notes = $false
     } | ConvertTo-Json
     try {
@@ -128,22 +125,20 @@ if ($existingRelease.Count -gt 0) {
     } catch {
         $createFailure = Get-GitHubFailureDetails -ErrorRecord $_
 
-        # A server error can be returned after GitHub has created the draft.
-        # Re-read before failing so reruns remain safe and can resume that draft.
+        # A server error can be returned after GitHub has created the prerelease.
+        # Re-read before failing so reruns can safely resume it.
         try {
             $releasesAfterFailure = Invoke-RestMethod -Uri "$apiRoot/releases?per_page=100" -Headers $headers
         } catch {
             $lookupFailure = Get-GitHubFailureDetails -ErrorRecord $_
-            throw "Failed to create the GitHub draft release. $createFailure. Could not check whether GitHub created it: $lookupFailure"
+            throw "Failed to create the GitHub prerelease. $createFailure. Could not check whether GitHub created it: $lookupFailure"
         }
-        $createdDraft = @($releasesAfterFailure | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1)
-        if ($createdDraft.Count -gt 0 -and $createdDraft[0].draft) {
-            $release = $createdDraft[0]
-            Write-Warning "GitHub returned an error while creating the draft, but the draft exists and will be resumed. $createFailure"
-        } elseif ($createdDraft.Count -gt 0) {
-            throw "GitHub returned an error while creating the draft, and a published release now exists for $Tag. It will not be modified. $createFailure"
+        $createdRelease = @($releasesAfterFailure | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1)
+        if ($createdRelease.Count -gt 0) {
+            $release = $createdRelease[0]
+            Write-Warning "GitHub returned an error while creating the prerelease, but the release exists and will be resumed. $createFailure"
         } else {
-            throw "Failed to create the GitHub draft release. $createFailure"
+            throw "Failed to create the GitHub prerelease. $createFailure"
         }
     }
 }
@@ -155,14 +150,14 @@ foreach ($asset in $release.assets) {
 }
 $unexpectedAssets = @($existingAssets.Keys | Where-Object { $_ -notin $assetNames })
 if ($unexpectedAssets.Count -gt 0) {
-    throw "Draft contains unexpected assets: $($unexpectedAssets -join ', '). Remove the draft and retry."
+    throw "Release contains unexpected assets: $($unexpectedAssets -join ', '). Remove the release and retry."
 }
 
 foreach ($name in $assetNames) {
     if ($existingAssets.ContainsKey($name)) {
         $expectedDigest = "sha256:$($expectedHashes[$name])"
         if ($existingAssets[$name].digest -ne $expectedDigest) {
-            throw "Draft asset '$name' already exists but does not match the staged file. Remove the draft and retry."
+            throw "Release asset '$name' already exists but does not match the staged file. Refusing to replace a published asset."
         }
         Write-Host "Already uploaded and verified: $name"
         continue
@@ -181,16 +176,39 @@ foreach ($name in $assetNames) {
     Write-Host "Uploaded $name"
 }
 
-$publishedDraft = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
-$publishedNames = @($publishedDraft.assets | ForEach-Object { $_.Name } | Sort-Object)
+$verifiedRelease = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
+$publishedNames = @($verifiedRelease.assets | ForEach-Object { $_.Name } | Sort-Object)
 if (Compare-Object -ReferenceObject $expectedNames -DifferenceObject $publishedNames) {
-    throw 'GitHub draft does not contain the expected six release assets.'
+    throw 'GitHub release does not contain the expected six release assets.'
 }
-foreach ($asset in $publishedDraft.assets) {
+foreach ($asset in $verifiedRelease.assets) {
     if ($asset.digest -ne "sha256:$($expectedHashes[[string]$asset.name])") {
-        throw "GitHub draft asset '$($asset.name)' does not match the staged package."
+        throw "GitHub release asset '$($asset.name)' does not match the staged package."
     }
 }
 
-Write-Host "Draft release ready for acceptance: $($release.html_url)"
-Write-Host 'Review and download the draft assets on a separate clean Windows host before publishing.'
+if ($verifiedRelease.draft -or $verifiedRelease.prerelease) {
+    $publishBody = @{ draft = $false; prerelease = $false } | ConvertTo-Json
+    try {
+        Invoke-RestMethod -Method Patch -Uri "$apiRoot/releases/$($release.id)" -Headers $headers -ContentType 'application/json' -Body $publishBody | Out-Null
+    } catch {
+        $publishFailure = Get-GitHubFailureDetails -ErrorRecord $_
+        # Publishing may have succeeded despite an HTTP error. Read back the
+        # release before failing so retries stay idempotent.
+        try {
+            $verifiedRelease = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
+        } catch {
+            $lookupFailure = Get-GitHubFailureDetails -ErrorRecord $_
+            throw "Failed to promote the release to stable. $publishFailure. Could not verify its state: $lookupFailure"
+        }
+        if ($verifiedRelease.draft -or $verifiedRelease.prerelease) {
+            throw "Failed to promote the release to stable. $publishFailure"
+        }
+    }
+}
+
+$verifiedRelease = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
+if ($verifiedRelease.draft -or $verifiedRelease.prerelease) {
+    throw 'GitHub release still is not published as a stable release.'
+}
+Write-Host "Stable release published and all six assets verified: $($verifiedRelease.html_url)"

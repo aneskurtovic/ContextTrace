@@ -158,8 +158,9 @@ pub struct CorpusReport {
     pub by_day: Vec<DayTotals>,
     pub by_tool: Vec<ToolTotals>,
     pub models: Vec<(String, usize)>,
-    /// Sessions ranked by peak prompt: the ones that ran closest to their
-    /// ceiling.
+    /// Sessions ranked by their largest recorded prompt size. This is not a
+    /// context-window utilization ranking because we do not store a window
+    /// denominator on each session.
     pub largest_sessions: Vec<SessionRank>,
     /// Sessions ranked by cost.
     pub costliest_sessions: Vec<SessionRank>,

@@ -2,9 +2,8 @@
 #
 # The tag-only workflow runs on the existing self-hosted Windows local agent.
 # It creates the signed installer, updater manifest, portable/CLI ZIPs, and
-# checksum manifest, then leaves them under the agent's durable
-# C:/woodpecker-cache/contexttrace/release-assets/<tag> directory for download
-# or manual upload to a release page.
+# checksum manifest, waits for every validation workflow on that tag, then
+# uploads the verified files and promotes the release to stable on GitHub.
 
 labels:
   platform: windows/amd64
@@ -13,6 +12,11 @@ labels:
 when:
   - event: tag
     ref: refs/tags/v*
+
+depends_on:
+  - windows
+  - rust
+  - frontend
 
 variables:
   - &shell powershell
@@ -40,3 +44,13 @@ steps:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
     commands:
       - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/package-windows.ps1
+
+  - name: publish-release
+    image: *shell
+    depends_on:
+      - package-windows
+    environment:
+      GITHUB_RELEASE_TOKEN:
+        from_secret: GITHUB_RELEASE_TOKEN
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/publish-release.ps1 -Tag "$env:CI_COMMIT_TAG"
