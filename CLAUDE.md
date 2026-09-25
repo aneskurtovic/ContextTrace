@@ -6,6 +6,13 @@ Keep this file focused on repeatable development and Windows verification; do
 not put credentials, private corpus details or machine-specific runner paths in
 tracked files.
 
+## CI and release policy
+
+Always use Woodpecker CI for continuous integration and release packaging. Never
+add or run GitHub Actions jobs, use GitHub-hosted runners, or dispatch the
+repository's manual GitHub release workflow. Keep validation and Windows
+release builds on the configured Woodpecker runners.
+
 ## Verify changes
 
 Run from the repository root unless a command changes directory explicitly:
