@@ -4,6 +4,7 @@ import App from "./App";
 import * as api from "./api";
 import {
   demoCost,
+  demoCompactionDiff,
   demoArchiveHolding,
   demoContext,
   demoCorpus,
@@ -65,6 +66,7 @@ vi.mock("./api", () => ({
   clearNotificationHistory: vi.fn(),
   listenForNotificationUpdates: vi.fn(),
   listenForSessionUpdates: vi.fn(),
+  searchMemory: vi.fn(),
 }));
 
 const startup: StartupSummary = {
@@ -140,6 +142,9 @@ beforeEach(() => {
   mockedApi.getTurnDiff.mockImplementation(async (left, right) => demoTurnDiff(left, right));
   mockedApi.getTemporalGhost.mockImplementation(async (_agent, _id, leftTurn, rightTurn) =>
     demoTemporalGhost(leftTurn, rightTurn),
+  );
+  mockedApi.getCompactionDiff.mockImplementation(async (agent, _id, lineNo) =>
+    demoCompactionDiff(agent, lineNo),
   );
   mockedApi.getInstructionFiles.mockImplementation(async (_agent, id) => demoInstructionFiles(id));
   mockedApi.getCost.mockImplementation(async (_agent, id, _pricing, forecastTurns) =>
@@ -853,7 +858,7 @@ describe("desktop accessibility and state handling", () => {
   it("traps focus, restores it on close, and navigates actions with arrow keys", async () => {
     render(<App />);
 
-    const trigger = screen.getByRole("button", { name: /Search sessions, turns, actions/ });
+    const trigger = screen.getByRole("button", { name: /Commands and navigation/ });
     trigger.focus();
     fireEvent.click(trigger);
 
@@ -1009,10 +1014,124 @@ describe("conversation", () => {
     fireEvent.click((await screen.findAllByRole("button", { name: "turn 1" }))[0]);
 
     await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith("codex", demoSessions[0].id, 1));
+    expect(screen.getByRole("tab", { name: "Turns" }).getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByRole("heading", { name: "What filled the context window" })).not.toBeNull();
+  });
+
+  it("stops a failed transcript expansion and offers an explicit retry", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getTranscriptEntry
+      .mockRejectedValueOnce(new Error("temporary disk read failure"))
+      .mockImplementationOnce(async (_agent, _id, index) => demoTranscriptEntry(index));
+    render(<App />);
+    await openView("Chat");
+    const result = (await screen.findAllByRole("listitem")).find((entry) => entry.className.includes("toolResult"))!;
+
+    fireEvent.click(result.querySelector<HTMLButtonElement>(".transcript-toggle")!);
+    expect((await within(result).findByRole("alert")).textContent).toContain("temporary disk read failure");
+    expect(mockedApi.getTranscriptEntry).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(result).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mockedApi.getTranscriptEntry).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.querySelector(".transcript-text")!.textContent!.length).toBeGreaterThan(2_000));
+  });
+
+  it("ignores stale analysis results after switching sessions and clears loading", async () => {
+    const oldAnalysis = deferred<Awaited<ReturnType<typeof demoInstructionFiles>>>();
+    const currentAnalysis = deferred<Awaited<ReturnType<typeof demoInstructionFiles>>>();
+    const first = demoSessions[0];
+    const second = demoSessions[1];
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([first, second]));
+    mockedApi.getInstructionFiles.mockReturnValueOnce(oldAnalysis.promise).mockReturnValueOnce(currentAnalysis.promise);
+    render(<App />);
+    await openView("Turns");
+    fireEvent.click(screen.getByRole("button", { name: "Check instruction files" }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`session: .*${second.id.slice(0, 8)}`) }));
+
+    const checkButton = await screen.findByRole("button", { name: "Check instruction files" });
+    expect((checkButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(checkButton);
+    currentAnalysis.resolve({ ...demoInstructionFiles(second.id), comparisons: [{
+      ...demoInstructionFiles(second.id).comparisons[0], detail: "CURRENT SESSION RESULT",
+    }] });
+    expect(await screen.findByText("CURRENT SESSION RESULT")).not.toBeNull();
+    oldAnalysis.resolve({
+      ...demoInstructionFiles(first.id),
+      comparisons: [{ ...demoInstructionFiles(first.id).comparisons[0], detail: "STALE RESULT SHOULD NOT APPEAR" }],
+    });
+    await waitFor(() => expect(screen.queryByText("STALE RESULT SHOULD NOT APPEAR")).toBeNull());
+    expect(screen.getByText("CURRENT SESSION RESULT")).not.toBeNull();
+    expect((checkButton as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("routes a compaction marker to the visible diff autopsy", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await openView("Overview");
+
+    fireEvent.click(screen.getByRole("button", { name: /Inspect compaction at turn 17/ }));
+
+    expect(screen.getByRole("tab", { name: "Diff" }).getAttribute("aria-selected")).toBe("true");
+    const heading = await screen.findByRole("heading", { name: /What turn 17's compaction replaced/ });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+
+  it("deep-links content search hits to the highlighted transcript record", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.searchMemory.mockResolvedValue([{
+      sessionId: demoSessions[0].id,
+      agent: "codex",
+      project: demoSessions[0].project,
+      line: 10,
+      turn: 1,
+      preview: "needle in a tool result",
+    }]);
+    render(<App />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "needle" } });
+    const hit = await screen.findByRole("button", { name: /needle in a tool result/ });
+    fireEvent.click(hit);
+
+    expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => expect(document.querySelector(".transcript-entry.highlighted")).not.toBeNull());
+  });
+
+  it("labels the 50-result search cap and exposes all fetched hits", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.searchMemory.mockResolvedValue(Array.from({ length: 50 }, (_, index) => ({
+      sessionId: demoSessions[0].id, agent: "codex" as const, project: demoSessions[0].project,
+      line: index + 1, turn: 1, preview: `search hit ${index + 1}`,
+    })));
+    render(<App />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "needle" } });
+    expect(await screen.findByText("50 (cap)")).not.toBeNull();
+    expect(screen.getByText(/capped count, not the total/)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show remaining 44 fetched hits" }));
+    expect(screen.getByRole("button", { name: /search hit 50/ })).not.toBeNull();
   });
 });
 
 describe('notifications', () => {
+  it('contains keyboard focus in the drawer and restores it to the opener', async () => {
+    render(<App />);
+    const bell = await screen.findByRole('button', { name: /^Notifications/ });
+    fireEvent.click(bell);
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(document.querySelector('.app-content')?.hasAttribute('inert')).toBe(true);
+    const settings = within(drawer).getByRole('button', { name: 'Settings' });
+    await waitFor(() => expect(document.activeElement).toBe(settings));
+
+    fireEvent.keyDown(settings, { key: 'Tab', shiftKey: true });
+    const tabbable = Array.from(drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ));
+    expect(document.activeElement).toBe(tabbable.at(-1));
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull());
+    expect(document.querySelector('.app-content')?.hasAttribute('inert')).toBe(false);
+    expect(document.activeElement).toBe(bell);
+  });
+
   it('opens the feed, marks a finding read, and navigates to its session turn', async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
@@ -1215,6 +1334,12 @@ describe('notifications', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'Know when a session needs attention' })).not.toBeNull();
+    const onboarding = screen.getByRole('dialog', { name: 'Know when a session needs attention' });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Enable monitoring' })));
+    expect(document.querySelector('.app-content')?.hasAttribute('inert')).toBe(true);
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+    expect(onboarding).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Enable monitoring' }));
     await waitFor(() => expect(mockedApi.updateNotificationSettings).toHaveBeenCalledWith(
       expect.objectContaining({ enabled: true, onboardingComplete: true }),
@@ -1647,6 +1772,25 @@ describe("Find hidden changes gating and baseline controls", () => {
     const [, , left, right] = mockedApi.getTemporalGhost.mock.calls.at(-1)!;
     expect(left).toBe(pinned);
     expect(right).not.toBe(pinned);
+  });
+
+  it("clears a pending reconstruction when the selected turn changes", async () => {
+    const pending = deferred<Awaited<ReturnType<typeof demoTemporalGhost>>>();
+    mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
+    mockedApi.getTemporalGhost.mockReturnValueOnce(pending.promise);
+    render(<App />);
+    await openView("Turns");
+    fireEvent.click(await screen.findByRole("button", { name: /^Pin turn \d+ as baseline$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous measured turn" }));
+    const button = await ghostButton();
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(button);
+    await waitFor(() => expect(button.textContent).toContain("Reconstructing"));
+    fireEvent.click(screen.getByRole("button", { name: "Next measured turn" }));
+    await waitFor(() => expect(button.textContent).toBe("Find hidden changes"));
+    expect(button.hasAttribute("disabled")).toBe(true);
+    pending.resolve(demoTemporalGhost(18, 17));
+    await waitFor(() => expect(screen.queryByText("Temporal ghost")).toBeNull());
   });
 });
 

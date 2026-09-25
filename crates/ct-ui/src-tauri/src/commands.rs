@@ -1,9 +1,9 @@
 use ct_application::{
-    residual_steps, timeline, AppError, Comparability, ContextTrace, CostCategory, CostForecast,
-    CostReport, CostTurn, Departure, ExportRedaction, GhostItem, InstructionFileComparison,
-    InstructionFileReport, InstructionFileStatus, LifecycleSweep, ResidualPoint, SessionDiff,
-    SessionFilter, SessionSource, TemporalGhost, UnpricedTurn, RESIDUAL_STEP_THRESHOLD,
-    STEP_ATTRIBUTION_WINDOW,
+    redact_preview, residual_steps, timeline, AppError, Comparability, ContextTrace, CostCategory,
+    CostForecast, CostReport, CostTurn, Departure, ExportRedaction, GhostItem,
+    InstructionFileComparison, InstructionFileReport, InstructionFileStatus, LifecycleSweep,
+    ResidualPoint, SessionDiff, SessionFilter, SessionSource, TemporalGhost, UnpricedTurn,
+    RESIDUAL_STEP_THRESHOLD, STEP_ATTRIBUTION_WINDOW,
 };
 use ct_domain::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use ct_domain::model::context::{unmeasured_content_items, ContextItem};
@@ -515,7 +515,7 @@ impl AppState {
                 if !line_text.contains(&needle) {
                     continue;
                 }
-                let preview = line.chars().take(180).collect::<String>();
+                let preview = redact_preview(line, 180);
                 let turn = self
                     .cached_session(descriptor.agent, descriptor.id.as_str(), false)
                     .ok()

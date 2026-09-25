@@ -68,7 +68,9 @@ pub use lifecycle::{Departure, ItemLifecycle, ItemRecord, LifecycleSweep, Resolv
 pub use notifications::{
     CostBudgetObservation, NotificationEngine, NotificationEvaluation, NotificationInputs,
 };
-pub use secrets::{ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport};
+pub use secrets::{
+    redact_preview, ExportRedaction, ExportReport, SecretFinding, SecretKind, SecretScanReport,
+};
 pub use transcript::{
     entry as transcript_entry, page as transcript_page, TranscriptEntry, TranscriptKind,
     TranscriptPage,

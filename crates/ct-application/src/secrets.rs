@@ -145,6 +145,14 @@ pub(crate) fn redact_text(text: &str) -> (Cow<'_, str>, usize) {
     (Cow::Owned(out), matches.len())
 }
 
+/// Produce a bounded, credential-redacted snippet suitable for local UI display.
+/// Redaction runs before truncation so a secret crossing the display boundary
+/// cannot leak as a partial value.
+pub fn redact_preview(text: &str, max_chars: usize) -> String {
+    let (redacted, _) = redact_text(text);
+    redacted.chars().take(max_chars).collect()
+}
+
 /// Redact the string-bearing parts of a source without changing its wire shape.
 pub(crate) fn redact_source(source: &ContextSource) -> (Cow<'_, ContextSource>, usize) {
     match source {
@@ -795,6 +803,17 @@ mod tests {
         AgentKind, Event, EventId, EventKind, FileId, MessageRole, SessionId, SessionMetadata,
         TokenUsage, Turn,
     };
+
+    #[test]
+    fn preview_redacts_secrets_before_truncating_at_the_boundary() {
+        let token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB";
+        let source = format!("{} api_key={}", "x".repeat(150), token);
+        let preview = redact_preview(&source, 180);
+        assert!(!preview.contains("ghp_"));
+        assert!(!preview.contains("abcdefghijklmnopqrstuvwxyz"));
+        assert!(preview.contains("[REDACTED:"));
+        assert!(redact_preview("short", 180).contains("short"));
+    }
 
     #[test]
     fn recognises_curated_provider_tokens_without_retaining_values() {

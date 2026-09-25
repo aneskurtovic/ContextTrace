@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MutableRefObject,
 } from "react";
 import * as api from "./api";
 import {
@@ -105,6 +106,78 @@ function AgentMark({ agent }: { agent: Agent }) {
       {agent === "codex" ? "CX" : "CC"}
     </span>
   );
+}
+
+const MODAL_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function modalFocusable(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR));
+}
+
+/** Keep keyboard focus inside a real modal and return it to the opener. */
+function useModalFocusTrap(
+  open: boolean,
+  containerRef: MutableRefObject<HTMLElement | null>,
+  onEscape: () => void,
+) {
+  const previousFocus = useRef<HTMLElement | null>(null);
+  const escapeRef = useRef(onEscape);
+
+  useEffect(() => {
+    escapeRef.current = onEscape;
+  }, [onEscape]);
+
+  useEffect(() => {
+    if (!open) return;
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const focusInitial = () => {
+      const initial = container.querySelector<HTMLElement>('[data-modal-initial-focus]');
+      (initial ?? modalFocusable(container)[0] ?? container).focus({ preventScroll: true });
+    };
+    const focusTimer = window.setTimeout(focusInitial, 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        escapeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = modalFocusable(container);
+      if (!focusable.length) {
+        event.preventDefault();
+        container.focus({ preventScroll: true });
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    container.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      container.removeEventListener("keydown", handleKeyDown);
+      const previous = previousFocus.current;
+      previousFocus.current = null;
+      if (previous && document.contains(previous)) {
+        // The owner removes `inert` in the same state transition that closes
+        // the dialog. Defer restoration one task so focus is not sent to an
+        // element that is still inert during effect cleanup.
+        window.setTimeout(() => {
+          if (document.contains(previous)) previous.focus();
+        }, 0);
+      }
+    };
+  }, [containerRef, open]);
 }
 
 function Spinner({ label }: { label: string }) {
@@ -231,18 +304,34 @@ function SessionListItem({
   );
 }
 
-function MemorySearchResults({ hits, loading, onSelect }: { hits: MemoryHit[]; loading: boolean; onSelect: (hit: MemoryHit) => void }) {
-  if (!loading && !hits.length) return null;
+function MemorySearchResults({
+  hits,
+  loading,
+  error,
+  onSelect,
+}: {
+  hits: MemoryHit[];
+  loading: boolean;
+  error: string | null;
+  onSelect: (hit: MemoryHit) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  if (!loading && !hits.length && !error) return null;
   return (
     <div className="memory-results" aria-live="polite">
-      <div className="memory-results-heading"><span>Memory hits</span><span>{loading ? "…" : hits.length}</span></div>
-      {loading ? <Spinner label="Searching local session content…" /> : hits.slice(0, 6).map((hit, index) => (
+      <div className="memory-results-heading"><span>Content hits · agent filter only</span><span>{loading ? "…" : hits.length >= 50 ? "50 (cap)" : hits.length}</span></div>
+      <p className="memory-results-note">Search covers all projects and subagents; use the sidebar filters to narrow sessions.</p>
+      {loading ? <Spinner label="Searching local session content…" /> : hits.slice(0, showAll ? 50 : 6).map((hit, index) => (
         <button type="button" className="memory-hit" key={`${hit.agent}:${hit.sessionId}:${hit.line}:${index}`} onClick={() => onSelect(hit)}>
           <strong>{hit.project ?? hit.sessionId.slice(0, 8)}</strong>
           <small>{hit.agent} · {hit.turn ? `turn ${hit.turn} · ` : ""}line {hit.line}</small>
           <code>{hit.preview}</code>
-        </button>
-      ))}
+          </button>
+        ))}
+      {error && <p className="memory-results-error" role="alert">Search failed: {error}</p>}
+      {!loading && hits.length >= 50 && <p className="memory-results-more">Search stops at 50 matches; this is a capped count, not the total number of matches.</p>}
+      {!loading && hits.length > 6 && !showAll && <button type="button" className="memory-results-more-button" onClick={() => setShowAll(true)}>Show remaining {hits.length - 6} fetched hits</button>}
+      {!loading && showAll && hits.length > 6 && <button type="button" className="memory-results-more-button" onClick={() => setShowAll(false)}>Show fewer</button>}
     </div>
   );
 }
@@ -1028,7 +1117,7 @@ function ContextComposition({ context }: { context: ContextDetail }) {
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Composition</span>
-          <h2 id="composition-heading">What filled the context window</h2>
+          <h2 id="composition-heading" tabIndex={-1}>What filled the context window</h2>
         </div>
         <span className="panel-total">{context.totalTokens.toLocaleString()} tokens</span>
       </div>
@@ -1632,6 +1721,10 @@ function CompactionAutopsy({
   loading: boolean;
   onClose: () => void;
 }) {
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  useEffect(() => {
+    if (diff && !loading) headingRef.current?.focus({ preventScroll: true });
+  }, [diff, loading]);
   if (!diff && !loading) return null;
   const heading =
     diff?.status === "available"
@@ -1653,7 +1746,7 @@ function CompactionAutopsy({
           <div className="panel-heading compaction-heading">
             <div>
               <span className="eyebrow">Compaction autopsy</span>
-              <h2 id="compaction-heading">{heading}</h2>
+           <h2 ref={headingRef} id="compaction-heading" tabIndex={-1}>{heading}</h2>
             </div>
             <button className="compaction-close" onClick={onClose} aria-label="Close compaction autopsy">×</button>
           </div>
@@ -2466,7 +2559,14 @@ function CorpusPanel({ demoData }: { demoData: boolean }) {
       </div>
     );
   }
-  if (error) return <p className="empty-inline">{error}</p>;
+  if (error) {
+    return (
+      <div className="corpus-error" role="alert">
+        <p className="empty-inline">Could not read the local corpus: {error}</p>
+        <button type="button" onClick={() => load(true)}>Retry sweep</button>
+      </div>
+    );
+  }
   if (!report) return null;
 
   const pressure = report.pressure;
@@ -2686,15 +2786,16 @@ function TranscriptRow({
   const [expanded, setExpanded] = useState(!entry.collapsed);
   const [full, setFull] = useState<TranscriptEntry | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const shown = full ?? entry;
-  const needsFetch = expanded && entry.truncated && !full && !loading;
+  const needsFetch = expanded && entry.truncated && !full && !loading && !loadError;
 
   useEffect(() => {
     if (!needsFetch) return;
     setLoading(true);
     api.getTranscriptEntry(session.agent, session.id, entry.index)
       .then(setFull)
-      .catch(() => undefined)
+      .catch((problem: unknown) => setLoadError(errorMessage(problem)))
       .finally(() => setLoading(false));
   }, [needsFetch, session.agent, session.id, entry.index]);
 
@@ -2757,6 +2858,12 @@ function TranscriptRow({
               {shown.chars?.toLocaleString() ?? "?"} characters.
             </p>
           )}
+          {loadError && (
+            <p className="transcript-load-error" role="alert">
+              Could not read the rest of this entry: {loadError}{" "}
+              <button type="button" onClick={() => setLoadError(null)}>Retry</button>
+            </p>
+          )}
         </>
       ) : (
         <p className="transcript-collapsed">{entry.text.split("\n")[0].slice(0, 140) || "—"}</p>
@@ -2790,6 +2897,7 @@ function TranscriptPanel({
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryGeneration, setRetryGeneration] = useState(0);
 
   const key = `${session.agent}:${session.id}`;
   useEffect(() => {
@@ -2811,7 +2919,7 @@ function TranscriptPanel({
     };
     // Keyed on the session, not on the objects: a re-render must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, retryGeneration]);
 
   const loadMore = () => {
     if (!page?.hasMore || loading) return;
@@ -2825,6 +2933,15 @@ function TranscriptPanel({
       .finally(() => setLoading(false));
   };
 
+  const retryTranscript = () => {
+    if (entries.length && page?.hasMore) {
+      setError(null);
+      loadMore();
+    } else {
+      setRetryGeneration((current) => current + 1);
+    }
+  };
+
   // The named record can sit past the first page, and a page that was never
   // fetched cannot be scrolled to. Keep pulling pages until the line arrives
   // or the transcript runs out; landing the reader at the top of a long
@@ -2832,14 +2949,21 @@ function TranscriptPanel({
   const highlightLoaded =
     highlightLine != null && entries.some((entry) => entry.line === highlightLine);
   useEffect(() => {
-    if (highlightLine == null || highlightLoaded || loading || !page?.hasMore) return;
+    if (highlightLine == null || highlightLoaded || loading || error || !page?.hasMore) return;
     loadMore();
     // loadMore is redefined on every render; depending on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlightLine, highlightLoaded, loading, page?.hasMore]);
+  }, [error, highlightLine, highlightLoaded, loading, page?.hasMore]);
 
   if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
-  if (error) return <p className="empty-inline">{error}</p>;
+  if (error && !entries.length) {
+    return (
+      <div className="transcript-error" role="alert">
+        <p className="empty-inline">Could not read this conversation: {error}</p>
+        <button type="button" onClick={retryTranscript}>Retry conversation</button>
+      </div>
+    );
+  }
   if (!entries.length) {
     return <p className="empty-inline">This session recorded no messages.</p>;
   }
@@ -2861,6 +2985,12 @@ function TranscriptPanel({
             rather than "messages" is the difference. */}
         <p>{entries.length} of {page?.total ?? entries.length} entries</p>
       </header>
+      {error && (
+        <p className="transcript-load-error" role="alert">
+          Could not load the next page: {error}{" "}
+          <button type="button" onClick={retryTranscript}>Retry</button>
+        </p>
+      )}
       <ol className="transcript-list">
         {entries.map((entry) => (
           <TranscriptRow
@@ -2928,6 +3058,7 @@ function SessionWorkspace({
   onCloseLifecycle,
   onRunDoctor,
   onTurn,
+  onTranscriptTurn,
   onCompaction,
   onCloseCompaction,
   instructionFiles,
@@ -2945,6 +3076,8 @@ function SessionWorkspace({
   liveFollow,
   onLiveFollow,
   transcriptHighlightLine,
+  focusComposition,
+  onCompositionFocused,
 }: {
   activeView: WorkspaceView;
   detail: SessionDetail;
@@ -2993,6 +3126,7 @@ function SessionWorkspace({
   onCloseLifecycle: () => void;
   onRunDoctor: () => void;
   onTurn: (turn: number) => void;
+  onTranscriptTurn: (turn: number) => void;
   onCompaction: (lineNo: number) => void;
   onCloseCompaction: () => void;
   instructionFiles: InstructionFileReport | null;
@@ -3009,6 +3143,8 @@ function SessionWorkspace({
   onCompareSession: (value: string) => void;
   liveFollow: boolean;
   onLiveFollow: (value: boolean) => void;
+  focusComposition: boolean;
+  onCompositionFocused: () => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
   // The tab exists to answer where a session's context went, and opening it
@@ -3023,6 +3159,13 @@ function SessionWorkspace({
     measuredSessions.current.add(sessionKey);
     onRunResidual();
   }, [activeView, onRunResidual, residualLoading, sessionKey, measuredSessions]);
+  useEffect(() => {
+    if (!focusComposition || activeView !== "turns" || !context) return;
+    const heading = document.getElementById("composition-heading");
+    if (!heading) return;
+    heading.focus();
+    onCompositionFocused();
+  }, [activeView, context?.turn, focusComposition, onCompositionFocused]);
   const measuredTurns = growth.filter((point) => point.promptTokens != null);
   const selectedIndex = Math.max(
     0,
@@ -3279,7 +3422,7 @@ function SessionWorkspace({
             session={detail.session}
             modelUsage={detail.modelUsage}
             unattributedModelTurns={detail.unattributedModelTurns}
-            onTurn={onTurn}
+            onTurn={onTranscriptTurn}
             highlightLine={transcriptHighlightLine}
           />
         )}
@@ -3430,17 +3573,7 @@ function NotificationCenter({
   onLoadMore: () => void;
 }) {
   const drawerRef = useRef<HTMLElement | null>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    drawerRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    return () => {
-      const previous = previousFocus.current;
-      previousFocus.current = null;
-      if (previous && document.contains(previous)) previous.focus();
-    };
-  }, [open]);
+  useModalFocusTrap(open, drawerRef, onClose);
   if (!open) return null;
   const notifications = page?.notifications ?? [];
   // The missing-settings arm below prints its own copy of `error`, so the
@@ -3448,7 +3581,7 @@ function NotificationCenter({
   const settingsMissing = settingsOpen && !settings;
   return (
     <>
-      <button className='notification-scrim' type='button' aria-label='Close notifications' onClick={onClose} />
+      <button className='notification-scrim' type='button' tabIndex={-1} aria-label='Close notifications' onClick={onClose} />
       <aside ref={drawerRef} className='notification-drawer' role='dialog' aria-modal='true' aria-label='Notifications'>
         <header className='notification-drawer-header'>
           <div>
@@ -3456,7 +3589,7 @@ function NotificationCenter({
             <h2>Notifications</h2>
           </div>
           <div className='notification-header-actions'>
-            <button type='button' className='notification-settings-toggle' onClick={onToggleSettings} aria-pressed={settingsOpen}>
+            <button type='button' className='notification-settings-toggle' data-modal-initial-focus onClick={onToggleSettings} aria-pressed={settingsOpen}>
               <span aria-hidden='true'>⚙</span>
               <span>Settings</span>
             </button>
@@ -3608,10 +3741,16 @@ function NotificationOnboarding({
   settings: NotificationSettings;
   onDecision: (enabled: boolean) => void;
 }) {
+  const onboardingRef = useRef<HTMLElement | null>(null);
+  useModalFocusTrap(
+    !settings.onboardingComplete,
+    onboardingRef,
+    () => onDecision(false),
+  );
   if (settings.onboardingComplete) return null;
   return (
     <div className='notification-onboarding-backdrop'>
-      <section className='notification-onboarding' role='dialog' aria-modal='true' aria-labelledby='notification-onboarding-title'>
+      <section ref={onboardingRef} className='notification-onboarding' role='dialog' aria-modal='true' aria-labelledby='notification-onboarding-title' tabIndex={-1}>
         <span className='notification-onboarding-icon' aria-hidden='true'>♢</span>
         <span className='eyebrow'>Optional · local only</span>
         <h2 id='notification-onboarding-title'>Know when a session needs attention</h2>
@@ -3622,7 +3761,7 @@ function NotificationOnboarding({
           <li>No network service is used.</li>
         </ul>
         <div>
-          <button type='button' className='primary' onClick={() => onDecision(true)}>Enable monitoring</button>
+          <button type='button' className='primary' data-modal-initial-focus onClick={() => onDecision(true)}>Enable monitoring</button>
           <button type='button' onClick={() => onDecision(false)}>Not now</button>
         </div>
       </section>
@@ -3659,6 +3798,7 @@ export default function App() {
   const [detailFor, setDetailFor] = useState<SessionKey | null>(null);
   const [context, setContext] = useState<ContextDetail | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>("overview");
+  const [focusComposition, setFocusComposition] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
   const [resizing, setResizing] = useState(false);
@@ -3679,6 +3819,7 @@ export default function App() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [memoryHits, setMemoryHits] = useState<MemoryHit[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -3766,22 +3907,39 @@ export default function App() {
   const measuredSessions = useRef<Set<string>>(new Set());
   const catalogRequest = useRef(0);
   const archiveRequest = useRef(0);
-  const evidenceRequest = useRef(0);
+  const instructionRequest = useRef(0);
+  const ghostRequest = useRef(0);
+  const costRequest = useRef(0);
+  const compareRequest = useRef(0);
   const notificationRequest = useRef(0);
   const paletteRef = useRef<HTMLElement | null>(null);
   const paletteInputRef = useRef<HTMLInputElement | null>(null);
   const paletteActionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const palettePreviousFocus = useRef<HTMLElement | null>(null);
   const paletteWasOpen = useRef(false);
+  const appContentRef = useRef<HTMLDivElement | null>(null);
+  const onboardingOpen = notificationSettings != null && !notificationSettings.onboardingComplete;
+  const modalOpen = onboardingOpen || notificationDrawerOpen || paletteOpen;
+
+  useEffect(() => {
+    const content = appContentRef.current;
+    if (!content) return;
+    if (modalOpen) {
+      content.setAttribute("inert", "");
+    } else {
+      content.removeAttribute("inert");
+    }
+  }, [modalOpen]);
 
   const openPalette = useCallback(() => {
+    if (notificationDrawerOpen || onboardingOpen) return;
     if (!paletteOpen && document.activeElement instanceof HTMLElement) {
       palettePreviousFocus.current = document.activeElement;
     }
     setPaletteOpen(true);
     setPaletteQuery("");
     setPaletteActiveIndex(0);
-  }, [paletteOpen]);
+  }, [notificationDrawerOpen, onboardingOpen, paletteOpen]);
 
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
@@ -3804,7 +3962,7 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !notificationDrawerOpen && !onboardingOpen) {
         event.preventDefault();
         openPalette();
       } else if (event.key === "Escape" && paletteOpen) {
@@ -3815,7 +3973,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closePalette, notificationDrawerOpen, openPalette, paletteOpen]);
+  }, [closePalette, notificationDrawerOpen, onboardingOpen, openPalette, paletteOpen]);
 
   // A project filter chosen under one agent may name a project the other
   // agent never wrote (a Codex-only checkout, say). Left in place across an
@@ -4080,13 +4238,19 @@ export default function App() {
     if (demoData || !debouncedQuery || typeof memorySearch !== "function") {
       setMemoryHits([]);
       setMemoryLoading(false);
+      setMemoryError(null);
       return;
     }
     let cancelled = false;
     setMemoryLoading(true);
-    memorySearch!(agentFilter === "all" ? undefined : agentFilter, debouncedQuery, 50)
-      .then((hits) => { if (!cancelled) setMemoryHits(hits); })
-      .catch(() => { if (!cancelled) setMemoryHits([]); })
+    setMemoryError(null);
+    Promise.resolve(memorySearch!(agentFilter === "all" ? undefined : agentFilter, debouncedQuery, 50))
+      .then((hits) => { if (!cancelled) setMemoryHits(Array.isArray(hits) ? hits : []); })
+      .catch((problem: unknown) => {
+        if (cancelled) return;
+        setMemoryHits([]);
+        setMemoryError(errorMessage(problem));
+      })
       .finally(() => { if (!cancelled) setMemoryLoading(false); });
     return () => { cancelled = true; };
   }, [agentFilter, debouncedQuery, demoData]);
@@ -4103,9 +4267,16 @@ export default function App() {
       lifecycleRequest.current += 1;
       compactionRequest.current += 1;
       residualRequest.current += 1;
+      instructionRequest.current += 1;
+      ghostRequest.current += 1;
+      setGhost(null);
+      setGhostLoading(false);
+      costRequest.current += 1;
+      compareRequest.current += 1;
       setDetail(null);
       setDetailFor(null);
       setContext(null);
+      setFocusComposition(false);
       setDoctor(null);
       setLifecycle(null);
       setLifecycleItem(null);
@@ -4141,9 +4312,14 @@ export default function App() {
     lifecycleRequest.current += 1;
     compactionRequest.current += 1;
     residualRequest.current += 1;
+    instructionRequest.current += 1;
+    ghostRequest.current += 1;
+    costRequest.current += 1;
+    compareRequest.current += 1;
     setDetail(null);
     setDetailFor(null);
     setContext(null);
+    setFocusComposition(false);
     setDoctor(null);
     setLifecycle(null);
     setLifecycleItem(null);
@@ -4226,18 +4402,29 @@ export default function App() {
   }, [liveFollow, selected]);
 
   const compareSession = useCallback(async (value: string) => {
-    if (!value) { setCompareDetail(null); return; }
+    const request = ++compareRequest.current;
+    const session = selected;
+    if (!value) {
+      setCompareDetail(null);
+      setCompareLoading(false);
+      return;
+    }
     const target = JSON.parse(value) as { agent: Agent; id: string };
     setCompareLoading(true);
     try {
-      setCompareDetail(await api.inspectSession(target.agent, target.id));
+      const detail = await api.inspectSession(target.agent, target.id);
+      if (request === compareRequest.current && sameSession(session, selected)) {
+        setCompareDetail(detail);
+      }
     } catch (loadError) {
-      setError(errorMessage(loadError));
-      setCompareDetail(null);
+      if (request === compareRequest.current && sameSession(session, selected)) {
+        setError(errorMessage(loadError));
+        setCompareDetail(null);
+      }
     } finally {
-      setCompareLoading(false);
+      if (request === compareRequest.current) setCompareLoading(false);
     }
-  }, []);
+  }, [selected]);
 
   const selectTurn = useCallback(
     async (turn: number) => {
@@ -4245,6 +4432,9 @@ export default function App() {
       const request = ++turnRequest.current;
       doctorRequest.current += 1;
       lifecycleRequest.current += 1;
+      ghostRequest.current += 1;
+      setGhost(null);
+      setGhostLoading(false);
       const session = selected;
       setContext(null);
       setDoctor(null);
@@ -4272,6 +4462,14 @@ export default function App() {
     [context?.turn, selected],
   );
 
+  const selectTranscriptTurn = useCallback((turn: number) => {
+    setActiveView("turns");
+    setFocusComposition(true);
+    void selectTurn(turn);
+  }, [selectTurn]);
+
+  const compositionFocused = useCallback(() => setFocusComposition(false), []);
+
   /**
    * Open a session, leaving the corpus view if it is showing.
    *
@@ -4283,6 +4481,15 @@ export default function App() {
   const selectSession = useCallback((session: SessionKey) => {
     setCorpusOpen(false);
     setSelected((current) => (sameSession(current, session) ? current : session));
+  }, []);
+
+  const selectMemoryHit = useCallback((hit: MemoryHit) => {
+    const destination = { agent: hit.agent, id: hit.sessionId };
+    setCorpusOpen(false);
+    setPendingNotificationTurn(null);
+    setNotificationHighlight({ ...destination, line: hit.line });
+    setActiveView("chat");
+    setSelected((current) => (sameSession(current, destination) ? current : destination));
   }, []);
 
   const openFeedNotification = useCallback((notification: NotificationRecord) => {
@@ -4381,61 +4588,68 @@ export default function App() {
 
   const runInstructionFiles = useCallback(async () => {
     if (!selected) return;
-    const request = ++evidenceRequest.current;
+    const request = ++instructionRequest.current;
     const session = selected;
     setInstructionFilesLoading(true);
     setError(null);
     try {
       const report = await api.getInstructionFiles(session.agent, session.id);
-      if (request === evidenceRequest.current && sameSession(session, selected)) {
+       if (request === instructionRequest.current && sameSession(session, selected)) {
         setInstructionFiles(report);
       }
     } catch (loadError) {
-      if (request === evidenceRequest.current) setError(errorMessage(loadError));
+      if (request === instructionRequest.current && sameSession(session, selected)) setError(errorMessage(loadError));
     } finally {
-      if (request === evidenceRequest.current) setInstructionFilesLoading(false);
+      if (request === instructionRequest.current) setInstructionFilesLoading(false);
     }
   }, [selected]);
 
   const runGhost = useCallback(async () => {
     if (!selected || !context || pinnedTurn == null || pinnedTurn === context.turn) return;
-    const request = ++evidenceRequest.current;
+    const request = ++ghostRequest.current;
     const session = selected;
+    const baselineTurn = pinnedTurn;
+    const currentTurn = context.turn;
     setGhostLoading(true);
     setError(null);
     try {
       const report = await api.getTemporalGhost(
         session.agent,
         session.id,
-        pinnedTurn,
-        context.turn,
+        baselineTurn,
+        currentTurn,
       );
-      if (request === evidenceRequest.current && sameSession(session, selected)) {
+      if (
+        request === ghostRequest.current &&
+        sameSession(session, selected) &&
+        pinnedTurn === baselineTurn &&
+        context?.turn === currentTurn
+      ) {
         setGhost(report);
       }
     } catch (loadError) {
-      if (request === evidenceRequest.current) setError(errorMessage(loadError));
+      if (request === ghostRequest.current && sameSession(session, selected)) setError(errorMessage(loadError));
     } finally {
-      if (request === evidenceRequest.current) setGhostLoading(false);
+      if (request === ghostRequest.current) setGhostLoading(false);
     }
   }, [context, pinnedTurn, selected]);
 
   const runCost = useCallback(
     async (pricingPath: string | null, forecastTurns: number | null) => {
       if (!selected) return;
-      const request = ++evidenceRequest.current;
+      const request = ++costRequest.current;
       const session = selected;
       setCostLoading(true);
       setError(null);
       try {
         const report = await api.getCost(session.agent, session.id, pricingPath, forecastTurns);
-        if (request === evidenceRequest.current && sameSession(session, selected)) {
+         if (request === costRequest.current && sameSession(session, selected)) {
           setCost(report);
         }
       } catch (loadError) {
-        if (request === evidenceRequest.current) setError(errorMessage(loadError));
+        if (request === costRequest.current && sameSession(session, selected)) setError(errorMessage(loadError));
       } finally {
-        if (request === evidenceRequest.current) setCostLoading(false);
+        if (request === costRequest.current) setCostLoading(false);
       }
     },
     [selected],
@@ -4474,6 +4688,7 @@ export default function App() {
   const inspectCompaction = useCallback(
     async (lineNo: number) => {
       if (!selected) return;
+      setActiveView("diff");
       const request = ++compactionRequest.current;
       const session = selected;
       setCompactionLineNo(lineNo);
@@ -4557,6 +4772,9 @@ export default function App() {
   }, [leftTarget?.agent, leftTarget?.id, leftTarget?.turn, rightTarget?.agent, rightTarget?.id, rightTarget?.turn]);
 
   const togglePin = useCallback(() => {
+    ghostRequest.current += 1;
+    setGhost(null);
+    setGhostLoading(false);
     setPinnedTurn((current) => (current == null ? (comparisonTurn ?? null) : null));
   }, [comparisonTurn]);
 
@@ -4827,6 +5045,7 @@ export default function App() {
         </div>
       )}
 
+      <div ref={appContentRef} className="app-content">
       <header className="app-topbar">
         <div className="topbar-context">
           <span className="compact-mark" aria-hidden="true"><i /><i /></span>
@@ -4852,7 +5071,7 @@ export default function App() {
         </div>
         <button className="command-trigger" type="button" onClick={openPalette} aria-haspopup="dialog">
           <span aria-hidden="true">⌕</span>
-          <span>Search sessions, turns, actions…</span>
+          <span>Commands and navigation…</span>
           <kbd>Ctrl K</kbd>
         </button>
         <div className="topbar-actions">
@@ -4862,7 +5081,8 @@ export default function App() {
             aria-label={`Notifications${notificationPage?.unreadCount ? `, ${notificationPage.unreadCount} unread` : ''}`}
             aria-haspopup='dialog'
             aria-expanded={notificationDrawerOpen}
-            onClick={() => {
+            onClick={(event) => {
+              if (!notificationDrawerOpen) event.currentTarget.focus();
               setNotificationDrawerOpen((current) => !current);
               setNotificationSettingsOpen(false);
             }}
@@ -4915,7 +5135,8 @@ export default function App() {
         <MemorySearchResults
           hits={memoryHits}
           loading={memoryLoading}
-          onSelect={(hit) => selectSession({ agent: hit.agent, id: hit.sessionId })}
+          error={memoryError}
+          onSelect={selectMemoryHit}
         />
 
         <div className="filter-row" role="group" aria-label="Filter sessions by agent">
@@ -5217,6 +5438,7 @@ export default function App() {
             onCloseLifecycle={closeLifecycle}
             onRunDoctor={runDoctor}
             onTurn={selectTurn}
+            onTranscriptTurn={selectTranscriptTurn}
             onCompaction={inspectCompaction}
             onCloseCompaction={closeCompaction}
             instructionFiles={instructionFiles}
@@ -5233,6 +5455,8 @@ export default function App() {
             onCompareSession={compareSession}
             liveFollow={liveFollow}
             onLiveFollow={setLiveFollow}
+            focusComposition={focusComposition}
+            onCompositionFocused={compositionFocused}
           />
         ) : (
           <div className="workspace-centered empty-workspace">
@@ -5241,6 +5465,7 @@ export default function App() {
             <p>Choose a Codex or Claude Code run to see where its context went.</p>
           </div>
         )}
+      </div>
       </div>
       </div>
     </div>
