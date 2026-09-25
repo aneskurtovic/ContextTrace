@@ -38,6 +38,7 @@
 when:
   - event: [push, manual]
     branch: main
+    evaluate: 'RELEASE_UPLOAD != "true"'
 
 labels:
   platform: windows/amd64

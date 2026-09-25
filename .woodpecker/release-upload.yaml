@@ -8,6 +8,7 @@ labels:
 when:
   - event: manual
     branch: main
+    evaluate: 'RELEASE_UPLOAD == "true"'
 
 variables:
   - &shell powershell

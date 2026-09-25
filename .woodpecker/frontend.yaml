@@ -18,6 +18,7 @@ labels:
 
 when:
   - event: [push, pull_request, manual]
+    evaluate: 'RELEASE_UPLOAD != "true"'
 
 variables:
   # package.json declares `engines.node: >=22.13.0`; the previous workflow

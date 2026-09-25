@@ -30,6 +30,7 @@ labels:
 
 when:
   - event: [push, pull_request, manual]
+    evaluate: 'RELEASE_UPLOAD != "true"'
 
 variables:
   - &rust_image rust:1.97-bookworm
