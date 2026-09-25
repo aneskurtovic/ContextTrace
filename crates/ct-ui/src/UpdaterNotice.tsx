@@ -95,7 +95,7 @@ export default function UpdaterNotice() {
         <><strong>Updating ContextTrace</strong><span>{message}</span></>
       ) : state === "error" ? (
         <><div><strong>Update failed</strong><span>{message}</span></div><button type="button" onClick={() => void checkForUpdates()}>Retry</button></>
-      )}
+      ) : null}
     </aside>
   );
 }
