@@ -14,9 +14,9 @@ asset for that exact version rather than to a moving `latest` asset URL.
 
 ## First updater-enabled version
 
-Versions 0.1.0 and 0.1.1 predate the updater. Install 0.1.2 manually; it is the
-first updater-enabled stable release. Subsequent compatible versions can be
-offered in-app.
+Versions 0.1.0 and 0.1.1 predate the updater. Install 0.1.3 manually; it is the
+latest stable release. Version 0.1.2 was the first updater-enabled stable
+release. Subsequent compatible versions can be offered in-app.
 
 ## Release key handling
 
@@ -31,7 +31,5 @@ public key. Do not publish, rotate or replace the key casually. The current
 key is unencrypted, so the workflow supplies an empty
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` value.
 
-The optional GitHub Actions fallback requires its own copy of the updater key
-as a repository Actions secret. It is not automatically shared with
-Woodpecker. See the [release procedure](RELEASING.md) for asset checks and
-clean-host acceptance.
+Use Woodpecker for CI and release packaging. See the [release
+procedure](RELEASING.md) for asset checks and clean-host acceptance.

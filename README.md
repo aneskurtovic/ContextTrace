@@ -9,7 +9,7 @@ session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: source and the Windows 0.1.2 binary release are public.**
+> **Status: source and the Windows 0.1.3 binary release are public.**
 > The CLI and Windows desktop app implement the discovery-to-diagnosis
 > workflow. Compatibility is limited to the persisted JSONL formats and
 > producer versions covered by committed fixtures. See [MVP status](docs/MVP-STATUS.md)
@@ -73,8 +73,7 @@ irm https://raw.githubusercontent.com/aneskurtovic/ContextTrace/main/scripts/ins
 The installer downloads the latest stable release, checks the installer
 against its published SHA-256 checksum and starts the per-user setup. No
 administrator rights are required. The release page also provides the
-portable desktop and CLI downloads. Until the first stable binary release is
-published, build from source using the steps below.
+portable desktop and CLI downloads. To build from source, use the steps below.
 
 ### Prerequisites
 
@@ -253,7 +252,7 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-The updater-enabled 0.1.2 Windows release is available. See the [install
+The updater-enabled 0.1.3 Windows release is available. See the [install
 instructions](#install) and [release downloads](https://github.com/aneskurtovic/ContextTrace/releases/latest).
 
 Configurable local pricing/forecasting, instruction-file comparisons and

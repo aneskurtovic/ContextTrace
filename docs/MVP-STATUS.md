@@ -11,13 +11,11 @@ optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
 
-The updater-enabled **0.1.2 Windows release is published as stable**. The user
-confirmed that the installed app opens on both the development PC and a separate
-new laptop. After publication it reports the installed 0.1.2 is current, but
-keeps a persistent success banner on screen. Version 0.1.3 changes the updater
-to keep routine startup checks quiet when there is no update or the feed is
-temporarily unreachable. Its signed assets are in a draft awaiting install and
-startup verification.
+The updater-enabled **0.1.3 Windows release is published as stable**. The user
+confirmed the installed app opens on the development PC and a separate new
+laptop. On the new laptop, the 0.1.3 app no longer shows the persistent
+up-to-date banner. The updater also keeps routine startup checks quiet when no
+update is available or the feed is temporarily unreachable.
 
 ## Verification in this working session
 
@@ -43,11 +41,14 @@ startup verification.
 - Woodpecker pipeline 63 passed all frontend, Rust, Windows desktop and CLI
   smoke checks for the 0.1.3 quiet-updater change.
 - Woodpecker pipeline 64 built the signed 0.1.3 Windows package. Pipeline 68
-  uploaded all six assets to a draft and verified their checksums.
+  uploaded all six assets and verified their checksums. The draft was published
+  as the stable v0.1.3 release after the user confirmed the quiet updater
+  behavior on a separate laptop.
 
-These checks validate source/build behavior and startup on two PCs. Session
-discovery, upgrade/uninstall preservation, portable/CLI use, and the signed
-in-app update flow have not yet been confirmed.
+These checks validate source/build behavior, installation and startup on two
+PCs, and the quiet updater behavior on the separate laptop. Session discovery,
+upgrade/uninstall preservation, portable/CLI use, and a signed in-app update
+have not yet been confirmed.
 
 ## Release gates
 
@@ -57,9 +58,9 @@ in-app update flow have not yet been confirmed.
 | Persisted Codex/Claude compatibility | Tested fixture/version scope only; future versions need fixtures and semantic assertions |
 | Public source documentation | Organized; examples are synthetic and relative links have been checked |
 | Windows production build | Passed in this working session |
-| Signed updater package and feed | v0.1.2 is stable; v0.1.3 signed assets uploaded and checksum-verified in a draft by Woodpecker pipeline 68; candidate startup confirmation pending |
-| Clean-host installer/upgrade/uninstall | v0.1.2 installation/startup passed on a separate new laptop; upgrade and archive-preserving uninstall remain unverified |
-| Public stable release | [ContextTrace v0.1.2](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.2); v0.1.3 is in draft acceptance |
+| Signed updater package and feed | v0.1.3 stable; signed assets uploaded and checksum-verified by Woodpecker pipeline 68; quiet startup behavior confirmed on a separate laptop |
+| Clean-host installer/upgrade/uninstall | v0.1.3 installation/startup passed on a separate new laptop; discovery, upgrade and archive-preserving uninstall remain unverified |
+| Public stable release | [ContextTrace v0.1.3](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.3) |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
 `%LOCALAPPDATA%\ContextTrace-archive` data directory, which may contain the
