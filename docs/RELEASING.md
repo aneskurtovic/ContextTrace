@@ -13,11 +13,20 @@ these six files for the release:
 - `ContextTrace-<version>-windows-x64-cli.zip` — `ct.exe` and license;
 - `SHA256SUMS.txt` — checksums for the downloadable files.
 
-The tag workflow stages artifacts; publication to the public GitHub release
-and upload of all six assets are separate operator actions. Publish the
-release as stable (not draft or prerelease), because the updater checks the
+The tag workflow stages artifacts on the trusted Windows agent. The manual
+Woodpecker workflow `release-upload.yaml` uploads the staged files to a GitHub
+draft using the repository secret `GITHUB_RELEASE_TOKEN`. It does not rebuild
+the package or publish it. After acceptance on a separate clean Windows host,
+publish the draft as stable (not prerelease), because the updater checks the
 stable `releases/latest/download/latest.json` feed. Keep the feed's installer
 URL pinned to its versioned release asset.
+
+For the current `v0.1.2` candidate, add a fine-grained repository token with
+Contents: write permission as the protected Woodpecker secret
+`GITHUB_RELEASE_TOKEN`, restricted to the `manual` event, then manually run the
+`release-upload` workflow on `main`. It verifies the staged filenames,
+checksums and updater manifest before creating or resuming the draft. The
+script fails rather than replacing a published release or a mismatched asset.
 
 ## Before tagging
 
@@ -35,9 +44,9 @@ URL pinned to its versioned release asset.
 
 The release script builds the production desktop binary before restoring the
 updater private key to the process environment for NSIS bundling. The key is
-cleared immediately afterwards. The normal path stages assets on the trusted
-release runner; retrieve them through the configured private runner workflow,
-not by committing them to the repository.
+cleared immediately afterwards. The upload workflow reads only the staged
+assets and uses a separate token with repository Contents write permission;
+it never receives the updater private key.
 
 ## Verify and publish
 

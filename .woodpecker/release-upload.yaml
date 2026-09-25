@@ -1,0 +1,22 @@
+# Manual transfer of previously staged Windows release assets to a draft.
+# This runs on the trusted Windows agent and never rebuilds or publishes.
+
+labels:
+  platform: windows/amd64
+  backend: local
+
+when:
+  - event: manual
+    branch: main
+
+variables:
+  - &shell powershell
+
+steps:
+  - name: upload-draft-release
+    image: *shell
+    environment:
+      GITHUB_RELEASE_TOKEN:
+        from_secret: GITHUB_RELEASE_TOKEN
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/upload-draft.ps1 -Tag v0.1.2
