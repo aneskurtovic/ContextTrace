@@ -19,8 +19,10 @@ and stages the six files, creates a public prerelease, uploads the files, checks
 all uploaded digests, and promotes the release to stable. The updater reads the
 stable `releases/latest/download/latest.json` feed, so the prerelease remains
 outside its update channel until all assets are verified. `latest.json` is
-uploaded last. A failed or interrupted publish can be retried: matching assets
-are reused, missing assets are uploaded, and mismatched assets stop the run.
+uploaded last, and the final promotion explicitly sets and verifies GitHub's
+latest stable release pointer. A failed or interrupted publish can be retried:
+matching assets are reused, missing assets are uploaded, and mismatched assets
+stop the run.
 
 Add a fine-grained repository token with Contents: write permission as the
 protected Woodpecker secret `GITHUB_RELEASE_TOKEN`, restricted to the `tag`

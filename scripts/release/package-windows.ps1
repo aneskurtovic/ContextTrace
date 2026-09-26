@@ -49,6 +49,56 @@ if ($LASTEXITCODE -ne 0) { throw "Fixture compatibility regression validation fa
 $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
 $stageRoot = Join-Path $cacheRoot 'release-assets'
 $publishedStage = Join-Path $stageRoot $tag
+$assetPrefix = "ContextTrace-$version-windows-x64"
+$installerName = "$assetPrefix-setup.exe"
+$assetNames = @(
+    $installerName,
+    "$installerName.sig",
+    "$assetPrefix-portable.zip",
+    "$assetPrefix-cli.zip",
+    'SHA256SUMS.txt',
+    'latest.json'
+)
+
+# Retrying a tag must reuse the exact updater manifest and archives already
+# uploaded for that release. In particular, latest.json contains pub_date, so
+# rebuilding it would produce a different digest and make safe retries fail.
+if (Test-Path -LiteralPath $publishedStage -PathType Container) {
+    try {
+        $existingFiles = Get-ChildItem -LiteralPath $publishedStage -File
+        $actualNames = @($existingFiles | ForEach-Object { $_.Name } | Sort-Object)
+        $expectedNames = @($assetNames | Sort-Object)
+        if (Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames) {
+            throw 'The existing staged release does not contain exactly the expected files.'
+        }
+
+        $checksums = Get-Content -LiteralPath (Join-Path $publishedStage 'SHA256SUMS.txt')
+        foreach ($name in $assetNames | Where-Object { $_ -ne 'SHA256SUMS.txt' }) {
+            $entry = @($checksums | Where-Object { $_ -match ('^[0-9a-fA-F]{64} \*?' + [regex]::Escape($name) + '$') })
+            if ($entry.Count -ne 1) {
+                throw "The existing SHA256SUMS.txt must contain exactly one checksum for '$name'."
+            }
+            $expectedHash = [regex]::Match($entry[0], '^[0-9a-fA-F]{64}').Value
+            $actualHash = (Get-FileHash -LiteralPath (Join-Path $publishedStage $name) -Algorithm SHA256).Hash
+            if ($actualHash -ne $expectedHash) {
+                throw "The existing staged asset '$name' does not match SHA256SUMS.txt."
+            }
+        }
+
+        $manifest = Get-Content -LiteralPath (Join-Path $publishedStage 'latest.json') -Raw | ConvertFrom-Json
+        $expectedInstallerUrl = "https://github.com/aneskurtovic/ContextTrace/releases/download/$tag/$installerName"
+        $stagedSignature = (Get-Content -LiteralPath (Join-Path $publishedStage "$installerName.sig") -Raw).Trim()
+        if ($manifest.version -ne $version -or $manifest.platforms.'windows-x86_64'.url -ne $expectedInstallerUrl -or $manifest.platforms.'windows-x86_64'.signature -ne $stagedSignature) {
+            throw 'The existing updater manifest does not match the staged tag, installer URL and signature.'
+        }
+
+        Write-Host "Reusing the checksum-verified release assets already staged at $publishedStage."
+        exit 0
+    } catch {
+        Write-Warning "Existing staged release is invalid and will be rebuilt: $($_.Exception.Message)"
+    }
+}
+
 $stagingRoot = Join-Path $stageRoot '.staging'
 $stage = Join-Path $stagingRoot "$tag-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
@@ -84,7 +134,6 @@ if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
     throw "Expected the versioned NSIS installer at '$installer'."
 }
 
-$assetPrefix = "ContextTrace-$version-windows-x64"
 Copy-Item -LiteralPath $installer -Destination (Join-Path $stage "$assetPrefix-setup.exe")
 $installerSignature = "$installer.sig"
 if (-not (Test-Path -LiteralPath $installerSignature -PathType Leaf)) {

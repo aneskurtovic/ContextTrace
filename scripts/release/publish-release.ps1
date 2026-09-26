@@ -197,28 +197,42 @@ foreach ($asset in $verifiedRelease.assets) {
     }
 }
 
-if ($verifiedRelease.draft -or $verifiedRelease.prerelease) {
-    $publishBody = @{ draft = $false; prerelease = $false } | ConvertTo-Json
+$publishBody = @{ draft = $false; prerelease = $false; make_latest = 'true' } | ConvertTo-Json
+try {
+    # Reassert this on retries too: changing a public prerelease to stable does
+    # not always update GitHub's /releases/latest pointer by itself.
+    Invoke-RestMethod -Method Patch -Uri "$apiRoot/releases/$($release.id)" -Headers $headers -ContentType 'application/json' -Body $publishBody | Out-Null
+} catch {
+    $publishFailure = Get-GitHubFailureDetails -ErrorRecord $_
+    # Publishing may have succeeded despite an HTTP error. Read back the
+    # release before failing so retries stay idempotent.
     try {
-        Invoke-RestMethod -Method Patch -Uri "$apiRoot/releases/$($release.id)" -Headers $headers -ContentType 'application/json' -Body $publishBody | Out-Null
+        $verifiedRelease = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
     } catch {
-        $publishFailure = Get-GitHubFailureDetails -ErrorRecord $_
-        # Publishing may have succeeded despite an HTTP error. Read back the
-        # release before failing so retries stay idempotent.
-        try {
-            $verifiedRelease = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
-        } catch {
-            $lookupFailure = Get-GitHubFailureDetails -ErrorRecord $_
-            throw "Failed to promote the release to stable. $publishFailure. Could not verify its state: $lookupFailure"
-        }
-        if ($verifiedRelease.draft -or $verifiedRelease.prerelease) {
-            throw "Failed to promote the release to stable. $publishFailure"
-        }
+        $lookupFailure = Get-GitHubFailureDetails -ErrorRecord $_
+        throw "Failed to promote the release to stable and latest. $publishFailure. Could not verify its state: $lookupFailure"
+    }
+    if ($verifiedRelease.draft -or $verifiedRelease.prerelease) {
+        throw "Failed to promote the release to stable and latest. $publishFailure"
     }
 }
 
 $verifiedRelease = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
 if ($verifiedRelease.draft -or $verifiedRelease.prerelease) {
     throw 'GitHub release still is not published as a stable release.'
+}
+$latestRelease = $null
+for ($attempt = 1; $attempt -le 5; $attempt++) {
+    $latestRelease = Invoke-RestMethod -Uri "$apiRoot/releases/latest" -Headers $headers
+    if ($latestRelease.tag_name -eq $Tag) {
+        break
+    }
+    if ($attempt -lt 5) {
+        Start-Sleep -Seconds 2
+    }
+}
+if ($null -eq $latestRelease -or $latestRelease.tag_name -ne $Tag) {
+    $latestTag = if ($null -eq $latestRelease) { 'unavailable' } else { [string]$latestRelease.tag_name }
+    throw "GitHub's stable updater feed still points to '$latestTag' instead of '$Tag'."
 }
 Write-Host "Stable release published and all six assets verified: $($verifiedRelease.html_url)"
