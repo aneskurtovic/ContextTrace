@@ -106,6 +106,16 @@ function Get-GitHubFailureDetails {
 # steps passed. The updater ignores prereleases; after all six assets are
 # uploaded and their digests verified, the final API call promotes it to stable.
 $tagRef = Invoke-RestMethod -Uri "$apiRoot/git/ref/tags/$Tag" -Headers $headers
+$tagObject = $tagRef.object
+while ($tagObject.type -eq 'tag') {
+    # Annotated Git tags point to a tag object, which in turn points to the
+    # commit. GitHub's release API requires the commit SHA for target_commitish.
+    $tagObject = (Invoke-RestMethod -Uri "$apiRoot/git/tags/$($tagObject.sha)" -Headers $headers).object
+}
+if ($tagObject.type -ne 'commit' -or [string]::IsNullOrWhiteSpace([string]$tagObject.sha)) {
+    throw "GitHub tag '$Tag' does not resolve to a commit."
+}
+$targetCommit = [string]$tagObject.sha
 $existingReleases = Invoke-RestMethod -Uri "$apiRoot/releases?per_page=100" -Headers $headers
 $existingRelease = @($existingReleases | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1)
 if ($existingRelease.Count -gt 0) {
@@ -113,7 +123,7 @@ if ($existingRelease.Count -gt 0) {
 } else {
     $releaseBody = @{
         tag_name = $Tag
-        target_commitish = [string]$tagRef.object.sha
+        target_commitish = $targetCommit
         name = "ContextTrace $Tag"
         body = "Windows x64 release. Woodpecker validation, packaging and asset integrity checks passed."
         draft = $false
