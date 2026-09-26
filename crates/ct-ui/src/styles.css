@@ -3341,43 +3341,125 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
   color: var(--text-2);
 }
 
-/* Wide screens got a column of dead space beside the content because every
-   panel was capped and centred while the metrics row above it was full-bleed.
-   The cap is gone; past 1500px the stacked panels pair up instead of running
-   one per row, and only the panels that are genuinely wide -- charts, diffs,
-   side-by-side comparisons -- keep the whole row to themselves. */
+/* Session investigation surfaces retain a deliberate reading order at every
+   desktop width; only panels designed as grids split into columns. */
 @media (min-width: 1500px) {
-  .workspace-section {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
+  .workspace { padding-right: clamp(28px, 4vw, 72px); padding-left: clamp(28px, 4vw, 72px); }
+  .corpus-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
-  .metrics,
-  .context-grid,
-  .workspace-header,
-  .timeline-panel,
-  .live-monitor,
-  .replay-control,
-  .diagnostics-rail,
-  .rich-diff,
-  .diff-panel,
-  .session-compare-panel,
-  .lifecycle-panel,
-  .compaction-panel,
-  .archive-panel,
-  .export-panel {
-    grid-column: 1 / -1;
-  }
+/* Keep the inspected session identifiable while each tab is open. */
+.session-context-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.session-context-title { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.session-context-title > strong { overflow: hidden; max-width: min(48vw, 620px); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.session-context-title > span { flex: none; color: var(--text-2); font-size: 11px; }
+.session-context-title .agent-mark { width: 24px; height: 24px; }
+.session-context-title .session-context-id { color: var(--text-3); font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; }
+.session-context-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.session-context-details { position: relative; flex: none; color: var(--text-2); font-size: 11px; }
+.session-context-details summary { padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; list-style: none; }
+.session-context-details summary::-webkit-details-marker { display: none; }
+.session-context-details summary::after { content: "⌄"; margin-left: 8px; }
+.session-context-details[open] > div { position: absolute; z-index: 20; top: calc(100% + 5px); right: 0; display: grid; min-width: 240px; max-width: min(460px, 80vw); gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--raise); box-shadow: 0 10px 24px #0006; }
+.session-context-details[open] > div > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-context-details[open] > div > span:first-child { color: var(--text); }
+.app-shell[data-theme="light"] .session-context-bar { background: var(--surface); }
+.workspace-tabs > button[role="tab"] { min-width: 76px; }
+.workspace[hidden],
+.chat-cache[hidden],
+.chat-cache [hidden] { display: none !important; }
+.workspace.chat-cache { display: flex; min-height: 0; flex-direction: column; overflow: hidden; padding: 0; }
+.transcript-session { min-height: 0; flex: 1; overflow: auto; padding: 14px 16px 34px; }
 
-  /* #chat-panel is itself a .workspace-section, so the two-column rule above
-     turns it into a grid container, not a grid item -- putting it in the
-     grid-column list above would be inert, since that property positions an
-     item within its parent's grid, and #chat-panel's parent (.workspace) has
-     no grid of its own. The conversation is one continuous stream, not two
-     dashboard panels side by side, so instead we keep #chat-panel's own grid
-     to a single column, which leaves its one child (.transcript) the full
-     panel width at every viewport. */
-  #chat-panel {
-    grid-template-columns: 1fr;
-  }
+/* Clear search scope and make a filtered-out open session easy to restore. */
+.search-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin: 0 8px 8px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.search-mode-switch button { min-height: 28px; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); cursor: pointer; font-size: 11px; }
+.search-mode-switch button.active { background: var(--raise); color: var(--text); box-shadow: 0 1px 3px #0004; }
+.return-session-entry { display: flex; width: calc(100% - 16px); min-height: 32px; align-items: center; gap: 4px; overflow: hidden; margin: 0 8px 7px; padding: 5px 8px; border: 1px solid var(--accent-line); border-radius: 5px; background: var(--accent-soft); color: var(--text-2); cursor: pointer; font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.return-session-entry strong { overflow: hidden; color: var(--text); text-overflow: ellipsis; }
+.session-result-notice { display: grid; gap: 6px; margin: 0 9px 8px; padding: 8px; border: 1px solid var(--accent-line); border-radius: 5px; background: var(--accent-soft); color: var(--text-2); font-size: 11px; line-height: 1.4; }
+.session-result-notice button { justify-self: start; padding: 4px 7px; border: 1px solid var(--accent-line); border-radius: 4px; background: var(--surface); color: var(--accent); cursor: pointer; font-size: 11px; }
+.open-session-pin { margin: 0 8px 8px; padding: 6px 5px 2px; border: 1px solid var(--accent-line); border-radius: 6px; background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+.open-session-pin > div:first-child { padding: 0 5px 5px; color: var(--text-2); font-size: 10px; }
+.session-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell .session-activity { font-size: 10.5px; opacity: .9; }
+.session-row { min-height: 53px; }
+.mobile-sidebar-scrim { display: none; }
+
+/* Summary actions and measured-state cues. */
+.selected-turn-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-color: var(--accent-line); background: linear-gradient(110deg, var(--accent-soft), var(--surface) 60%); }
+.selected-turn-summary > div { display: grid; gap: 3px; }
+.selected-turn-summary > div > strong { font-size: 14px; }
+.selected-turn-summary > span { color: var(--text-2); font-size: 11px; }
+.quiet-action { min-height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 11px; }
+.diagnostic-action { min-height: 27px; margin-top: 5px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); color: var(--text-2); cursor: pointer; font-size: 10.5px; }
+.diagnostic-action:hover { border-color: var(--accent-line); color: var(--text); }
+.diagnostics-coverage { grid-column: 1 / -1; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); border-radius: 5px; background: color-mix(in srgb, var(--warn) 7%, var(--surface)); color: var(--warn); font-size: 10.5px; line-height: 1.4; }
+.live-monitor.unmeasured .live-gauge { opacity: .48; filter: grayscale(1); }
+.live-monitor.unmeasured .live-headroom span { width: 0 !important; }
+.live-monitor.unmeasured .live-gauge-wrap p { color: var(--text-3); }
+.live-monitor > small { display: block; line-height: 1.5; }
+.corpus-history { display: grid; gap: 12px; }
+.corpus-history > summary { padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 12px; }
+.corpus-history[open] > summary { border-color: var(--accent-line); color: var(--text); }
+.corpus-history .corpus-grid { margin-top: 2px; }
+.selected-archive-copy { display: grid; gap: 8px; margin-top: 12px; }
+.selected-archive-copy h3 { margin: 0; color: var(--text); font-size: 12px; }
+.all-archive-copies { margin-top: 12px; border-top: 1px solid var(--line); }
+.all-archive-copies > summary { padding: 11px 2px 5px; color: var(--text-2); cursor: pointer; font-size: 11.5px; }
+.all-archive-copies > p { padding: 6px 0; color: var(--text-3); font-size: 11px; line-height: 1.45; }
+.compare-session-search { display: grid; gap: 5px; margin-bottom: 8px; }
+.compare-session-search label { display: grid; gap: 4px; color: var(--text-2); font-size: 11px; }
+.compare-session-search input { min-height: 32px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); color: var(--text); }
+.compare-session-scope { color: var(--text-3); font-size: 10.5px; line-height: 1.4; }
+
+/* Conversation text is for reading; preserve monospace only for record labels. */
+.transcript-tools { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, 220px); align-items: end; gap: 8px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.transcript-tools label { display: grid; gap: 4px; color: var(--text-2); font-size: 11px; }
+.transcript-tools input,
+.transcript-tools select { width: 100%; min-width: 0; min-height: 32px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); color: var(--text); font-size: 12px; }
+.transcript-tools > small { grid-column: 1 / -1; color: var(--text-3); font-size: 10.5px; line-height: 1.4; }
+.transcript-filter-override { font-size: 11px; }
+.transcript-entry { padding: 12px 14px; }
+.transcript-role { font-size: 12px; }
+.transcript-label { font-size: 11px; }
+.transcript-meta { font-size: 10.5px; }
+.transcript-toggle { min-height: 27px; height: auto; font-size: 10.5px; }
+.transcript-text { color: var(--text-2); font-family: "Segoe UI Variable", "Segoe UI", sans-serif; font-size: 13px; line-height: 1.6; }
+.transcript-entry.toolCall .transcript-text,
+.transcript-entry.toolResult .transcript-text,
+.transcript-entry.reasoning .transcript-text,
+.transcript-entry.injection .transcript-text { font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-size: 11.5px; }
+.transcript-collapsed { font-family: "Segoe UI Variable", "Segoe UI", sans-serif; font-size: 12px; }
+
+@media (max-width: 700px) {
+  .app-shell { height: auto; min-height: 100vh; overflow: visible; }
+  .app-body { position: relative; display: block; min-height: calc(100vh - 44px); }
+  .sidebar,
+  .sidebar.collapsed { position: absolute; z-index: 30; top: 0; left: 0; width: min(320px, 90vw); height: min(78vh, 660px); max-height: calc(100vh - 52px); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); box-shadow: 12px 12px 36px #0007; }
+  .sidebar.collapsed { width: 42px; height: auto; min-height: 42px; box-shadow: none; }
+  .mobile-sidebar-scrim { position: absolute; z-index: 20; inset: 0; display: block; width: 100%; border: 0; background: #0008; cursor: default; }
+  .sidebar.collapsed .sidebar-caption { min-height: 42px; }
+  .sidebar-content { min-height: 0; flex: 1; overflow: hidden; }
+  .session-list { min-height: 90px; max-height: none; }
+  .main-area { min-height: calc(100vh - 44px); overflow: visible; }
+  .workspace-tabs { position: sticky; top: 80px; z-index: 10; }
+  .session-context-bar { min-height: 42px; padding: 6px 10px; }
+  .session-context-title { gap: 6px; }
+  .session-context-title > strong { max-width: 42vw; }
+  .session-context-title > span:not(.session-context-id) { display: none; }
+  .session-context-details summary { font-size: 10px; }
+  .workspace-tabs > button[role="tab"] { min-width: 69px; padding: 0 8px; font-size: 11px; }
+  .transcript-tools { grid-template-columns: 1fr; }
+  .transcript-tools > small { grid-column: auto; }
+  .selected-turn-summary { align-items: flex-start; flex-direction: column; }
 }

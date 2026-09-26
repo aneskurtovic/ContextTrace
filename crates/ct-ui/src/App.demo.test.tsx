@@ -16,10 +16,12 @@ afterEach(() => {
   cleanup();
 });
 
-/** Leave the corpus view, which is what the app now opens on. */
-function leaveCorpus() {
+/** Open the first demonstration session from the all-sessions landing page. */
+async function leaveCorpus() {
   const corpus = screen.queryByRole("button", { name: "All sessions" });
-  if (corpus?.getAttribute("aria-pressed") === "true") fireEvent.click(corpus);
+  if (corpus?.getAttribute("aria-pressed") !== "true") return;
+  const sessions = await screen.findAllByRole("button", { name: /^(Codex|Claude Code) session:/ });
+  fireEvent.click(sessions[0]);
 }
 
 describe("desktop without the Tauri bridge", () => {
@@ -48,8 +50,8 @@ describe("desktop without the Tauri bridge", () => {
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 
     render(<App />);
-    leaveCorpus();
-    const evidence = await screen.findByRole("tab", { name: "Evidence" });
+    await leaveCorpus();
+    const evidence = await screen.findByRole("tab", { name: "Save & export" });
     await waitFor(() => expect(evidence.hasAttribute("disabled")).toBe(false));
     fireEvent.click(evidence);
 

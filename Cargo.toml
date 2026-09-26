@@ -32,7 +32,7 @@ members = [
 # composition root. No domain change, no application change, no UI change.
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"

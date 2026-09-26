@@ -65,14 +65,15 @@ import type {
 } from "./types";
 
 type AgentFilter = "all" | Agent;
+type SearchMode = "sessions" | "content";
 type WorkspaceView = "overview" | "turns" | "chat" | "diff" | "evidence";
 
 const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; shortcut: string }> = [
   { id: "overview", label: "Overview", shortcut: "1" },
-  { id: "turns", label: "Turns", shortcut: "2" },
-  { id: "chat", label: "Chat", shortcut: "3" },
-  { id: "diff", label: "Diff", shortcut: "4" },
-  { id: "evidence", label: "Evidence", shortcut: "5" },
+  { id: "chat", label: "Conversation", shortcut: "2" },
+  { id: "turns", label: "Context", shortcut: "3" },
+  { id: "diff", label: "Compare", shortcut: "4" },
+  { id: "evidence", label: "Save & export", shortcut: "5" },
 ];
 
 /**
@@ -80,6 +81,7 @@ const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string; shortcut: strin
  * currently-loaded detail, and dedup all carry the agent alongside the id.
  */
 type SessionKey = { agent: Agent; id: string };
+type TranscriptVisit = { session: SessionSummary; modelUsage: ModelUsage[]; unattributedModelTurns: number };
 
 function sameSession(a: SessionKey | null, b: SessionKey | null): boolean {
   return a != null && b != null && a.agent === b.agent && a.id === b.id;
@@ -290,13 +292,11 @@ function SessionListItem({
             </i>
           )}
         </span>
-        <span className="session-meta">
+        <span
+          className="session-meta"
+          title={`${session.project ?? "Unrecorded project"}${session.gitBranch ? ` · branch ${session.gitBranch}` : ""} · ${shortId(session.id)} · ${formatBytes(session.sizeBytes)}${role.kind === "subagent" ? ` · subagent of ${shortId(role.parent)}` : ""}`}
+        >
           {projectName(session.project)}
-          {session.gitBranch && <> · <span className="session-branch">{session.gitBranch}</span></>}
-          {" · "}{shortId(session.id)} · {formatBytes(session.sizeBytes)}
-          {role.kind === "subagent" && (
-            <span className="thread-marker"> · subagent of {shortId(role.parent)}</span>
-          )}
         </span>
       </span>
       <span className="session-activity">{formatActivity(session.lastActivity)}</span>
@@ -319,8 +319,8 @@ function MemorySearchResults({
   if (!loading && !hits.length && !error) return null;
   return (
     <div className="memory-results" aria-live="polite">
-      <div className="memory-results-heading"><span>Content hits · agent filter only</span><span>{loading ? "…" : hits.length >= 50 ? "50 (cap)" : hits.length}</span></div>
-      <p className="memory-results-note">Search covers all projects and subagents; use the sidebar filters to narrow sessions.</p>
+      <div className="memory-results-heading"><span>Content matches</span><span>{loading ? "…" : hits.length >= 50 ? "50 (cap)" : hits.length}</span></div>
+      <p className="memory-results-note">Search spans projects and subagents. The agent filter applies; project and subagent filters affect the session list only.</p>
       {loading ? <Spinner label="Searching local session content…" /> : hits.slice(0, showAll ? 50 : 6).map((hit, index) => (
         <button type="button" className="memory-hit" key={`${hit.agent}:${hit.sessionId}:${hit.line}:${index}`} onClick={() => onSelect(hit)}>
           <strong>{hit.project ?? hit.sessionId.slice(0, 8)}</strong>
@@ -412,11 +412,44 @@ function CrossSessionPicker({
   onSetCrossSession: (target: { agent: Agent; id: string } | null) => void;
   onSetCrossTurnInput: (value: string) => void;
 }) {
-  const otherSessions = sessions.filter(
+  const [search, setSearch] = useState("");
+  const [catalog, setCatalog] = useState<SessionSummary[]>(sessions);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setSearching(true);
+    setSearchError(null);
+    const timer = window.setTimeout(() => {
+      api.searchSessions(undefined, search.trim(), 0, 100, false, { kind: "any" }, true)
+        .then((page) => {
+          if (!cancelled) setCatalog(page.sessions);
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setSearchError(errorMessage(error));
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [search]);
+  const allOtherSessions = catalog.filter(
     (session) => !(session.agent === leftTarget.agent && session.id === leftTarget.id),
+  );
+  const selectedEndpointIsOutsideSearch = crossSession != null && !catalog.some(
+    (session) => session.agent === crossSession.agent && session.id === crossSession.id,
   );
   return (
     <div className="diff-cross-session">
+      <label className="compare-session-search">
+        <span>Search all sessions</span>
+        <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Project, title, or ID" />
+      </label>
+      {searchError && <p className="inline-error" role="status">Could not search all sessions: {searchError}</p>}
       <label>
         <span>Compare this turn with</span>
         <select
@@ -430,7 +463,12 @@ function CrossSessionPicker({
           }}
         >
           <option value="">Another turn in this session</option>
-          {otherSessions.map((session) => (
+          {selectedEndpointIsOutsideSearch && crossSession && (
+            <option value={JSON.stringify(crossSession)}>
+              Current comparison · {agentLabel(crossSession.agent)} · {shortId(crossSession.id)}
+            </option>
+          )}
+          {allOtherSessions.map((session) => (
             <option
               key={`${session.agent}:${session.id}`}
               value={JSON.stringify({ agent: session.agent, id: session.id })}
@@ -438,8 +476,10 @@ function CrossSessionPicker({
               {agentLabel(session.agent)} · {sessionName(session)} · {shortId(session.id)}
             </option>
           ))}
+          {!searching && !allOtherSessions.length && <option value="" disabled>No sessions match this search</option>}
         </select>
       </label>
+      <small className="compare-session-scope">This picker searches all sessions independently of the sidebar filters.</small>
       {crossSession && (
         <label>
           <span>Turn to compare</span>
@@ -459,6 +499,8 @@ function CrossSessionPicker({
 function TurnComparison({
   diff,
   loading,
+  currentTurn,
+  onPinTurn,
   leftTarget,
   rightTarget,
   sessions,
@@ -469,6 +511,8 @@ function TurnComparison({
 }: {
   diff: TurnDiff | null;
   loading: boolean;
+  currentTurn: number | null;
+  onPinTurn: (turn: number) => void;
   leftTarget: TurnTarget | null;
   rightTarget: TurnTarget | null;
   sessions: SessionSummary[];
@@ -477,7 +521,23 @@ function TurnComparison({
   onSetCrossSession: (target: { agent: Agent; id: string } | null) => void;
   onSetCrossTurnInput: (value: string) => void;
 }) {
-  if (leftTarget == null) return null;
+  if (leftTarget == null) {
+    return (
+      <section className="panel diff-panel" aria-labelledby="diff-heading">
+        <div className="panel-heading">
+          <div><span className="eyebrow">Compare</span><h2 id="diff-heading">Choose a baseline</h2></div>
+        </div>
+        <p className="diff-empty">Compare starts with an explicit turn in this session. Then choose another turn here or search for a second session.</p>
+        {currentTurn != null ? (
+          <button type="button" className="primary-action" onClick={() => onPinTurn(currentTurn)}>
+            Use selected turn {currentTurn} as baseline
+          </button>
+        ) : (
+          <p className="empty-inline">No measured turn is available to compare yet.</p>
+        )}
+      </section>
+    );
+  }
 
   const picker = (
     <CrossSessionPicker
@@ -1203,67 +1263,84 @@ function DiagnosticsRail({
   context,
   doctor,
   detail,
+  onOpenContext,
 }: {
   context: ContextDetail;
   doctor: DoctorReport | null;
   detail: SessionDetail;
+  onOpenContext: () => void;
 }) {
   const toolOutputs = context.categories.find((category) => category.category === "tool-outputs");
   const largest = context.contributors[0];
   const diagnostics: { tone: "danger" | "warn" | "tip"; title: string; detail: string }[] = [];
 
-  if (doctor?.secretOccurrences) {
+  const currentDoctor = doctor?.turn === context.turn ? doctor : null;
+  const doctorHasFindings = currentDoctor != null && (
+    currentDoctor.secretOccurrences > 0 || currentDoctor.duplicateGroups > 0 || currentDoctor.lowEntropyItems > 0
+  );
+  const doctorIncomplete = currentDoctor != null && (
+    currentDoctor.unreadableRecords > 0 || currentDoctor.unmeasuredItems > 0
+  );
+  if (currentDoctor?.secretOccurrences) {
     diagnostics.push({
       tone: "danger",
       title: "Credential-shaped content detected",
-      detail: `${doctor.secretOccurrences} occurrence(s) found. Values stay hidden; review Security & leaks before sharing this session.`,
+      detail: `${currentDoctor.secretOccurrences} occurrence(s) found in turn ${context.turn}. Values stay hidden; review this turn before sharing the session.`,
+    });
+  }
+  if (currentDoctor?.duplicateGroups) {
+    diagnostics.push({
+      tone: "warn",
+      title: "Repeated content",
+      detail: `${currentDoctor.duplicateGroups} exact duplicate group(s) account for ${formatTokens(currentDoctor.repeatedTokens)} repeated tokens in turn ${context.turn}.`,
     });
   }
   if (toolOutputs && toolOutputs.share >= 0.5) {
     diagnostics.push({
       tone: "warn",
-      title: "Massive tool output",
-      detail: `${formatPercent(toolOutputs.share)} of the current window is tool output. This is the first place to trim or cap.`,
+      title: "Large tool output share",
+      detail: `${formatPercent(toolOutputs.share)} of selected turn ${context.turn} is tool output. Review the contributor before deciding whether to trim it.`,
     });
   }
-  if (doctor?.lowEntropyItems) {
+  if (currentDoctor?.lowEntropyItems) {
     diagnostics.push({
       tone: "warn",
       title: "Low-information payload",
-      detail: `${doctor.lowEntropyItems} block(s) are highly compressible and account for ${formatTokens(doctor.wasteScoreTokens)} of waste score.`,
+      detail: `${currentDoctor.lowEntropyItems} block(s) are highly compressible and account for ${formatTokens(currentDoctor.wasteScoreTokens)} of waste score in turn ${context.turn}.`,
     });
   }
   if (largest && largest.share >= 0.25) {
     diagnostics.push({
       tone: "tip",
       title: "One contributor dominates",
-      detail: `${largest.label} is ${formatPercent(largest.share)} of this turn. Use Token Diet to model excluding it.`,
+      detail: `${largest.label} is ${formatPercent(largest.share)} of turn ${context.turn}. Model a reduction in Context.`,
     });
   }
   if (detail.peakPromptTokens && detail.contextWindow && detail.peakPromptTokens / detail.contextWindow >= 0.8) {
     diagnostics.push({
       tone: "danger",
-      title: "Context headroom is getting thin",
-      detail: `${formatPercent(detail.peakPromptTokens / detail.contextWindow)} of the window is occupied at peak.`,
+      title: "Session peak approached the limit",
+      detail: `${formatPercent(detail.peakPromptTokens / detail.contextWindow)} at peak${detail.peakTurn ? ` (turn ${detail.peakTurn})` : ""}; this is session-wide, not the selected turn.`,
     });
   }
 
   return (
     <section className="diagnostics-rail" aria-labelledby="diagnostics-heading">
       <div className="diagnostics-title">
-        <span className="eyebrow">AI Doctor · session signals</span>
-        <strong id="diagnostics-heading">What deserves attention now</strong>
+      <span className="eyebrow">Local diagnostics · selected turn {context.turn}</span>
+      <strong id="diagnostics-heading">Signals to review</strong>
       </div>
+      {doctorIncomplete && <p className="diagnostics-coverage">Scan coverage is incomplete: {currentDoctor!.unreadableRecords} unreadable record(s), {currentDoctor!.unmeasuredItems} unmeasured item(s).</p>}
       <div className="diagnostics-list">
-        {diagnostics.length ? diagnostics.slice(0, 4).map((item, index) => (
+      {diagnostics.length ? diagnostics.slice(0, 4).map((item, index) => (
           <div className={`diagnostic-card ${item.tone}`} key={`${item.title}-${index}`}>
             <span className="diagnostic-icon" aria-hidden="true">{item.tone === "danger" ? "!" : item.tone === "warn" ? "~" : "i"}</span>
-            <div><strong>{item.title}</strong><p>{item.detail}</p></div>
+            <div><strong>{item.title}</strong><p>{item.detail}</p><button type="button" className="diagnostic-action" onClick={onOpenContext}>Inspect context</button></div>
           </div>
         )) : (
           <div className="diagnostic-card clean">
-            <span className="diagnostic-icon" aria-hidden="true">✓</span>
-            <div><strong>No high-confidence warning yet</strong><p>Run the local scan to unlock duplicate, compression, and secret diagnostics.</p></div>
+            <span className="diagnostic-icon" aria-hidden="true">{currentDoctor && !doctorHasFindings && !doctorIncomplete ? "✓" : "·"}</span>
+            <div><strong>{!currentDoctor ? "Turn not scanned" : doctorHasFindings ? "Scan findings recorded" : doctorIncomplete ? "Scan incomplete" : "No configured signals found"}</strong><p>{!currentDoctor ? "Run the local scan to check this turn for duplicate, compression, and credential-shaped content." : doctorHasFindings ? "Review the scan categories and coverage note alongside the selected-turn signals." : doctorIncomplete ? "No configured signal was found in the readable measurements; some records could not be checked." : "The completed local scan found no configured signals in the records it checked."}</p></div>
           </div>
         )}
       </div>
@@ -1274,12 +1351,14 @@ function DiagnosticsRail({
 function ReplayControl({
   detail,
   currentTurn,
+  enabled,
   playing,
   onPlaying,
   onTurn,
 }: {
   detail: SessionDetail;
   currentTurn: number | null;
+  enabled: boolean;
   playing: boolean;
   onPlaying: (playing: boolean) => void;
   onTurn: (turn: number) => void;
@@ -1287,30 +1366,23 @@ function ReplayControl({
   const points = detail.growth.filter((point) => point.promptTokens != null);
   const index = Math.max(0, points.findIndex((point) => point.turn === currentTurn));
   useEffect(() => {
-    if (!playing || points.length < 2) return;
+    if (!enabled && playing) onPlaying(false);
+    if (!enabled || !playing || points.length < 2) return;
     const timer = window.setInterval(() => {
       const next = index + 1;
       if (next >= points.length) onPlaying(false);
       else onTurn(points[next].turn);
     }, 850);
     return () => window.clearInterval(timer);
-  }, [index, onPlaying, onTurn, playing, points]);
+  }, [enabled, index, onPlaying, onTurn, playing, points]);
 
   return (
-    <div className="replay-control" aria-label="Session playback controls">
-      <span className="replay-label"><span className={playing ? "live-pip playing" : "live-pip"} /> VCR mode</span>
-      <button type="button" className="replay-button" onClick={() => onPlaying(!playing)} disabled={points.length < 2}>
-        {playing ? "Pause" : "Play session"}
+    <div className="replay-control" role="group" aria-label="Session replay">
+      <span className="replay-label"><span className={playing ? "live-pip playing" : "live-pip"} /> Replay</span>
+      <button type="button" className="replay-button" onClick={() => onPlaying(!playing)} disabled={!enabled || points.length < 2}>
+        {playing ? "Stop replay" : "Play through turns"}
       </button>
-      <input
-        type="range"
-        min={0}
-        max={Math.max(0, points.length - 1)}
-        value={index}
-        onChange={(event) => { onPlaying(false); onTurn(points[Number(event.target.value)].turn); }}
-        aria-label="Playback position"
-      />
-      <span className="replay-position">{currentTurn ? `turn ${currentTurn}` : "—"} / {points.at(-1)?.turn ?? "—"}</span>
+      <span className="replay-position">{currentTurn ? `Selected turn ${currentTurn}` : "No selected turn"} · {points.length} measured turns</span>
     </div>
   );
 }
@@ -1329,18 +1401,18 @@ function LiveMonitor({
   const utilisation = context?.utilisation ?? (detail.peakPromptTokens && detail.contextWindow ? detail.peakPromptTokens / detail.contextWindow : 0);
   const tone = utilisation >= .9 ? "critical" : utilisation >= .75 ? "elevated" : "steady";
   return (
-    <section className={`live-monitor ${live ? "following" : ""}`} aria-label="Live session monitor">
+    <section className={`live-monitor ${live ? "following" : ""} ${context || detail.peakPromptTokens ? "measured" : "unmeasured"}`} aria-label="Session context monitor">
       <div className="live-monitor-heading">
-        <span className="live-status"><span className="live-pip" /> {live ? "Following log" : "Live monitor"}</span>
+        <span className="live-status"><span className="live-pip" /> {live ? "Following latest log" : "Snapshot · not live"}</span>
         <button type="button" onClick={() => onLive(!live)}>{live ? "Stop follow" : "Follow live"}</button>
       </div>
       <div className="live-gauge-wrap">
         <div className="live-gauge" style={{ "--gauge": `${Math.min(100, utilisation * 100)}%` } as CSSProperties}>
           <span>{formatPercent(utilisation)}</span>
         </div>
-        <div><strong>Live prompt size</strong><p>{context ? `${formatTokens(context.totalTokens)} / ${formatTokens(context.contextWindow ?? detail.contextWindow ?? 0)}` : "Waiting for a measured turn"}</p></div>
+        <div><strong>{context ? `Selected turn ${context.turn}` : detail.peakTurn ? `Session peak · turn ${detail.peakTurn}` : "No measured turn"}</strong><p>{context ? `${formatTokens(context.totalTokens)} / ${formatTokens(context.contextWindow ?? detail.contextWindow ?? 0)}` : detail.peakPromptTokens ? `${formatTokens(detail.peakPromptTokens)} / ${formatTokens(detail.contextWindow ?? 0)}` : "No prompt size recorded"}</p></div>
       </div>
-      <small>{live ? "Refreshes local session evidence every 2.5s · use Ctrl+C in the agent terminal to stop the run." : "Follow mode reads the local log as it grows; it never writes to or controls the agent."}</small>
+      <small>{live ? "Refreshes local session evidence every 2.5s · use Ctrl+C in the agent terminal to stop the run." : "This is the selected-turn snapshot or recorded session peak. Follow mode reads the local log as it grows; it never controls the agent. Follow pauses when you leave Overview."}</small>
       <div className={`live-headroom ${tone}`}><span style={{ width: `${Math.min(100, utilisation * 100)}%` }} /></div>
     </section>
   );
@@ -1448,14 +1520,33 @@ function SessionComparePanel({
   loading: boolean;
   onSelect: (value: string) => void;
 }) {
-  const candidates = sessions.filter((session) => !(session.agent === current.session.agent && session.id === current.session.id));
+  const [search, setSearch] = useState("");
+  const [catalog, setCatalog] = useState<SessionSummary[]>(sessions);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCatalogLoading(true);
+    setCatalogError(null);
+    api.searchSessions(undefined, search.trim(), 0, 100, false, { kind: "any" }, true)
+      .then((page) => { if (!cancelled) setCatalog(page.sessions); })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setCatalog([]);
+          setCatalogError(errorMessage(error));
+        }
+      })
+      .finally(() => { if (!cancelled) setCatalogLoading(false); });
+    return () => { cancelled = true; };
+  }, [search]);
+  const candidates = catalog.filter((session) => !(session.agent === current.session.agent && session.id === current.session.id));
   const currentPeak = current.peakPromptTokens ?? 0;
   const otherPeak = other?.peakPromptTokens ?? 0;
   const tokenDelta = other ? otherPeak - currentPeak : 0;
   return (
     <section className="panel session-compare-panel" aria-labelledby="session-compare-heading">
       <div className="panel-heading"><div><span className="eyebrow">A/B lab</span><h2 id="session-compare-heading">Session Compare · prompt architecture</h2></div><span className="sandbox-badge">empirical, local evidence</span></div>
-      <div className="ab-controls"><label>Compare this session with<input aria-label="Session to compare" value={other ? `${sessionName(other.session)} · ${shortId(other.session.id)}` : ""} placeholder="Choose a second session…" readOnly /></label><div className="ab-options">{candidates.slice(0, 5).map((session) => <button type="button" key={`${session.agent}:${session.id}`} onClick={() => onSelect(JSON.stringify({ agent: session.agent, id: session.id }))}>{sessionName(session)} · {shortId(session.id)}</button>)}</div>{loading && <Spinner label="Loading comparison…" />}</div>
+      <div className="ab-controls"><label>Search all sessions<input aria-label="Search all sessions to compare" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Project, title, or ID" /></label><label>Comparing with<input aria-label="Selected comparison session" value={other ? `${sessionName(other.session)} · ${shortId(other.session.id)}` : ""} placeholder="Choose a session below…" readOnly /></label><small className="compare-session-scope">Search includes archived session records in the local catalog and ignores the sidebar filters.</small>{catalogError && <p className="inline-error" role="status">Could not search all sessions: {catalogError}</p>}<div className="ab-options">{candidates.slice(0, 8).map((session) => <button type="button" key={`${session.agent}:${session.id}`} onClick={() => onSelect(JSON.stringify({ agent: session.agent, id: session.id }))}>{sessionName(session)} · {shortId(session.id)}</button>)}</div>{catalogLoading && <Spinner label="Searching all sessions…" />}{!catalogLoading && !catalogError && !candidates.length && <p className="empty-inline">No other sessions match this search.</p>}{loading && <Spinner label="Loading comparison…" />}</div>
       {other ? <div className="ab-grid"><div className="ab-side"><span className="ab-label">Session A · current</span><strong>{sessionName(current.session)}</strong><div className="ab-stat"><span>Turns</span><b>{current.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(currentPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(current.totalOutputTokens)}</b></div></div><div className="ab-arrow">→<small>{tokenDelta <= 0 ? `${formatTokens(Math.abs(tokenDelta))} fewer peak tokens` : `${formatTokens(tokenDelta)} more peak tokens`}</small></div><div className="ab-side alt"><span className="ab-label">Session B · candidate</span><strong>{sessionName(other.session)}</strong><div className="ab-stat"><span>Turns</span><b>{other.turnCount}</b></div><div className="ab-stat"><span>Peak prompt</span><b>{formatTokens(otherPeak)}</b></div><div className="ab-stat"><span>Output tokens</span><b>{formatTokens(other.totalOutputTokens)}</b></div></div></div> : <div className="ab-empty"><strong>Turn prompt experiments into evidence.</strong><p>Run the same task twice, select the second session, and ContextTrace will line up turns, peak prompt size, and output volume.</p></div>}
     </section>
   );
@@ -2141,14 +2232,17 @@ function ArchivePanel({
   onVerify: (agent: Agent, id: string) => void;
   demoData: boolean;
 }) {
+  const selectedKey = `${selected.agent}:${selected.id}`;
+  const selectedEntry = holding?.entries.find((entry) => `${entry.agent}:${entry.id}` === selectedKey);
+  const otherEntries = holding?.entries.filter((entry) => `${entry.agent}:${entry.id}` !== selectedKey) ?? [];
   return (
     <section className="panel archive-panel" aria-labelledby="archive-heading">
       <div className="panel-heading">
         <div>
-          <span className="eyebrow">Archive</span>
-          <h2 id="archive-heading">Saved copies of this session</h2>
+          <span className="eyebrow">Preserve this session</span>
+          <h2 id="archive-heading">Save and export</h2>
         </div>
-        {holding && <span className="panel-total">{holding.entries.length} held</span>}
+        {selectedEntry && <span className="panel-total">Already archived</span>}
       </div>
 
       <p className="archive-root">
@@ -2186,19 +2280,34 @@ function ArchivePanel({
 
       {loading && !holding ? (
         <Spinner label="Reading the archive…" />
-      ) : holding && holding.entries.length ? (
-        <div className="archive-list" role="list" aria-label="Archived sessions">
-          {holding.entries.map((entry) => (
-            <ArchiveEntryRow
-              key={`${entry.agent}:${entry.id}`}
-              entry={entry}
-              verification={verifications[`${entry.agent}:${entry.id}`]}
-              onVerify={() => onVerify(entry.agent, entry.id)}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="empty-inline">Nothing has been archived yet.</p>
+      ) : !selectedEntry ? (
+        <p className="empty-inline">This session has no saved copy yet.</p>
+      ) : null}
+      {selectedEntry && (
+        <section className="selected-archive-copy" aria-label="Saved copy of the selected session">
+          <h3>Copy of this session</h3>
+          <ArchiveEntryRow
+            entry={selectedEntry}
+            verification={verifications[selectedKey]}
+            onVerify={() => onVerify(selectedEntry.agent, selectedEntry.id)}
+          />
+        </section>
+      )}
+      {otherEntries.length > 0 && (
+        <details className="all-archive-copies">
+          <summary>Manage all archive copies ({otherEntries.length} other sessions)</summary>
+          <p>These copies belong to other sessions and do not describe the session currently open.</p>
+          <div className="archive-list" role="list" aria-label="Archive copies of other sessions">
+            {otherEntries.map((entry) => (
+              <ArchiveEntryRow
+                key={`${entry.agent}:${entry.id}`}
+                entry={entry}
+                verification={verifications[`${entry.agent}:${entry.id}`]}
+                onVerify={() => onVerify(entry.agent, entry.id)}
+              />
+            ))}
+          </div>
+        </details>
       )}
     </section>
   );
@@ -2685,7 +2794,7 @@ function CorpusPanel({
 
       {projectFilter.kind === "path" && (
         <div className="corpus-filter-notice" role="status">
-          <span>Session browser filtered to <strong title={projectFilter.path}>{projectName(projectFilter.path)}</strong>. Dashboard totals still cover all sessions.</span>
+          <span>Session list filter: <strong title={projectFilter.path}>{projectName(projectFilter.path)}</strong>. The dashboard totals and charts still cover all local sessions.</span>
           <button type="button" onClick={onClearProjectFilter}>Clear filter</button>
         </div>
       )}
@@ -2702,8 +2811,8 @@ function CorpusPanel({
       <section className="corpus-ranked">
         <div className="corpus-ranked-heading">
           <div>
-            <h3>Largest measured contexts</h3>
-            <p>Sessions ranked by their largest recorded prompt size.</p>
+            <h3>Largest sessions to inspect</h3>
+            <p>Ranked by peak prompt size; size alone does not mean a session is in trouble.</p>
           </div>
         </div>
         <ol>
@@ -2729,7 +2838,9 @@ function CorpusPanel({
         </ol>
       </section>
 
-      <section className="corpus-grid">
+      <details className="corpus-history">
+        <summary>Historical breakdowns · projects, models, tools, days, and pressure</summary>
+      <section className="corpus-grid" aria-label="Historical session breakdowns">
         <CorpusBars
           label="Turns by project"
           rows={report.byProject.map((project) => {
@@ -2809,6 +2920,7 @@ function CorpusPanel({
           </p>
         </div>
       </section>
+      </details>
 
     </main>
   );
@@ -2863,7 +2975,7 @@ function TranscriptRow({
 }: {
   entry: TranscriptEntry;
   session: SessionSummary;
-  onTurn: (turn: number) => void;
+  onTurn: (turn: number, line?: number) => void;
   highlighted: boolean;
 }) {
   const row = useRef<HTMLLIElement | null>(null);
@@ -2916,7 +3028,7 @@ function TranscriptRow({
           {entry.turn != null && (
             <>
               {" · "}
-              <button type="button" onClick={() => onTurn(entry.turn!)}>
+              <button type="button" onClick={() => onTurn(entry.turn!, entry.line)}>
                 turn {entry.turn}
               </button>
             </>
@@ -2968,12 +3080,14 @@ function TranscriptPanel({
   session,
   modelUsage,
   unattributedModelTurns,
+  enabled,
   onTurn,
   highlightLine,
 }: {
   session: SessionSummary;
   modelUsage: ModelUsage[];
   unattributedModelTurns: number;
+  enabled: boolean;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
 }) {
@@ -2982,14 +3096,18 @@ function TranscriptPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
+  const [searchText, setSearchText] = useState("");
+  const [kindFilter, setKindFilter] = useState<TranscriptKind | "all">("all");
 
   const key = `${session.agent}:${session.id}`;
   useEffect(() => {
+    // Visibility is only a reason to defer the first read. Once this cached
+    // panel has loaded any page, returning to the tab must retain its pages,
+    // filters, expanded entries, and scroll position.
+    if (!enabled || page != null || entries.length > 0) return;
     let live = true;
     setLoading(true);
     setError(null);
-    setEntries([]);
-    setPage(null);
     api.getTranscript(session.agent, session.id, 0)
       .then((first) => {
         if (!live) return;
@@ -3003,7 +3121,7 @@ function TranscriptPanel({
     };
     // Keyed on the session, not on the objects: a re-render must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, retryGeneration]);
+  }, [enabled, entries.length, key, page, retryGeneration]);
 
   const loadMore = () => {
     if (!page?.hasMore || loading) return;
@@ -3039,6 +3157,17 @@ function TranscriptPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [error, highlightLine, highlightLoaded, loading, page?.hasMore]);
 
+  const needle = searchText.trim().toLocaleLowerCase();
+  const matchesTranscriptFilters = (entry: TranscriptEntry) =>
+    (kindFilter === "all" || entry.kind === kindFilter) &&
+    (!needle || `${entry.label ?? ""}\n${entry.text}`.toLocaleLowerCase().includes(needle));
+  const highlightedEntryHiddenByFilters = highlightLine != null && entries.some(
+    (entry) => entry.line === highlightLine && !matchesTranscriptFilters(entry),
+  );
+  const visibleEntries = entries.filter((entry) =>
+    matchesTranscriptFilters(entry) || entry.line === highlightLine,
+  );
+
   if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
   if (error && !entries.length) {
     return (
@@ -3067,16 +3196,29 @@ function TranscriptPanel({
         {/* Injected content and tool results are entries here, so this count
             is larger than the number of messages exchanged. Saying "entries"
             rather than "messages" is the difference. */}
-        <p>{entries.length} of {page?.total ?? entries.length} entries</p>
+        <p>{visibleEntries.length} shown · {entries.length} loaded of {page?.total ?? entries.length}</p>
       </header>
+      <div className="transcript-tools" role="search">
+        <label><span>Find in loaded entries</span><input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Text or tool name" /></label>
+        <label><span>Entry type</span><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as TranscriptKind | "all")}>
+          <option value="all">All types</option>
+          {Object.entries(TRANSCRIPT_KIND_LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
+        </select></label>
+        <small>Search covers loaded entries. Load another page to include more of the conversation.</small>
+      </div>
+      {highlightedEntryHiddenByFilters && (
+        <p className="callout transcript-filter-override" role="status">
+          The linked record is shown even though it does not match the current conversation filters.
+        </p>
+      )}
       {error && (
         <p className="transcript-load-error" role="alert">
           Could not load the next page: {error}{" "}
           <button type="button" onClick={retryTranscript}>Retry</button>
         </p>
       )}
-      <ol className="transcript-list">
-        {entries.map((entry) => (
+      {visibleEntries.length ? <ol className="transcript-list">
+        {visibleEntries.map((entry) => (
           <TranscriptRow
             key={entry.index}
             entry={entry}
@@ -3085,13 +3227,63 @@ function TranscriptPanel({
             highlighted={highlightLine != null && entry.line === highlightLine}
           />
         ))}
-      </ol>
+      </ol> : <p className="empty-inline">No loaded entries match these filters.</p>}
       {page?.hasMore && (
         <button type="button" className="load-more" onClick={loadMore} disabled={loading}>
           {loading ? "Loading…" : `Load more (${(page.total - entries.length).toLocaleString()})`}
         </button>
       )}
     </section>
+  );
+}
+
+/** Keep a small, in-memory LRU of visited chats so tab changes and recent
+ * session switches do not discard pages, expanded records, or reading position.
+ * Transcript content is never written to persistent storage. */
+function TranscriptCache({
+  session,
+  modelUsage,
+  unattributedModelTurns,
+  enabled,
+  onTurn,
+  highlightLine,
+}: {
+  session: SessionSummary | null;
+  modelUsage: ModelUsage[];
+  unattributedModelTurns: number;
+  enabled: boolean;
+  onTurn: (turn: number) => void;
+  highlightLine: number | null;
+}) {
+  const [visits, setVisits] = useState<TranscriptVisit[]>([]);
+  useEffect(() => {
+    if (!enabled || !session) return;
+    const visit: TranscriptVisit = { session, modelUsage, unattributedModelTurns };
+    const key = `${session.agent}:${session.id}`;
+    setVisits((current) => [
+      ...current.filter((item) => `${item.session.agent}:${item.session.id}` !== key),
+      visit,
+    ].slice(-4));
+  }, [enabled, modelUsage, session, unattributedModelTurns]);
+
+  return (
+    <div id="chat-panel" className="workspace chat-cache" role="tabpanel" aria-labelledby="chat-tab" hidden={!enabled || !session}>
+      {visits.map((visit) => {
+        const isCurrent = session != null && sameSession(visit.session, session);
+        return (
+          <div className="transcript-session" key={`${visit.session.agent}:${visit.session.id}`} hidden={!isCurrent}>
+            <TranscriptPanel
+              session={visit.session}
+              modelUsage={visit.modelUsage}
+              unattributedModelTurns={visit.unattributedModelTurns}
+              enabled={enabled && isCurrent}
+              onTurn={onTurn}
+              highlightLine={isCurrent ? highlightLine : null}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -3112,6 +3304,7 @@ function SessionWorkspace({
   turnDiffLoading,
   pinnedTurn,
   onTogglePin,
+  onPinTurn,
   sessions,
   leftTarget,
   rightTarget,
@@ -3143,6 +3336,7 @@ function SessionWorkspace({
   onRunDoctor,
   onTurn,
   onTranscriptTurn,
+  onReturnToChat,
   onCompaction,
   onCloseCompaction,
   instructionFiles,
@@ -3162,6 +3356,7 @@ function SessionWorkspace({
   transcriptHighlightLine,
   focusComposition,
   onCompositionFocused,
+  onOpenContext,
 }: {
   activeView: WorkspaceView;
   detail: SessionDetail;
@@ -3180,6 +3375,7 @@ function SessionWorkspace({
   turnDiffLoading: boolean;
   pinnedTurn: number | null;
   onTogglePin: () => void;
+  onPinTurn: (turn: number) => void;
   sessions: SessionSummary[];
   leftTarget: TurnTarget | null;
   rightTarget: TurnTarget | null;
@@ -3210,7 +3406,8 @@ function SessionWorkspace({
   onCloseLifecycle: () => void;
   onRunDoctor: () => void;
   onTurn: (turn: number) => void;
-  onTranscriptTurn: (turn: number) => void;
+  onTranscriptTurn: (turn: number, line?: number) => void;
+  onReturnToChat: () => void;
   onCompaction: (lineNo: number) => void;
   onCloseCompaction: () => void;
   instructionFiles: InstructionFileReport | null;
@@ -3229,6 +3426,7 @@ function SessionWorkspace({
   onLiveFollow: (value: boolean) => void;
   focusComposition: boolean;
   onCompositionFocused: () => void;
+  onOpenContext: () => void;
 }) {
   const growth = Array.isArray(detail.growth) ? detail.growth : [];
   // The tab exists to answer where a session's context went, and opening it
@@ -3264,7 +3462,7 @@ function SessionWorkspace({
   const [budgetShare, setBudgetShare] = useState(50);
 
   return (
-    <main className="workspace" aria-busy={contextLoading}>
+    <main className="workspace" aria-busy={contextLoading} hidden={activeView === "chat"}>
       <div id="overview-panel" className="workspace-section" role="tabpanel" aria-labelledby="overview-tab" hidden={activeView !== "overview"}>
       <header className="workspace-header">
         <div>
@@ -3339,27 +3537,7 @@ function SessionWorkspace({
         />
       </section>
 
-      <section className="panel models-used-panel" aria-labelledby="models-used-heading">
-        <div className="panel-heading">
-          <div>
-            <span className="eyebrow">Session metadata</span>
-            <h2 id="models-used-heading">Models used</h2>
-          </div>
-          <p className="panel-total">
-            {detail.modelUsage.length
-              ? `${detail.modelUsage.length} recorded model${detail.modelUsage.length === 1 ? "" : "s"}`
-              : "Not recorded"}
-          </p>
-        </div>
-        <ModelsUsed
-          usage={detail.modelUsage}
-          unattributedTurns={detail.unattributedModelTurns}
-        />
-      </section>
-
-      {context && <DiagnosticsRail context={context} doctor={doctor} detail={detail} />}
-      <LiveMonitor detail={detail} context={context} live={liveFollow} onLive={onLiveFollow} />
-      <ReplayControl detail={detail} currentTurn={context?.turn ?? detail.peakTurn} playing={playing} onPlaying={setPlaying} onTurn={onTurn} />
+      {context && <DiagnosticsRail context={context} doctor={doctor} detail={detail} onOpenContext={onOpenContext} />}
 
       <section className="panel timeline-panel" aria-labelledby="timeline-heading">
         <div className="panel-heading">
@@ -3392,11 +3570,9 @@ function SessionWorkspace({
               value={selectedIndex}
               onChange={(event) => onTurn(measuredTurns[Number(event.target.value)].turn)}
             />
-            <span>
-              <output aria-live="polite">
-                {context ? `${context.totalTokens.toLocaleString()} tokens` : "Loading context"}
-              </output>
-            </span>
+            <output aria-live="polite">
+              {context ? `${context.totalTokens.toLocaleString()} tokens` : "Loading context"}
+            </output>
             <button
               type="button"
               className={pinnedTurn == null ? "pin-turn" : "pin-turn pinned"}
@@ -3412,6 +3588,31 @@ function SessionWorkspace({
             </button>
           </div>
         )}
+        <ReplayControl
+          detail={detail}
+          currentTurn={context?.turn ?? detail.peakTurn}
+          enabled={activeView === "overview"}
+          playing={playing}
+          onPlaying={setPlaying}
+          onTurn={onTurn}
+        />
+      </section>
+
+      <LiveMonitor detail={detail} context={context} live={liveFollow} onLive={onLiveFollow} />
+
+      <section className="panel models-used-panel" aria-labelledby="models-used-heading">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">Session metadata</span>
+            <h2 id="models-used-heading">Models used</h2>
+          </div>
+          <p className="panel-total">
+            {detail.modelUsage.length
+              ? `${detail.modelUsage.length} recorded model${detail.modelUsage.length === 1 ? "" : "s"}`
+              : "Not recorded"}
+          </p>
+        </div>
+        <ModelsUsed usage={detail.modelUsage} unattributedTurns={detail.unattributedModelTurns} />
       </section>
       </div>
 
@@ -3419,6 +3620,8 @@ function SessionWorkspace({
       <TurnComparison
         diff={turnDiff}
         loading={turnDiffLoading}
+        currentTurn={context?.turn ?? detail.peakTurn}
+        onPinTurn={onPinTurn}
         leftTarget={leftTarget}
         rightTarget={rightTarget}
         sessions={sessions}
@@ -3438,27 +3641,15 @@ function SessionWorkspace({
       </div>
 
       <div id="turns-panel" className="workspace-section" role="tabpanel" aria-labelledby="turns-tab" hidden={activeView !== "turns"}>
-      <UnloggedContext report={residual} loading={residualLoading} onRun={onRunResidual} />
-
-      <EvidenceTools
-        instructionFiles={instructionFiles}
-        instructionFilesLoading={instructionFilesLoading}
-        onRunInstructionFiles={onRunInstructionFiles}
-        ghost={ghost}
-        ghostLoading={ghostLoading}
-        onRunGhost={onRunGhost}
-        currentTurn={context?.turn ?? null}
-        pinnedTurn={pinnedTurn}
-        onTogglePin={onTogglePin}
-        cost={cost}
-        costLoading={costLoading}
-        onRunCost={onRunCost}
-      />
-
       {contextLoading && !context ? (
         <Spinner label="Reconstructing context…" />
       ) : context ? (
         <>
+          <section className="panel selected-turn-summary" aria-label="Selected turn summary">
+            <div><span className="eyebrow">Context · selected turn</span><strong>Turn {context.turn}</strong></div>
+            <span>{formatTokens(context.totalTokens)} measured tokens · {formatPercent(context.utilisation)} of the reported window</span>
+            <button type="button" className="quiet-action" onClick={onReturnToChat}>Return to conversation{transcriptHighlightLine != null ? ` · line ${transcriptHighlightLine}` : ""}</button>
+          </section>
           <div className={contextLoading ? "context-grid refreshing" : "context-grid"}>
             <ContextComposition context={context} />
             <Contributors
@@ -3479,6 +3670,21 @@ function SessionWorkspace({
             onRun={onRunDoctor}
           />
           <SecurityDashboard doctor={doctor} loading={doctorLoading} onScan={onRunDoctor} />
+          <UnloggedContext report={residual} loading={residualLoading} onRun={onRunResidual} />
+          <EvidenceTools
+            instructionFiles={instructionFiles}
+            instructionFilesLoading={instructionFilesLoading}
+            onRunInstructionFiles={onRunInstructionFiles}
+            ghost={ghost}
+            ghostLoading={ghostLoading}
+            onRunGhost={onRunGhost}
+            currentTurn={context.turn}
+            pinnedTurn={pinnedTurn}
+            onTogglePin={onTogglePin}
+            cost={cost}
+            costLoading={costLoading}
+            onRunCost={onRunCost}
+          />
           <TokenDiet
             context={context}
             cost={cost}
@@ -3496,20 +3702,6 @@ function SessionWorkspace({
       ) : (
         <p className="empty-inline">This session has no reconstructable prompt turn.</p>
       )}
-      </div>
-
-      <div id="chat-panel" className="workspace-section" role="tabpanel" aria-labelledby="chat-tab" hidden={activeView !== "chat"}>
-        {/* Mounted only while selected: reading a conversation costs a page of
-            seeks per session, and every other tab would otherwise pay for it. */}
-        {activeView === "chat" && (
-          <TranscriptPanel
-            session={detail.session}
-            modelUsage={detail.modelUsage}
-            unattributedModelTurns={detail.unattributedModelTurns}
-            onTurn={onTranscriptTurn}
-            highlightLine={transcriptHighlightLine}
-          />
-        )}
       </div>
 
       <div id="evidence-panel" className="workspace-section" role="tabpanel" aria-labelledby="evidence-tab" hidden={activeView !== "evidence"}>
@@ -3891,6 +4083,23 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(storedSidebarCollapsed);
   const [resizing, setResizing] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window.matchMedia === "function" && window.matchMedia("(max-width: 700px)").matches,
+  );
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement | null>(null);
+  const pendingSessionFocus = useRef<string | null>(null);
+  const mobileSidebarWasOpen = useRef(false);
+  const mobileSidebarOpen = isMobileViewport && !sidebarCollapsed;
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 700px)");
+    const update = () => setIsMobileViewport(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
 
   const applySidebarWidth = useCallback((width: number) => {
     const clamped = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
@@ -3908,6 +4117,7 @@ export default function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteActiveIndex, setPaletteActiveIndex] = useState(0);
   const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+  const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>({ kind: "any" });
   const [showSubagents, setShowSubagents] = useState(false);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
@@ -4018,6 +4228,48 @@ export default function App() {
   const modalOpen = onboardingOpen || notificationDrawerOpen || paletteOpen;
 
   useEffect(() => {
+    if (!mobileSidebarOpen) {
+      if (mobileSidebarWasOpen.current && !modalOpen) sidebarToggleRef.current?.focus();
+      mobileSidebarWasOpen.current = false;
+      return;
+    }
+    if (modalOpen) return;
+    mobileSidebarWasOpen.current = true;
+    sidebarRef.current?.querySelector<HTMLInputElement>(".search-box input")?.focus();
+    const trapSidebarFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSidebarCollapsed(true);
+        return;
+      }
+      if (event.key !== "Tab" || !sidebarRef.current) return;
+      const focusable = Array.from(sidebarRef.current.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]',
+      )).filter((element) => !element.closest("[hidden]"));
+      if (!focusable.length) {
+        event.preventDefault();
+        sidebarRef.current.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !sidebarRef.current.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !sidebarRef.current.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapSidebarFocus);
+    return () => document.removeEventListener("keydown", trapSidebarFocus);
+  }, [mobileSidebarOpen, modalOpen]);
+
+  useEffect(() => {
+    if (mobileSidebarOpen && modalOpen) setSidebarCollapsed(true);
+  }, [mobileSidebarOpen, modalOpen]);
+
+  useEffect(() => {
     const content = appContentRef.current;
     if (!content) return;
     if (modalOpen) {
@@ -4030,12 +4282,15 @@ export default function App() {
   const openPalette = useCallback(() => {
     if (notificationDrawerOpen || onboardingOpen) return;
     if (!paletteOpen && document.activeElement instanceof HTMLElement) {
-      palettePreviousFocus.current = document.activeElement;
+      const active = document.activeElement;
+      palettePreviousFocus.current = mobileSidebarOpen && sidebarRef.current?.contains(active)
+        ? sidebarToggleRef.current
+        : active;
     }
     setPaletteOpen(true);
     setPaletteQuery("");
     setPaletteActiveIndex(0);
-  }, [notificationDrawerOpen, onboardingOpen, paletteOpen]);
+  }, [mobileSidebarOpen, notificationDrawerOpen, onboardingOpen, paletteOpen]);
 
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
@@ -4053,7 +4308,11 @@ export default function App() {
     paletteWasOpen.current = false;
     const previous = palettePreviousFocus.current;
     palettePreviousFocus.current = null;
-    if (previous && document.contains(previous)) previous.focus();
+    if (previous && document.contains(previous) && !previous.closest("[hidden], [inert]")) {
+      previous.focus();
+    } else {
+      sidebarToggleRef.current?.focus();
+    }
   }, [paletteOpen]);
 
   useEffect(() => {
@@ -4065,32 +4324,23 @@ export default function App() {
         closePalette();
       } else if (event.key === 'Escape' && notificationDrawerOpen) {
         setNotificationDrawerOpen(false);
+      } else if (!event.ctrlKey && !event.metaKey && !event.altKey && /^[1-5]$/.test(event.key) && !corpusOpen && sameSession(detailFor, selected)) {
+        const target = event.target;
+        const typing = target instanceof HTMLElement && (
+          target.isContentEditable ||
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement
+        );
+        if (!typing && !paletteOpen && !notificationDrawerOpen && !onboardingOpen) {
+          event.preventDefault();
+          setActiveView(WORKSPACE_VIEWS[Number(event.key) - 1].id);
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closePalette, notificationDrawerOpen, onboardingOpen, openPalette, paletteOpen]);
-
-  // A project filter chosen under one agent may name a project the other
-  // agent never wrote (a Codex-only checkout, say). Left in place across an
-  // agent switch, the backend would return zero sessions and the <select>
-  // below would render blank -- its value would name an option that no
-  // longer exists in its own option list -- with nothing on screen
-  // explaining why the list went empty. Resetting here means the switch
-  // always lands on "All projects" instead.
-  //
-  // The mount guard matters beyond tidiness: `refreshSessions` closes over
-  // `projectFilter`, so replacing it with a new (if equal) object on the
-  // very first render would change that callback's identity and fire a
-  // second, redundant initial fetch through the effect below that calls it.
-  const agentFilterMounted = useRef(false);
-  useEffect(() => {
-    if (!agentFilterMounted.current) {
-      agentFilterMounted.current = true;
-      return;
-    }
-    setProjectFilter({ kind: "any" });
-  }, [agentFilter]);
+  }, [closePalette, corpusOpen, detailFor, notificationDrawerOpen, onboardingOpen, openPalette, paletteOpen, selected]);
 
   // Recomputed when the agent, subagent, or search filter changes, so the
   // count beside an option always describes what selecting it would actually
@@ -4099,7 +4349,7 @@ export default function App() {
   useEffect(() => {
     if (typeof api.listProjects !== "function") return;
     let cancelled = false;
-    api.listProjects(agentFilter === "all" ? undefined : agentFilter, debouncedQuery, showSubagents)
+    api.listProjects(agentFilter === "all" ? undefined : agentFilter, searchMode === "sessions" ? debouncedQuery : "", showSubagents)
       .then((options) => { if (!cancelled) setProjectOptions(options); })
       .catch((loadError) => {
         // Keep whatever options are already on screen rather than emptying
@@ -4110,7 +4360,7 @@ export default function App() {
         if (!cancelled) setError(errorMessage(loadError));
       });
     return () => { cancelled = true; };
-  }, [agentFilter, debouncedQuery, showSubagents]);
+  }, [agentFilter, debouncedQuery, searchMode, showSubagents]);
 
   const refreshSessions = useCallback(
     async (forceRefresh = false) => {
@@ -4121,7 +4371,7 @@ export default function App() {
       try {
         const page = await api.searchSessions(
           agentFilter === "all" ? undefined : agentFilter,
-          debouncedQuery,
+          searchMode === "sessions" ? debouncedQuery : "",
           0,
           200,
           forceRefresh,
@@ -4132,23 +4382,13 @@ export default function App() {
         setSessions(page.sessions);
         setSessionTotal(page.total);
         setHasMoreSessions(page.hasMore);
-        setSelected((current) =>
-          current &&
-          page.sessions.some(
-            (session) => session.agent === current.agent && session.id === current.id,
-          )
-            ? current
-            : page.sessions[0]
-              ? { agent: page.sessions[0].agent, id: page.sessions[0].id }
-              : null,
-        );
       } catch (loadError) {
         if (request === catalogRequest.current) setError(errorMessage(loadError));
       } finally {
         if (request === catalogRequest.current) setLoadingSessions(false);
       }
     },
-    [agentFilter, debouncedQuery, projectFilter, showSubagents],
+    [agentFilter, debouncedQuery, projectFilter, searchMode, showSubagents],
   );
 
   const loadMoreSessions = useCallback(async () => {
@@ -4159,7 +4399,7 @@ export default function App() {
     try {
       const page = await api.searchSessions(
         agentFilter === "all" ? undefined : agentFilter,
-        debouncedQuery,
+        searchMode === "sessions" ? debouncedQuery : "",
         sessions.length,
         200,
         false,
@@ -4189,6 +4429,7 @@ export default function App() {
     hasMoreSessions,
     loadingMore,
     projectFilter,
+    searchMode,
     sessions.length,
     showSubagents,
   ]);
@@ -4331,7 +4572,7 @@ export default function App() {
 
   useEffect(() => {
     const memorySearch = Object.prototype.hasOwnProperty.call(api, "searchMemory") ? api.searchMemory : null;
-    if (demoData || !debouncedQuery || typeof memorySearch !== "function") {
+    if (searchMode !== "content" || demoData || !debouncedQuery || typeof memorySearch !== "function") {
       setMemoryHits([]);
       setMemoryLoading(false);
       setMemoryError(null);
@@ -4349,7 +4590,7 @@ export default function App() {
       })
       .finally(() => { if (!cancelled) setMemoryLoading(false); });
     return () => { cancelled = true; };
-  }, [agentFilter, debouncedQuery, demoData]);
+  }, [agentFilter, debouncedQuery, demoData, searchMode]);
 
   useEffect(() => {
     refreshSessions();
@@ -4497,6 +4738,10 @@ export default function App() {
     return () => { cancelled = true; unlisten?.(); };
   }, [liveFollow, selected]);
 
+  useEffect(() => {
+    if (liveFollow && (corpusOpen || activeView !== "overview")) setLiveFollow(false);
+  }, [activeView, corpusOpen, liveFollow]);
+
   const compareSession = useCallback(async (value: string) => {
     const request = ++compareRequest.current;
     const session = selected;
@@ -4558,11 +4803,12 @@ export default function App() {
     [context?.turn, selected],
   );
 
-  const selectTranscriptTurn = useCallback((turn: number) => {
+  const selectTranscriptTurn = useCallback((turn: number, line?: number) => {
+    if (selected && line != null) setNotificationHighlight({ ...selected, line });
     setActiveView("turns");
     setFocusComposition(true);
     void selectTurn(turn);
-  }, [selectTurn]);
+  }, [selectTurn, selected]);
 
   const compositionFocused = useCallback(() => setFocusComposition(false), []);
 
@@ -4576,17 +4822,26 @@ export default function App() {
    */
   const selectSession = useCallback((session: SessionKey) => {
     setCorpusOpen(false);
-    setSelected((current) => (sameSession(current, session) ? current : session));
-  }, []);
+    if (isMobileViewport) {
+      setSidebarCollapsed(true);
+      pendingSessionFocus.current = `${session.agent}:${session.id}`;
+    }
+    if (!sameSession(selected, session)) setActiveView("overview");
+    setSelected((current) => sameSession(current, session) ? current : session);
+  }, [isMobileViewport, selected]);
 
   const selectMemoryHit = useCallback((hit: MemoryHit) => {
     const destination = { agent: hit.agent, id: hit.sessionId };
     setCorpusOpen(false);
+    if (isMobileViewport) {
+      setSidebarCollapsed(true);
+      pendingSessionFocus.current = `${destination.agent}:${destination.id}`;
+    }
     setPendingNotificationTurn(null);
     setNotificationHighlight({ ...destination, line: hit.line });
     setActiveView("chat");
     setSelected((current) => (sameSession(current, destination) ? current : destination));
-  }, []);
+  }, [isMobileViewport]);
 
   const openFeedNotification = useCallback((notification: NotificationRecord) => {
     const readAt = notification.readAt ?? new Date().toISOString();
@@ -4938,6 +5193,13 @@ export default function App() {
   }, [selected, exportKeepSecrets]);
 
   const visibleDetail = sameSession(detailFor, selected) ? detail : null;
+  useEffect(() => {
+    if (!isMobileViewport || !visibleDetail) return;
+    const key = `${visibleDetail.session.agent}:${visibleDetail.session.id}`;
+    if (pendingSessionFocus.current !== key) return;
+    document.getElementById("session-context-heading")?.focus();
+    pendingSessionFocus.current = null;
+  }, [isMobileViewport, sidebarCollapsed, visibleDetail]);
   const availableTurns = (visibleDetail?.growth ?? []).filter((point) => point.promptTokens != null);
   const currentTurn = context?.turn ?? visibleDetail?.peakTurn ?? null;
   const currentTurnIndex = availableTurns.findIndex((point) => point.turn === currentTurn);
@@ -4949,6 +5211,12 @@ export default function App() {
     if (next) selectTurn(next.turn);
   };
   const latestCompaction = [...(visibleDetail?.growth ?? [])].reverse().find((point) => point.compaction);
+  const selectedInResults = selected != null && sessions.some(
+    (session) => session.agent === selected.agent && session.id === selected.id,
+  );
+  const hasActiveSessionFilters =
+    (searchMode === "sessions" && debouncedQuery.length > 0) ||
+    agentFilter !== "all" || projectFilter.kind !== "any" || !showSubagents;
   const paletteActions = [
     ...WORKSPACE_VIEWS.map((view) => ({
       id: view.id,
@@ -5146,24 +5414,6 @@ export default function App() {
         <div className="topbar-context">
           <span className="compact-mark" aria-hidden="true"><i /><i /></span>
           <strong>ContextTrace</strong>
-          {visibleDetail && (
-            <>
-              <span className="topbar-divider" />
-              <div className="breadcrumbs" aria-label="Current session">
-                <span>{sessionName(visibleDetail.session)}</span>
-                <i>/</i>
-                <span>{visibleDetail.session.agent === "codex" ? "codex" : "claude"}</span>
-                <i>/</i>
-                <span>{shortId(visibleDetail.session.id)}</span>
-              </div>
-              <span className="topbar-tag" title="Models used">
-                {visibleDetail.modelUsage.length
-                  ? visibleDetail.modelUsage.map((entry) => entry.model).join(", ")
-                  : visibleDetail.model ?? "model unknown"}
-              </span>
-              {visibleDetail.contextWindow && <span className="topbar-tag">{formatTokens(visibleDetail.contextWindow)} window</span>}
-            </>
-          )}
         </div>
         <button className="command-trigger" type="button" onClick={openPalette} aria-haspopup="dialog">
           <span aria-hidden="true">⌕</span>
@@ -5194,11 +5444,19 @@ export default function App() {
       </header>
 
       <div className={sidebarCollapsed ? "app-body sidebar-collapsed" : "app-body"}>
-      <aside className={sidebarCollapsed ? "sidebar collapsed" : "sidebar"}>
+      <aside
+        ref={sidebarRef}
+        className={sidebarCollapsed ? "sidebar collapsed" : "sidebar"}
+        role={mobileSidebarOpen ? "dialog" : undefined}
+        aria-modal={mobileSidebarOpen || undefined}
+        aria-label={mobileSidebarOpen ? "Sessions" : undefined}
+        tabIndex={mobileSidebarOpen ? -1 : undefined}
+      >
         <div className="sidebar-caption">
           <span>Sessions <b>{sessionTotal}</b></span>
           <button
             type="button"
+            ref={sidebarToggleRef}
             className="sidebar-collapse-toggle"
             aria-label={sidebarCollapsed ? "Expand sessions sidebar" : "Collapse sessions sidebar"}
             aria-expanded={!sidebarCollapsed}
@@ -5211,30 +5469,35 @@ export default function App() {
         </div>
         <div id="session-sidebar-content" className="sidebar-content" hidden={sidebarCollapsed}>
 
-        {/* Above the list rather than in the tab strip, because those tabs are
-            all views *of* the selected session and this is not. The label is
-            fixed and the state lives in `aria-pressed` and the styling: a
-            control that renames itself as you use it reads as two different
-            controls, which is what "All sessions at once" / "Back to this
-            session" did. */}
+        {/* All sessions is a destination. Returning to the inspected session
+            is a separate action, so clicking this again never hides the page. */}
         <button
           type="button"
           className={corpusOpen ? "corpus-entry active" : "corpus-entry"}
           aria-pressed={corpusOpen}
-          onClick={() => setCorpusOpen((open) => !open)}
+          onClick={() => setCorpusOpen(true)}
         >
           <span aria-hidden="true">◫</span>
           <span>All sessions</span>
         </button>
+        {corpusOpen && visibleDetail && (
+          <button
+            type="button"
+            className="return-session-entry"
+            onClick={() => setCorpusOpen(false)}
+          >
+            Return to <strong>{sessionName(visibleDetail.session)}</strong>
+          </button>
+        )}
 
         <div className="search-box">
           <span aria-hidden="true">⌕</span>
           <input
             type="search"
-            placeholder="Search sessions, projects, or memory…"
+            placeholder={searchMode === "sessions" ? "Search sessions and projects…" : "Search recorded content…"}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            aria-label="Search sessions"
+            aria-label={searchMode === "sessions" ? "Search sessions and projects" : "Search recorded content"}
           />
           {query && (
             <button onClick={() => setQuery("")} aria-label="Clear search">
@@ -5242,10 +5505,14 @@ export default function App() {
             </button>
           )}
         </div>
+        <div className="search-mode-switch" role="group" aria-label="Search scope">
+          <button type="button" aria-pressed={searchMode === "sessions"} className={searchMode === "sessions" ? "active" : ""} onClick={() => setSearchMode("sessions")}>Sessions</button>
+          <button type="button" aria-pressed={searchMode === "content"} className={searchMode === "content" ? "active" : ""} onClick={() => setSearchMode("content")}>Content</button>
+        </div>
         <MemorySearchResults
-          hits={memoryHits}
-          loading={memoryLoading}
-          error={memoryError}
+          hits={searchMode === "content" ? memoryHits : []}
+          loading={searchMode === "content" && memoryLoading}
+          error={searchMode === "content" ? memoryError : null}
           onSelect={selectMemoryHit}
         />
 
@@ -5286,6 +5553,9 @@ export default function App() {
             }}
           >
             <option value="any">All projects</option>
+            {projectFilter.kind === "path" && !projectOptions.some((option) => option.path === projectFilter.path) && (
+              <option value={projectFilter.path}>{projectName(projectFilter.path)} · no sessions for this agent</option>
+            )}
             {projectOptions.map((option) => (
               <option key={option.path ?? "unrecorded"} value={option.path ?? "unrecorded"}>
                 {option.label} · {option.count}
@@ -5306,13 +5576,42 @@ export default function App() {
         </div>
 
         <div className="session-list-heading" aria-live="polite" aria-atomic="true">
-          <span>{demoData ? "Demonstration sessions" : "Your sessions"}</span>
+          <span>{demoData ? "Demonstration sessions" : searchMode === "content" ? "Sessions · current filters" : "Your sessions"}</span>
           <span>
             {sessions.length === sessionTotal
               ? sessionTotal
               : `${sessions.length} / ${sessionTotal}`}
           </span>
         </div>
+
+        {!loadingSessions && selected && !selectedInResults && !corpusOpen && (
+          <div className="session-result-notice" role="status">
+            <span>{hasActiveSessionFilters ? "The open session is outside the current filters." : "The open session is beyond the first page."}</span>
+            {hasActiveSessionFilters && <button
+              type="button"
+              onClick={() => {
+                setQuery("");
+                setDebouncedQuery("");
+                setAgentFilter("all");
+                setProjectFilter({ kind: "any" });
+                setShowSubagents(true);
+              }}
+            >
+              Clear filters
+            </button>}
+          </div>
+        )}
+
+        {selected && !selectedInResults && !corpusOpen && visibleDetail && (
+          <div className="open-session-pin">
+            <div>Open session · outside the current results</div>
+            <SessionListItem
+              session={visibleDetail.session}
+              selected
+              onSelect={() => selectSession(visibleDetail.session)}
+            />
+          </div>
+        )}
 
         <nav className="session-list" aria-label="Sessions" aria-busy={loadingSessions}>
           {loadingSessions ? (
@@ -5394,6 +5693,15 @@ export default function App() {
         </div>
       </aside>
 
+      {!sidebarCollapsed && (
+        <button
+          type="button"
+          className="mobile-sidebar-scrim"
+          aria-label="Close sessions sidebar"
+          onClick={() => setSidebarCollapsed(true)}
+        />
+      )}
+
       {/* A real separator rather than a styled ::after, so the panel can be
           resized without a mouse. */}
       <div
@@ -5443,6 +5751,31 @@ export default function App() {
       >
         {/* The tab strip names views of the selected session, so it is absent
             while the corpus is open rather than sitting there disabled. */}
+        {!corpusOpen && visibleDetail && (
+        <div id="session-context-heading" className="session-context-bar" tabIndex={-1}>
+          <div className="session-context-title">
+            <AgentMark agent={visibleDetail.session.agent} />
+            <strong title={sessionName(visibleDetail.session)}>{sessionName(visibleDetail.session)}</strong>
+            <span>{visibleDetail.session.agent === "codex" ? "Codex" : "Claude Code"}</span>
+            <span className="session-context-id">{shortId(visibleDetail.session.id)}</span>
+          </div>
+          <details className="session-context-details">
+            <summary>Session details</summary>
+            <div>
+              <span title={visibleDetail.session.project ?? visibleDetail.session.path}>
+                {visibleDetail.session.project ?? visibleDetail.session.path}
+              </span>
+              {visibleDetail.gitBranch && <span>Branch: {visibleDetail.gitBranch}</span>}
+              {visibleDetail.session.threadRole.kind === "subagent" && (
+                <span>Subagent of {shortId(visibleDetail.session.threadRole.parent)}</span>
+              )}
+              {visibleDetail.source?.kind === "archive" && (
+                <span>Archive copy{visibleDetail.source.differsFromSource ? " · redacted" : ""}</span>
+              )}
+            </div>
+          </details>
+        </div>
+        )}
         {!corpusOpen && (
         <nav className="workspace-tabs" aria-label="Session views" role="tablist">
           {WORKSPACE_VIEWS.map((view) => (
@@ -5453,19 +5786,29 @@ export default function App() {
               role="tab"
               aria-controls={`${view.id}-panel`}
               aria-selected={activeView === view.id}
+              tabIndex={activeView === view.id ? 0 : -1}
               className={activeView === view.id ? "active" : ""}
               onClick={() => setActiveView(view.id)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+                event.preventDefault();
+                const direction = event.key === "ArrowRight" ? 1 : -1;
+                const index = WORKSPACE_VIEWS.findIndex((item) => item.id === view.id);
+                const next = WORKSPACE_VIEWS[(index + direction + WORKSPACE_VIEWS.length) % WORKSPACE_VIEWS.length];
+                setActiveView(next.id);
+                document.getElementById(`${next.id}-tab`)?.focus();
+              }}
               disabled={!visibleDetail}
             >
               {view.label}
             </button>
           ))}
-          <div className="turn-stepper" aria-label="Selected turn">
+          {activeView !== "evidence" && <div className="turn-stepper" aria-label="Selected turn">
             <span>turn</span>
             <button type="button" onClick={() => stepTurn(-1)} disabled={!canStepBack} aria-label="Previous measured turn">‹</button>
             <output>{currentTurn == null ? "—" : String(currentTurn).padStart(2, "0")}</output>
             <button type="button" onClick={() => stepTurn(1)} disabled={!canStepForward} aria-label="Next measured turn">›</button>
-          </div>
+          </div>}
         </nav>
         )}
 
@@ -5525,6 +5868,7 @@ export default function App() {
             turnDiffLoading={loadingTurnDiff}
             pinnedTurn={pinnedTurn}
             onTogglePin={togglePin}
+            onPinTurn={setPinnedTurn}
             sessions={sessions}
             leftTarget={leftTarget}
             rightTarget={rightTarget}
@@ -5556,6 +5900,7 @@ export default function App() {
             onRunDoctor={runDoctor}
             onTurn={selectTurn}
             onTranscriptTurn={selectTranscriptTurn}
+            onReturnToChat={() => setActiveView("chat")}
             onCompaction={inspectCompaction}
             onCloseCompaction={closeCompaction}
             instructionFiles={instructionFiles}
@@ -5574,6 +5919,7 @@ export default function App() {
             onLiveFollow={setLiveFollow}
             focusComposition={focusComposition}
             onCompositionFocused={compositionFocused}
+            onOpenContext={() => setActiveView("turns")}
           />
         ) : (
           <div className="workspace-centered empty-workspace">
@@ -5582,6 +5928,14 @@ export default function App() {
             <p>Choose a Codex or Claude Code run to see where its context went.</p>
           </div>
         )}
+        <TranscriptCache
+          session={visibleDetail?.session ?? null}
+          modelUsage={visibleDetail?.modelUsage ?? []}
+          unattributedModelTurns={visibleDetail?.unattributedModelTurns ?? 0}
+          enabled={!corpusOpen && activeView === "chat" && visibleDetail != null}
+          onTurn={selectTranscriptTurn}
+          highlightLine={visibleDetail && sameSession(notificationHighlight, visibleDetail.session) ? notificationHighlight!.line : null}
+        />
       </div>
       </div>
       </div>

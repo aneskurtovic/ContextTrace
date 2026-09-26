@@ -98,17 +98,19 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-/** Leave the corpus view, which is what the app now opens on. */
-function leaveCorpus() {
+/** Open the first session from the all-sessions landing page. */
+async function leaveCorpus() {
   const corpus = screen.queryByRole("button", { name: "All sessions" });
-  if (corpus?.getAttribute("aria-pressed") === "true") fireEvent.click(corpus);
+  if (corpus?.getAttribute("aria-pressed") !== "true") return;
+  const sessions = await screen.findAllByRole("button", { name: /^(Codex|Claude Code) session:/ });
+  fireEvent.click(sessions[0]);
 }
 
-async function openView(name: "Overview" | "Turns" | "Chat" | "Diff" | "Evidence") {
+async function openView(name: "Overview" | "Context" | "Conversation" | "Compare" | "Save & export") {
   // The session tab strip does not exist while the corpus is showing, so
   // leaving it is a precondition of every view assertion rather than
   // something each test has to remember.
-  leaveCorpus();
+  await leaveCorpus();
   const tab = await screen.findByRole("tab", { name });
   await waitFor(() => expect(tab.hasAttribute("disabled")).toBe(false));
   fireEvent.click(tab);
@@ -199,7 +201,7 @@ describe("desktop accessibility and state handling", () => {
     expect(within(overview!).getByText("gpt-5.3")).not.toBeNull();
     expect(within(overview!).getByText("1 turn did not record a model.")).not.toBeNull();
 
-    await openView("Chat");
+    await openView("Conversation");
     const chat = document.getElementById("chat-panel");
     expect(chat).not.toBeNull();
     expect(within(chat!).getByLabelText("Models used")).not.toBeNull();
@@ -212,8 +214,6 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockReturnValueOnce(sessions.promise);
 
     render(<App />);
-    leaveCorpus();
-
     expect(
       screen.getByRole("navigation", { name: "Sessions" }).getAttribute("aria-busy"),
     ).toBe("true");
@@ -222,7 +222,7 @@ describe("desktop accessibility and state handling", () => {
     sessions.resolve(sessionPage([]));
 
     expect(await screen.findByText("No matching sessions")).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "Select a session" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "All sessions" })).not.toBeNull();
     expect(
       screen.getByRole("navigation", { name: "Sessions" }).getAttribute("aria-busy"),
     ).toBe("false");
@@ -250,7 +250,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     expect(
       await screen.findByText("No context categories were reported for this turn."),
@@ -264,7 +264,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     const filters = screen.getByRole("group", { name: "Filter sessions by agent" });
     expect(filters).not.toBeNull();
@@ -301,7 +301,7 @@ describe("desktop accessibility and state handling", () => {
     expect(
       await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ }),
     ).not.toBeNull();
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions and projects" }), {
       target: { value: "semantic-search" },
     });
 
@@ -380,7 +380,7 @@ describe("desktop accessibility and state handling", () => {
     await screen.findAllByRole("button", { name: /Codex session/ });
     mockedApi.listProjects.mockClear();
 
-    fireEvent.change(screen.getByLabelText("Search sessions"), {
+    fireEvent.change(screen.getByLabelText("Search sessions and projects"), {
       target: { value: "atlas" },
     });
 
@@ -390,11 +390,9 @@ describe("desktop accessibility and state handling", () => {
     );
   });
 
-  it("resets an orphaned project filter when the agent filter changes", async () => {
-    // Regression: a project chosen under one agent can be meaningless under
-    // another. Left in place, the backend returned zero sessions and the
-    // <select> rendered blank -- its value named an option absent from its
-    // own list -- with nothing on screen explaining the empty result.
+  it("keeps an agent-specific project filter visible when it has no matches", async () => {
+    // The selected project remains explicit when another agent has no
+    // sessions there, so the empty result is understandable and reversible.
     mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions));
     mockedApi.listProjects.mockResolvedValue([
       { path: "C:\\work\\api", label: "api", count: 3 },
@@ -412,9 +410,9 @@ describe("desktop accessibility and state handling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Codex" }));
 
     await waitFor(() => expect(mockedApi.searchSessions).toHaveBeenLastCalledWith(
-      "codex", "", 0, 200, false, { kind: "any" }, false,
+      "codex", "", 0, 200, false, { kind: "path", path: "C:\\work\\api" }, false,
     ));
-    expect(select.value).toBe("any");
+    expect(select.value).toBe("C:\\work\\api");
   });
 
   it("surfaces a project list failure in the alert instead of emptying the dropdown", async () => {
@@ -456,6 +454,7 @@ describe("desktop accessibility and state handling", () => {
 
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: /Codex session: .*ContextTrace/ }));
     await waitFor(() =>
       expect(mockedApi.inspectSession).toHaveBeenCalledWith(first.agent, first.id),
     );
@@ -494,7 +493,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     fireEvent.click(await screen.findByRole("button", { name: /Inspect turn 1:/ }));
     fireEvent.click(screen.getByRole("button", { name: /Inspect turn 2:/ }));
@@ -524,7 +523,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.getContext.mockResolvedValueOnce(observed);
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     expect(await screen.findByText(/Confidence labels: observed = logged/)).not.toBeNull();
     expect(screen.getAllByText("observed").length).toBeGreaterThan(0);
@@ -536,7 +535,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.getContext.mockResolvedValueOnce(demoContext());
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     const measurement = await screen.findByText(/Confidence labels: observed = logged/);
     expect(measurement.textContent).toContain(
@@ -555,7 +554,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     expect(
       await screen.findByText(
@@ -573,7 +572,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     expect(
       await screen.findByText("Unattributed remainder: 0 tokens for this reconstruction."),
@@ -585,7 +584,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     const analyze = await screen.findByRole("button", { name: "Analyze turn 32" });
     expect(mockedApi.runDoctor).not.toHaveBeenCalled();
@@ -595,7 +594,7 @@ describe("desktop accessibility and state handling", () => {
       expect(mockedApi.runDoctor).toHaveBeenCalledWith(demoSessions[0].agent, demoSessions[0].id, 32),
     );
     expect((await screen.findAllByText("18.2k")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Repeated content")).not.toBeNull();
+    expect((await screen.findAllByText("Repeated content")).length).toBeGreaterThan(0);
     expect(screen.getByText("Low-information blocks")).not.toBeNull();
     expect(screen.getByText("196 record(s) checked")).not.toBeNull();
   });
@@ -604,7 +603,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     const contributor = await screen.findByRole("button", {
       name: /tool: shell_command → test output/,
@@ -669,7 +668,7 @@ describe("desktop accessibility and state handling", () => {
     const rows = await screen.findAllByRole("button", { name: /Codex session:/ });
     expect(rows[0].textContent).toContain("Trace the 38k-token tool result in the planner");
     expect(rows[1].textContent).toContain("Ship the notification delivery fix");
-    expect(rows[1].textContent).toContain("fix/toasts");
+    expect(rows[1].querySelector(".session-meta")?.getAttribute("title")).toContain("branch fix/toasts");
     // Both name a session; only one is the agent's own summary of it, and the
     // mark is what stops the weaker claim from reading as the stronger.
     expect(rows[0].querySelector(".title-source")).toBeNull();
@@ -710,8 +709,9 @@ describe("desktop accessibility and state handling", () => {
       name: /Claude Code session: .*collision-claude-project/,
     });
 
-    // The first session in the page is selected by default; only its row
-    // highlights even though the other agent's session shares its id.
+    // Only the selected agent's row highlights even though both sessions
+    // share their identifier.
+    fireEvent.click(codexRow);
     await waitFor(() =>
       expect(mockedApi.inspectSession).toHaveBeenCalledWith("codex", "collision-id"),
     );
@@ -733,7 +733,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([claudeSession]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     // Opening the tab is itself the question; no click is required to ask it.
     await waitFor(() =>
@@ -759,7 +759,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     expect(
       await screen.findByText(/all 41 turns reconstruct to more content than their prompts held/),
@@ -780,7 +780,7 @@ describe("desktop accessibility and state handling", () => {
     });
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     expect(
       await screen.findByText("A compaction occurred here, which explains it."),
@@ -794,12 +794,12 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage(demoSessions.slice(0, 2)));
     render(<App />);
 
-    await openView("Turns");
+    await openView("Context");
     await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
 
     // Leaving and returning is not a new question about the same session.
     await openView("Overview");
-    await openView("Turns");
+    await openView("Context");
     await waitFor(() => expect(mockedApi.getResidual).toHaveBeenCalledTimes(1));
   });
 
@@ -808,7 +808,7 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([first, second]));
     render(<App />);
 
-    await openView("Turns");
+    await openView("Context");
     await waitFor(() =>
       expect(mockedApi.getResidual).toHaveBeenCalledWith(first.agent, first.id),
     );
@@ -816,6 +816,7 @@ describe("desktop accessibility and state handling", () => {
     // A different session is a new question, even though Turns is already open.
     const secondRow = await screen.findByRole("button", { name: new RegExp(second.title!.text) });
     fireEvent.click(secondRow);
+    await openView("Context");
     await waitFor(() =>
       expect(mockedApi.getResidual).toHaveBeenCalledWith(second.agent, second.id),
     );
@@ -826,13 +827,13 @@ describe("desktop accessibility and state handling", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     const overview = await screen.findByRole("tab", { name: "Overview" });
     await waitFor(() => expect(overview.hasAttribute("disabled")).toBe(false));
     expect(overview.getAttribute("aria-selected")).toBe("true");
 
-    const turns = await openView("Turns");
+    const turns = await openView("Context");
     expect(turns.getAttribute("aria-selected")).toBe("true");
     expect(overview.getAttribute("aria-selected")).toBe("false");
     expect(await screen.findByRole("button", { name: "Analyze turn 32" })).not.toBeNull();
@@ -965,7 +966,7 @@ describe("conversation", () => {
   it("reads a session back with tool results collapsed to their size", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
-    await openView("Chat");
+    await openView("Conversation");
 
     const entries = await screen.findAllByRole("listitem");
     const conversation = entries.filter((entry) => entry.className.includes("transcript-entry"));
@@ -989,7 +990,7 @@ describe("conversation", () => {
   it("fetches the rest of a truncated entry only when it is expanded", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
-    await openView("Chat");
+    await openView("Conversation");
 
     const result = (await screen.findAllByRole("listitem")).find((entry) =>
       entry.className.includes("toolResult"),
@@ -1009,7 +1010,7 @@ describe("conversation", () => {
   it("moves from a message to the measurements of the turn it belongs to", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
-    await openView("Chat");
+    await openView("Conversation");
 
     // The link back is what makes this a transcript rather than a chat log:
     // the reader who spots the oversized result goes straight to the turn's
@@ -1017,7 +1018,7 @@ describe("conversation", () => {
     fireEvent.click((await screen.findAllByRole("button", { name: "turn 1" }))[0]);
 
     await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith("codex", demoSessions[0].id, 1));
-    expect(screen.getByRole("tab", { name: "Turns" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Context" }).getAttribute("aria-selected")).toBe("true");
     expect(await screen.findByRole("heading", { name: "What filled the context window" })).not.toBeNull();
   });
 
@@ -1027,7 +1028,7 @@ describe("conversation", () => {
       .mockRejectedValueOnce(new Error("temporary disk read failure"))
       .mockImplementationOnce(async (_agent, _id, index) => demoTranscriptEntry(index));
     render(<App />);
-    await openView("Chat");
+    await openView("Conversation");
     const result = (await screen.findAllByRole("listitem")).find((entry) => entry.className.includes("toolResult"))!;
 
     fireEvent.click(result.querySelector<HTMLButtonElement>(".transcript-toggle")!);
@@ -1047,9 +1048,10 @@ describe("conversation", () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([first, second]));
     mockedApi.getInstructionFiles.mockReturnValueOnce(oldAnalysis.promise).mockReturnValueOnce(currentAnalysis.promise);
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
     fireEvent.click(screen.getByRole("button", { name: "Check instruction files" }));
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`session: .*${second.id.slice(0, 8)}`) }));
+    await openView("Context");
 
     const checkButton = await screen.findByRole("button", { name: "Check instruction files" });
     expect((checkButton as HTMLButtonElement).disabled).toBe(false);
@@ -1074,7 +1076,7 @@ describe("conversation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Inspect compaction at turn 17/ }));
 
-    expect(screen.getByRole("tab", { name: "Diff" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Compare" }).getAttribute("aria-selected")).toBe("true");
     const heading = await screen.findByRole("heading", { name: /What turn 17's compaction replaced/ });
     await waitFor(() => expect(document.activeElement).toBe(heading));
   });
@@ -1091,11 +1093,12 @@ describe("conversation", () => {
     }]);
     render(<App />);
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "needle" } });
+    fireEvent.click(screen.getByRole("button", { name: "Content" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search recorded content" }), { target: { value: "needle" } });
     const hit = await screen.findByRole("button", { name: /needle in a tool result/ });
     fireEvent.click(hit);
 
-    expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Conversation" }).getAttribute("aria-selected")).toBe("true");
     await waitFor(() => expect(document.querySelector(".transcript-entry.highlighted")).not.toBeNull());
   });
 
@@ -1106,7 +1109,8 @@ describe("conversation", () => {
       line: index + 1, turn: 1, preview: `search hit ${index + 1}`,
     })));
     render(<App />);
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search sessions" }), { target: { value: "needle" } });
+    fireEvent.click(screen.getByRole("button", { name: "Content" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search recorded content" }), { target: { value: "needle" } });
     expect(await screen.findByText("50 (cap)")).not.toBeNull();
     expect(screen.getByText(/capped count, not the total/)).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show remaining 44 fetched hits" }));
@@ -1270,8 +1274,13 @@ describe('notifications', () => {
     fireEvent.click(drawer.querySelectorAll('.notification-card')[0]);
     await screen.findByText(/UserSecretEncrypted/);
 
-    fireEvent.click(document.querySelectorAll('.session-row')[1]);
-    await screen.findByText(/an unrelated conversation/);
+    fireEvent.click(await screen.findByRole('button', {
+      name: new RegExp(`session: .*${demoSessions[1].id.slice(0, 8)}`),
+    }));
+    const conversationTab = screen.getByRole('tab', { name: 'Conversation' });
+    await waitFor(() => expect(conversationTab.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(conversationTab);
+    await waitFor(() => expect(calls).toContain(demoSessions[1].id + ':0'));
 
     const others = calls.filter((call) => call.startsWith(demoSessions[1].id));
     expect(others).toEqual([demoSessions[1].id + ':0']);
@@ -1374,7 +1383,7 @@ describe('notifications', () => {
     });
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Follow live' }));
     await waitFor(() => expect(update).toBeDefined());
@@ -1392,7 +1401,7 @@ describe("the two panels that write", () => {
     const session = demoSessions[0];
     mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
     render(<App />);
-    await openView("Evidence");
+    await openView("Save & export");
     await screen.findByRole("button", { name: /to the archive$/ });
     return session;
   }
@@ -1505,7 +1514,7 @@ describe("comparing turns across two sessions", () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([codex, claude]));
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
     expect(await screen.findByText(/^Baseline pinned at/)).not.toBeNull();
@@ -1527,10 +1536,10 @@ describe("comparing turns across two sessions", () => {
     mockedApi.getTurnDiff.mockImplementation(async (left, right) => demoTurnDiff(left, right));
 
     render(<App />);
-    leaveCorpus();
+    await leaveCorpus();
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin this turn/ }));
-    await openView("Diff");
+    await openView("Compare");
     // The sidebar's own project filter is a second combobox on screen once
     // this view is open, so the cross-session picker needs its label to
     // disambiguate which one the change targets.
@@ -1559,7 +1568,7 @@ describe("composition items and drill-down", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     // Find all category buttons and locate tool-outputs by looking for one with the right item count
     const buttons = await screen.findAllByRole("button");
@@ -1600,7 +1609,7 @@ describe("composition items and drill-down", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     const buttons = await screen.findAllByRole("button");
     const toolButton = buttons.find((btn) => {
@@ -1628,7 +1637,7 @@ describe("composition items and drill-down", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     const context = demoContext();
     const toolOutputsItems = context.items.filter((i) => i.category === "tool-outputs");
@@ -1652,7 +1661,7 @@ describe("composition items and drill-down", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     const context = demoContext();
     const unattributedCategory = context.categories.find(
@@ -1680,7 +1689,7 @@ describe("contributor detail panel", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     const context = demoContext();
     const firstContributor = context.contributors[0];
@@ -1722,7 +1731,7 @@ describe("Find hidden changes gating and baseline controls", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     const button = await ghostButton();
     await waitFor(() => expect(button.hasAttribute("disabled")).toBe(true));
@@ -1738,7 +1747,7 @@ describe("Find hidden changes gating and baseline controls", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin turn \d+ as baseline$/ }));
 
@@ -1756,7 +1765,7 @@ describe("Find hidden changes gating and baseline controls", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
 
     fireEvent.click(await screen.findByRole("button", { name: /^Pin turn \d+ as baseline$/ }));
     const pinned = Number(
@@ -1782,7 +1791,7 @@ describe("Find hidden changes gating and baseline controls", () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
     mockedApi.getTemporalGhost.mockReturnValueOnce(pending.promise);
     render(<App />);
-    await openView("Turns");
+    await openView("Context");
     fireEvent.click(await screen.findByRole("button", { name: /^Pin turn \d+ as baseline$/ }));
     fireEvent.click(screen.getByRole("button", { name: "Previous measured turn" }));
     const button = await ghostButton();
@@ -1790,8 +1799,9 @@ describe("Find hidden changes gating and baseline controls", () => {
     fireEvent.click(button);
     await waitFor(() => expect(button.textContent).toContain("Reconstructing"));
     fireEvent.click(screen.getByRole("button", { name: "Next measured turn" }));
-    await waitFor(() => expect(button.textContent).toBe("Find hidden changes"));
-    expect(button.hasAttribute("disabled")).toBe(true);
+    const nextButton = await ghostButton();
+    await waitFor(() => expect(nextButton.textContent).toBe("Find hidden changes"));
+    expect(nextButton.hasAttribute("disabled")).toBe(true);
     pending.resolve(demoTemporalGhost(18, 17));
     await waitFor(() => expect(screen.queryByText("Temporal ghost")).toBeNull());
   });
