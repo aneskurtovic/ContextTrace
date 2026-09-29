@@ -15,12 +15,12 @@ session.
 > producer versions covered by committed fixtures. See [MVP status](docs/MVP-STATUS.md)
 > for current verification and release gates.
 
-![ContextTrace desktop app — redesigned dark overview with prompt growth and live context monitoring](docs/images/desktop-overview-dark.png)
+![ContextTrace dark overview showing prompt growth and the selected-turn snapshot with synthetic demonstration data](docs/images/desktop-overview-dark.png)
 
-![ContextTrace desktop app — redesigned light overview](docs/images/desktop-overview-light.png)
+![ContextTrace light overview of the same synthetic demonstration session](docs/images/desktop-overview-light.png)
 
-*The redesigned desktop app provides the same local-first measurements in
-dark and light themes, with overview, turns, diff and evidence views.*
+*The desktop app shows the same local-first measurements in dark and light
+themes. These screenshots use synthetic demonstration data.*
 
 ## What it is
 

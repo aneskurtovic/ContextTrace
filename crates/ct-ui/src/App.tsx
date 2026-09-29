@@ -2825,7 +2825,7 @@ function CorpusPanel({
                 onClick={() => onOpenSession({ agent: rank.agent, id: rank.id })}
               >
                 <AgentMark agent={rank.agent} />
-                <span>
+                <span className="corpus-ranked-copy">
                   <strong>{rank.title ?? projectName(rank.project)}</strong>
                   <small>
                     {projectName(rank.project)} · {shortId(rank.id)} · {rank.turns} turns
