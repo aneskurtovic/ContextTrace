@@ -2525,28 +2525,32 @@ input[type="number"]:focus {
 }
 
 select option {
-  background: #121b2e;
-  color: #edf3fd;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .diff-cross-session {
   display: grid;
-  grid-template-columns: minmax(250px, 1fr) 160px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 200px);
   gap: 12px;
   margin: 16px 0;
   padding: 13px;
-  border: 1px solid #2a3a59;
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(11, 17, 31, .5);
+  background: var(--surface-2);
 }
 
 .diff-cross-session label {
   display: grid;
+  min-width: 0;
   gap: 6px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
 }
+
+.diff-cross-session input,
+.diff-cross-session select { width: 100%; min-width: 0; }
 
 .diff-cross-session label span,
 .cost-controls label {
