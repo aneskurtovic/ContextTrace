@@ -52,8 +52,14 @@ it never receives the updater private key.
 
 ## Verify the published release
 
-After packaging, check all six files exist and validate each downloaded file
-against `SHA256SUMS.txt`:
+The Woodpecker Windows tag pipeline must perform packaging, publishing, and
+published-asset verification on its configured Windows agent. Do not replace
+those gates with commands run from an interactive workstation. The pipeline
+checks the staged files against `SHA256SUMS.txt`, compares GitHub's uploaded
+asset digests with the same checksums, verifies the updater signature and
+version-pinned installer URL, and confirms the latest stable release pointer.
+These commands are useful when investigating an artifact, but are not a
+substitute for the Woodpecker result:
 
 ```powershell
 Get-Content .\SHA256SUMS.txt
@@ -64,10 +70,8 @@ Get-FileHash .\ContextTrace-<version>-windows-x64-portable.zip -Algorithm SHA256
 Get-FileHash .\ContextTrace-<version>-windows-x64-cli.zip -Algorithm SHA256
 ```
 
-The tag workflow validates staged and uploaded checksums, signature and
-manifest correspondence, and the version-pinned installer URL before marking
-the stable release complete. After publication, validate the downloaded
-updater feed and portable desktop startup. On a separate clean Windows host:
+After publication, separately validate the downloaded updater feed and
+portable desktop startup. On a separate clean Windows host:
 
 1. install without administrator elevation and launch from the Start menu;
 2. confirm discovery and inspection for both supported agent log formats;

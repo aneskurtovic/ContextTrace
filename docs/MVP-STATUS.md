@@ -1,6 +1,6 @@
 # ContextTrace MVP status
 
-Assessment date: **2026-09-25**
+Assessment date: **2026-09-29**
 
 ## Current state
 
@@ -11,19 +11,19 @@ optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
 
-The updater-enabled **0.1.3 Windows release is published as stable**. The user
-confirmed the installed app opens on the development PC and a separate new
-laptop. On the new laptop, the 0.1.3 app no longer shows the persistent
-up-to-date banner. The updater also keeps routine startup checks quiet when no
-update is available or the feed is temporarily unreachable.
+The updater-enabled **0.1.5 Windows release is published as stable**. The user
+previously confirmed that 0.1.3 opens on the development PC and a separate
+laptop, and that its routine startup update check stays quiet when no update
+is available or the feed is temporarily unreachable. The 0.1.5 installer,
+portable desktop app and in-app upgrade still need separate-host acceptance.
 
-## Verification in this working session
+## Verification evidence
 
 - `cargo fmt --all -- --check` passed.
 - `cargo test --workspace --locked` passed, including the new Codex compaction
   and Codex/Claude fixture regressions.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
-- `npm test` passed: 148 tests across 5 files.
+- `npm test` passed: 150 tests for 0.1.5.
 - `npm run build` passed.
 - The fixture manifest and its regression validator passed.
 - The Windows production Tauri build (`tauri build --no-bundle --ci --
@@ -44,28 +44,31 @@ update is available or the feed is temporarily unreachable.
   uploaded all six assets and verified their checksums. The draft was published
   as the stable v0.1.3 release after the user confirmed the quiet updater
   behavior on a separate laptop.
+- Woodpecker pipeline 79 passed the 0.1.5 frontend, Rust and Windows checks
+  on `main`. Pipeline 80 passed the same tag checks and published the 0.1.5
+  Windows release after verifying the staged and uploaded assets.
 
-These checks validate source/build behavior, installation and startup on two
-PCs, and the quiet updater behavior on the separate laptop. The user also
-confirmed that session discovery works at startup in both the installed and
-portable desktop apps, the portable desktop app works, and uninstall works
-both from the newer-installer flow and Windows Add or Remove Programs. CLI
-user acceptance was not requested. The signed in-app upgrade flow will be
-tested with the next version.
+These checks validate 0.1.5 source/build behavior and its published assets.
+The user previously confirmed that 0.1.3 installs and starts on two PCs, that
+session discovery works at startup in installed and portable desktop apps,
+and that uninstall works from both the newer-installer flow and Windows Add or
+Remove Programs. That earlier acceptance does not establish 0.1.5 install or
+upgrade behavior. CLI user acceptance was not requested. The signed in-app
+upgrade flow remains to be tested with 0.1.5.
 
 ## Release gates
 
 | Gate | State |
 |---|---|
-| Core CLI and desktop workflows | Implemented; workspace and frontend tests pass in this session |
+| Core CLI and desktop workflows | Implemented; Woodpecker pipeline 80 passed frontend, Rust and Windows checks for 0.1.5 |
 | Persisted Codex/Claude compatibility | Tested fixture/version scope only; future versions need fixtures and semantic assertions |
 | Public source documentation | Organized; examples are synthetic and relative links have been checked |
-| Windows production build | Passed in this working session |
-| Signed updater package and feed | v0.1.3 stable; signed assets uploaded and checksum-verified by Woodpecker pipeline 68; quiet startup behavior confirmed on a separate laptop |
-| Installed and portable desktop acceptance | Installed startup passed on a separate new laptop; startup session discovery works in installed and portable apps; portable app works; uninstall succeeds from both the installer update flow and Windows Add or Remove Programs |
-| Signed in-app upgrade | Pending the next version; user will test the offered upgrade flow then |
-| CLI user acceptance | Not requested; Woodpecker CLI smoke checks passed in pipeline 63 |
-| Public stable release | [ContextTrace v0.1.3](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.3) |
+| Windows production build | Passed on the Woodpecker Windows agent in pipeline 80 |
+| Signed updater package and feed | v0.1.5 stable; six assets uploaded and checksum-verified by Woodpecker pipeline 80 |
+| Installed and portable desktop acceptance | Previously passed for 0.1.3 on a separate laptop; 0.1.5 acceptance remains open |
+| Signed in-app upgrade | 0.1.3 to 0.1.5 user-confirmed upgrade remains to be tested |
+| CLI user acceptance | Not requested; Woodpecker Windows CLI smoke checks passed in pipeline 80 |
+| Public stable release | [ContextTrace v0.1.5](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.5) |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
 `%LOCALAPPDATA%\ContextTrace-archive` data directory, which may contain the

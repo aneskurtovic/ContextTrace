@@ -9,7 +9,7 @@ session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: source and the Windows 0.1.3 binary release are public.**
+> **Status: source and the Windows 0.1.5 binary release are public.**
 > The CLI and Windows desktop app implement the discovery-to-diagnosis
 > workflow. Compatibility is limited to the persisted JSONL formats and
 > producer versions covered by committed fixtures. See [MVP status](docs/MVP-STATUS.md)
@@ -252,7 +252,7 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-The updater-enabled 0.1.3 Windows release is available. See the [install
+The updater-enabled 0.1.5 Windows release is available. See the [install
 instructions](#install) and [release downloads](https://github.com/aneskurtovic/ContextTrace/releases/latest).
 
 Configurable local pricing/forecasting, instruction-file comparisons and

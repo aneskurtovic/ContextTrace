@@ -12,6 +12,10 @@ Always use Woodpecker CI for continuous integration and release packaging. Never
 add or run GitHub Actions jobs, use GitHub-hosted runners, or dispatch the
 repository's manual GitHub release workflow. Keep validation and Windows
 release builds on the configured Woodpecker runners.
+Version-tag packaging, publishing, and published-asset verification belong in
+the Woodpecker Windows release pipeline. Local development checks are useful,
+but an interactive workstation run is not release evidence. Keep separate
+clean-host installer and updater acceptance distinct from CI results.
 
 ## Verify changes
 
@@ -34,7 +38,7 @@ the 8-fixture compatibility manifest checks. The Windows Tauri production
 build also passed with `tauri build --no-bundle --ci -- --locked`. Full results
 and remaining release gates are in [MVP status](docs/MVP-STATUS.md). These
 source/build checks do not establish clean-host install, uninstall or updater
-acceptance for 0.1.2; older-version installer checks are not a substitute.
+acceptance for a new release; older-version installer checks are not a substitute.
 
 The fixture catalog is the compatibility contract for persisted Codex CLI and
 Claude Code session JSONL. New producer shapes need redacted fixtures,

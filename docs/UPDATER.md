@@ -14,9 +14,10 @@ asset for that exact version rather than to a moving `latest` asset URL.
 
 ## First updater-enabled version
 
-Versions 0.1.0 and 0.1.1 predate the updater. Install 0.1.3 manually; it is the
-latest stable release. Version 0.1.2 was the first updater-enabled stable
-release. Subsequent compatible versions can be offered in-app.
+Versions 0.1.0 and 0.1.1 predate the updater. Version 0.1.2 was the first
+updater-enabled stable release. Install 0.1.5 manually if upgrading from an
+older version without the updater; subsequent compatible versions can be
+offered in-app.
 
 ## Release key handling
 
