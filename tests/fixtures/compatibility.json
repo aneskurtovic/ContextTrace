@@ -14,6 +14,24 @@
   },
   "fixtures": [
     {
+      "path": "tests/fixtures/codex/chat-blocks.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.156.1",
+      "provenance": "synthetic",
+      "verification": "parser-contract-only",
+      "capabilities": ["mixed-transcript-blocks", "base-instructions", "reasoning-summary", "opaque-content"]
+    },
+    {
+      "path": "tests/fixtures/claude_code/chat-blocks.jsonl",
+      "agent": "claude-code",
+      "surface": "claude-persisted-transcript",
+      "producer_version": "2.1.282",
+      "provenance": "synthetic",
+      "verification": "parser-contract-only",
+      "capabilities": ["mixed-transcript-blocks", "multiple-tool-calls", "multiple-tool-results", "opaque-content"]
+    },
+    {
       "path": "tests/fixtures/codex/current-0.156.1.jsonl",
       "agent": "codex",
       "surface": "codex-persisted-rollout",

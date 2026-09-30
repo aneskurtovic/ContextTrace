@@ -5,6 +5,23 @@ are fictional; examples do not reproduce local session data. For the meaning
 and limits of measurements, see [methodology](methodology.md); for input
 structure, see [formats](formats.md). Back to the [README](../README.md).
 
+## Reading the conversation
+
+The desktop Conversation tab shows recorded content blocks in log order.
+Instructions injected through the user role are labelled Injected when their
+recorded prefix identifies them. Mixed records keep separate user text,
+reasoning, tool calls and results, including each tool result's error flag.
+Blocks from the same record share its log line and turn link; page counts refer
+to records, so one loaded record can produce several displayed blocks.
+
+Readable reasoning summaries and base instructions are shown when recorded.
+Images, encrypted content and unfamiliar blocks have explicit placeholders;
+they are not decoded into text. Messages preserve literal text and line breaks,
+including Markdown syntax. Search checks loaded previews and tool names, not
+the full text beyond a truncated preview. Use Reload conversation to read
+changes to a session that is already open. Source read failures are shown as
+unavailable previews rather than complete messages.
+
 ## Getting the numbers out
 
 Export a session as typed NDJSON. The command writes to standard output, so you
@@ -24,6 +41,14 @@ can contain prompts, source code and terminal output; inspect it before sharing.
 location, not by value. It does not prove that a match is a live credential,
 and it cannot recognize every provider-specific format. Review the original
 session locally; do not paste raw logs into an issue.
+
+Generic assignment findings require more evidence than a secret-related name
+and a long value: scans skip type declarations, code references, paths, prose
+fragments and low-entropy fillers. Provider-specific patterns are still
+reported, including realistic examples; a match is not proof of a live key.
+Export and archive redaction remain conservative and can redact ambiguous
+assignments that the scanner does not report. A clean scan is not a guarantee
+that a session contains no credentials.
 
 The desktop Context Doctor follows the same value-free principle. Redacted
 export is available in both interfaces; archive redaction is enabled by

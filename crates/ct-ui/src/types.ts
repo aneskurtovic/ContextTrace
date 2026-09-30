@@ -194,7 +194,13 @@ export interface TranscriptEntry {
   /** Whether this kind arrives collapsed. Decided by the backend so the CLI
    *  and the desktop cannot disagree about what a conversation looks like. */
   collapsed: boolean;
+  /** Distinct blocks from this log record, in recorded order. */
+  parts?: TranscriptPart[];
+  unavailable?: boolean;
 }
+
+export type TranscriptPart = Pick<TranscriptEntry,
+  'kind' | 'label' | 'text' | 'truncated' | 'chars' | 'error' | 'collapsed'>;
 
 export interface TranscriptPage {
   entries: TranscriptEntry[];

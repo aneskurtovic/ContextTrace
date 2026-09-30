@@ -109,6 +109,22 @@ pub struct TranscriptEntry {
     pub error: bool,
     /// The line in the session file this came from.
     pub line: u32,
+    /// Display blocks sharing this record's cursor and provenance. Paging stays
+    /// record-based even when its content contains several speakers or tools.
+    pub parts: Vec<TranscriptPart>,
+    /// The source could not supply readable content; `text` is only a preview.
+    pub unavailable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptPart {
+    pub kind: TranscriptKind,
+    pub label: Option<String>,
+    pub text: String,
+    pub truncated: bool,
+    pub chars: Option<u32>,
+    pub error: bool,
 }
 
 /// A bounded window into a session's transcript.
@@ -213,15 +229,47 @@ fn build(
     // 160 characters and exists for list rendering. A failed read leaves the
     // reader with something rather than an empty row, and the length beside it
     // still says how much they are not seeing.
-    let full = adapter
-        .transcript_text(&raw.fetch(event.source).unwrap_or_default())
-        .unwrap_or_else(|| preview_of(&event.kind));
+    let raw_line = raw.fetch(event.source).unwrap_or_default();
+    let blocks = adapter.transcript_blocks(&raw_line);
+    let extracted = if blocks.is_empty() {
+        adapter.transcript_text(&raw_line)
+    } else {
+        Some(
+            blocks
+                .iter()
+                .map(|block| block.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    };
+    let unavailable = extracted.is_none();
+    let full = extracted.unwrap_or_else(|| preview_of(&event.kind));
+    let part_budget = budget / blocks.len().max(1);
+    let parts: Vec<TranscriptPart> = blocks
+        .into_iter()
+        .map(|block| {
+            let (kind, label, error) = classify(&block.kind);
+            TranscriptPart {
+                kind,
+                label,
+                error,
+                chars: block.chars,
+                truncated: block.text.chars().count() > part_budget,
+                text: ct_domain::ports::truncate_chars(&block.text, part_budget),
+            }
+        })
+        .collect();
     // Compared against the budget rather than against the rendered text:
     // `truncate_chars` appends an ellipsis, so a payload of exactly
     // `budget + 1` characters produces a string of the same length as itself
     // and would report as complete.
     let truncated = full.chars().count() > budget;
     let text = ct_domain::ports::truncate_chars(&full, budget);
+    let (kind, label, error) = if parts.len() == 1 {
+        (parts[0].kind, parts[0].label.clone(), parts[0].error)
+    } else {
+        (kind, label, error)
+    };
 
     TranscriptEntry {
         index,
@@ -234,6 +282,8 @@ fn build(
         sidechain: event.links.is_sidechain,
         error,
         line: event.source.line_no,
+        parts,
+        unavailable,
     }
 }
 
@@ -273,9 +323,20 @@ fn classify(kind: &EventKind) -> (TranscriptKind, Option<String>, bool) {
             }),
             false,
         ),
-        EventKind::ToolResult { tool, is_error, .. } => {
-            (TranscriptKind::ToolResult, tool.clone(), *is_error)
-        }
+        EventKind::ToolResult {
+            tool,
+            call_id,
+            is_error,
+            ..
+        } => (
+            TranscriptKind::ToolResult,
+            tool.clone().or_else(|| {
+                call_id
+                    .as_ref()
+                    .map(|id| format!("call {}", ct_domain::ports::truncate_chars(id, LABEL_CHARS)))
+            }),
+            *is_error,
+        ),
         EventKind::OversizedToolResult { image_count, .. } => (
             TranscriptKind::ToolResult,
             (*image_count > 0).then(|| format!("{image_count} inline image(s)")),
@@ -348,6 +409,24 @@ mod tests {
         }
         fn transcript_text(&self, raw_line: &str) -> Option<String> {
             raw_line.split_once(": ").map(|(_, text)| text.to_string())
+        }
+
+        fn transcript_blocks(&self, raw_line: &str) -> Vec<ct_domain::ports::TranscriptBlock> {
+            let Some(text) = raw_line.strip_prefix("mixed: ") else {
+                return Vec::new();
+            };
+            [MessageRole::Developer, MessageRole::User]
+                .into_iter()
+                .map(|role| ct_domain::ports::TranscriptBlock {
+                    kind: EventKind::Message {
+                        role,
+                        preview: String::new(),
+                        char_len: text.chars().count() as u32,
+                    },
+                    chars: Some(text.chars().count() as u32),
+                    text: text.into(),
+                })
+                .collect()
         }
     }
 
@@ -458,6 +537,56 @@ mod tests {
     }
 
     #[test]
+    fn split_blocks_share_provenance_and_a_bounded_record_cursor() {
+        let long: &'static str =
+            Box::leak(format!("mixed: {}", "🙂".repeat(3_000)).into_boxed_str());
+        let session = session(vec![
+            message(1, MessageRole::User),
+            message(2, MessageRole::Assistant),
+        ]);
+        let raw = Lines(vec![long, "assistant: next record"]);
+        let first = page(&session, &Echo, &raw, 0, 1);
+        assert_eq!(first.total, 2);
+        assert!(first.has_more);
+        assert_eq!(first.entries[0].index, 0);
+        assert_eq!(first.entries[0].line, 1);
+        let parts = &first.entries[0].parts;
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].kind, TranscriptKind::Injection);
+        assert_eq!(parts[1].kind, TranscriptKind::User);
+        assert!(parts.iter().all(|part| part.truncated));
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part.text.chars().count() - 1)
+                .sum::<usize>(),
+            PAGE_TEXT_CHARS
+        );
+        let whole = entry(&session, &Echo, &raw, 0).unwrap();
+        assert!(whole
+            .parts
+            .iter()
+            .all(|part| !part.truncated && part.text.chars().count() == 3_000));
+        assert_eq!(
+            page(&session, &Echo, &raw, 1, 1).entries[0].text,
+            "next record"
+        );
+    }
+
+    #[test]
+    fn a_result_without_a_tool_name_keeps_its_call_identity_and_error() {
+        let (kind, label, error) = classify(&EventKind::ToolResult {
+            tool: None,
+            call_id: Some("call-b".into()),
+            char_len: 12,
+            is_error: true,
+        });
+        assert_eq!(kind, TranscriptKind::ToolResult);
+        assert_eq!(label.as_deref(), Some("call call-b"));
+        assert!(error);
+    }
+
+    #[test]
     fn a_long_entry_is_truncated_on_the_page_and_served_whole_on_request() {
         let long: &'static str = Box::leak(format!("user: {}", "x".repeat(3_000)).into_boxed_str());
         let session = session(vec![message(1, MessageRole::User)]);
@@ -488,6 +617,7 @@ mod tests {
 
         assert_eq!(page.entries[0].text, "preview");
         assert_eq!(page.entries[0].chars, Some(7));
+        assert!(page.entries[0].unavailable);
     }
 
     #[test]

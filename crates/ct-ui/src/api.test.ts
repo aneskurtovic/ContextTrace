@@ -13,6 +13,7 @@ import {
   getCompactionDiff,
   getContext,
   getInstructionFiles,
+  getTranscript,
   getLifecycle,
   getNotificationSettings,
   getNotificationStatus,
@@ -47,12 +48,26 @@ import {
   demoSessions,
   demoTemporalGhost,
   demoTurnDiff,
+  demoTranscript,
 } from "./demo";
 
 afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   invoke.mockReset();
   listen.mockReset();
+});
+
+describe('transcript block IPC contracts', () => {
+  it('validates each split block rather than accepting a malformed nested payload', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const page = demoTranscript(0, 1);
+    const entry = page.entries[0];
+    const part = { kind: 'injection', label: null, text: 'Instructions', truncated: false, chars: 12, error: false, collapsed: true };
+    invoke.mockResolvedValueOnce({ ...page, entries: [{ ...entry, parts: [part] }] });
+    await expect(getTranscript('codex', 'fixture')).resolves.toMatchObject({ entries: [{ parts: [part] }] });
+    invoke.mockResolvedValueOnce({ ...page, entries: [{ ...entry, parts: [{ ...part, kind: 'invented' }] }] });
+    await expect(getTranscript('codex', 'fixture')).rejects.toThrow('invalid response');
+  });
 });
 
 describe('notification IPC contracts', () => {

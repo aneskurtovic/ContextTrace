@@ -715,10 +715,14 @@ fn push_secret(
             finding.kind.marker()
         ),
         NotificationRuleId::SecretExposure,
-        NotificationSeverity::Critical,
+        if finding.kind == crate::SecretKind::EnvironmentSecret {
+            NotificationSeverity::Warning
+        } else {
+            NotificationSeverity::Critical
+        },
         delivery,
-        "Secret entered model context",
-        format!("{kind} detected at line {}.", finding.line_no),
+        "Potential secret in model context",
+        format!("{kind} pattern detected at log line {}.", finding.line_no),
         finding.turn,
         Some(finding.line_no),
         evidence,
@@ -901,6 +905,30 @@ mod tests {
             NotificationInputs::default(),
         );
         assert!(result.candidates.is_empty());
+    }
+
+    #[test]
+    fn generic_secret_alerts_are_warnings_with_record_provenance() {
+        let session = session(&[100], 1_000);
+        let finding = SecretFinding {
+            kind: crate::SecretKind::EnvironmentSecret,
+            occurrences: 2,
+            turn: Some(TurnNumber::new(1).unwrap()),
+            line_no: 191,
+            event_type: "user".into(),
+        };
+        let mut candidates = Vec::new();
+        push_secret(
+            &session,
+            &finding,
+            &NotificationSettings::default(),
+            &mut candidates,
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].severity, NotificationSeverity::Warning);
+        assert_eq!(candidates[0].location.line, Some(191));
+        assert_eq!(candidates[0].location.turn, finding.turn);
+        assert_eq!(candidates[0].title, "Potential secret in model context");
     }
 
     #[test]

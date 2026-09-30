@@ -963,6 +963,67 @@ describe("corpus overview", () => {
 });
 
 describe("conversation", () => {
+  it('identifies an unavailable source instead of presenting its preview as a complete message', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const page = demoTranscript(0, 1);
+    mockedApi.getTranscript.mockResolvedValue({ ...page, total: 1, hasMore: false,
+      entries: [{ ...page.entries[0], unavailable: true, collapsed: false }],
+    });
+    render(<App />);
+    await openView('Conversation');
+    expect(await screen.findByText(/The original text is unavailable; only a saved preview/)).toBeTruthy();
+  });
+
+  it('reloads a cached conversation to include newly appended records', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const page = demoTranscript(0, 40);
+    mockedApi.getTranscript.mockResolvedValueOnce(page).mockResolvedValueOnce({ ...page,
+      total: page.total + 1,
+      entries: [...page.entries, { ...page.entries[0], index: page.total, line: 99000, text: 'Newly appended message', collapsed: false }],
+    });
+    render(<App />);
+    await openView('Conversation');
+    expect(screen.queryByText('Newly appended message')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Reload conversation' }));
+    expect(await screen.findByText('Newly appended message')).toBeTruthy();
+    expect(mockedApi.getTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it("splits a mixed log record by role and tool without duplicating its full text", async () => {
+    const base = demoTranscript(0, 1).entries[0];
+    const parts = [
+      { kind: 'injection' as const, label: null, text: 'Synthetic instructions', truncated: false, chars: 22, error: false, collapsed: true },
+      { kind: 'user' as const, label: null, text: 'Actual user request', truncated: false, chars: 19, error: false, collapsed: false },
+      { kind: 'toolCall' as const, label: 'Read · a.rs', text: '{"file_path":"a.rs"}', truncated: false, chars: 20, error: false, collapsed: false },
+      { kind: 'toolResult' as const, label: null, text: 'Failed preview…', truncated: true, chars: 3000, error: true, collapsed: true },
+    ];
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset) => offset === 0
+      ? { entries: [{ ...base, text: 'WHOLE RECORD SHOULD NOT RENDER', parts }], total: 2, offset: 0, hasMore: true }
+      : { entries: [{ ...base, index: 1, line: 21, text: 'Next record', parts: [] }], total: 2, offset: 1, hasMore: false });
+    mockedApi.getTranscriptEntry.mockResolvedValue({ ...base, text: 'WHOLE EXPANSION SHOULD NOT RENDER', parts: parts.map((part, index) =>
+      index === 3 ? { ...part, text: 'The full failed result', truncated: false } : part) });
+    render(<App />);
+    await openView('Conversation');
+    expect(await screen.findByText('Actual user request')).toBeTruthy();
+    const rows = [...document.querySelectorAll('.transcript-entry')];
+    expect(rows.map((row) => row.querySelector('.transcript-role')?.textContent)).toEqual(['Injected', 'You', 'Tool call', 'Tool result']);
+    expect(rows[0].querySelector('.transcript-text')).toBeNull();
+    expect(rows[3].className).toContain('failed');
+    expect(screen.queryByText('WHOLE RECORD SHOULD NOT RENDER')).toBeNull();
+    expect(mockedApi.getTranscriptEntry).not.toHaveBeenCalled();
+    fireEvent.click(within(rows[3] as HTMLElement).getByRole('button', { name: 'Expand' }));
+    expect(await screen.findByText('The full failed result')).toBeTruthy();
+    expect(screen.queryByText('WHOLE EXPANSION SHOULD NOT RENDER')).toBeNull();
+    expect(screen.getAllByText('Actual user request')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Load more (1)' }));
+    expect(await screen.findByText('Next record')).toBeTruthy();
+    expect(mockedApi.getTranscript).toHaveBeenLastCalledWith('codex', demoSessions[0].id, 1);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Entry type' }), { target: { value: 'toolCall' } });
+    expect(document.querySelectorAll('.transcript-entry')).toHaveLength(1);
+    expect(screen.getByText('Read · a.rs')).toBeTruthy();
+  });
+
   it("reads a session back with tool results collapsed to their size", async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
@@ -1212,14 +1273,93 @@ describe('notifications', () => {
     fireEvent.click(drawer.querySelectorAll('.notification-card')[0]);
 
     // Reaching the record at all requires the second page to be pulled in.
-    const text = await screen.findByText(/UserSecretEncrypted/);
+    await screen.findByText(/UserSecretEncrypted/);
     await waitFor(() =>
-      expect(text.closest('.transcript-entry')!.className).toContain('highlighted'));
+      expect(screen.getByText(/UserSecretEncrypted/).closest('.transcript-entry')!.className).toContain('highlighted'));
     expect(scrolledEveryAncestor).not.toHaveBeenCalled();
     } finally {
       Element.prototype.scrollIntoView = previousScrollIntoView;
     }
   });
+  it('aligns a linked record after expansion and full-text loading, and follows it again', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const entry = {
+      index: 0, line: 191, text: 'linked preview', kind: 'toolResult' as const,
+      turn: 25, label: null, truncated: true, chars: 5000,
+      sidechain: false, error: false, collapsed: true,
+    };
+    const full = deferred<typeof entry>();
+    mockedApi.getTranscript.mockResolvedValue({ entries: [entry], total: 1, offset: 0, hasMore: false });
+    mockedApi.getTranscriptEntry.mockReturnValue(full.promise);
+    mockedApi.listNotifications.mockResolvedValue({
+      ...demoNotificationPage, unreadCount: 1,
+      notifications: [{
+        ...demoNotificationPage.notifications[1], id: 'linked-record', ruleId: 'secretExposure',
+        location: { agent: demoSessions[0].agent, sessionId: demoSessions[0].id,
+          project: demoSessions[0].project, turn: 25, sourceLine: 191 },
+      }],
+    });
+    const scrollBy = vi.fn();
+    const previousScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollBy');
+    const previousHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+    Object.defineProperty(HTMLElement.prototype, 'scrollBy', { configurable: true, value: scrollBy });
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return 5000; } });
+    const geometry = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      return {
+        top: this.classList.contains('transcript-entry') ? 700 : 100,
+        height: this.classList.contains('transcript-entry') ? 3000 : 500,
+        bottom: 0, left: 0, right: 0, width: 500, x: 0, y: 0, toJSON() {},
+      };
+    });
+    const originalComputedStyle = window.getComputedStyle;
+    const styles = vi.spyOn(window, 'getComputedStyle').mockImplementation((node) =>
+      node.classList.contains('transcript-session')
+        ? { overflowY: 'auto' } as CSSStyleDeclaration
+        : originalComputedStyle(node));
+    try {
+      render(<App />);
+      const follow = async () => {
+        fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+        const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+        fireEvent.click(drawer.querySelectorAll('.notification-card')[0]);
+      };
+      await follow();
+      await waitFor(() => expect(mockedApi.getTranscriptEntry).toHaveBeenCalled());
+      await waitFor(() => expect(scrollBy).toHaveBeenCalledWith({ top: 588, behavior: 'instant' }));
+      scrollBy.mockClear();
+      full.resolve({ ...entry, text: 'complete linked record', truncated: false });
+      await screen.findByText('complete linked record');
+      await waitFor(() => expect(scrollBy).toHaveBeenCalledWith({ top: 588, behavior: 'instant' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+      scrollBy.mockClear();
+      await follow();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Collapse' })).toBeTruthy());
+      await waitFor(() => expect(scrollBy).toHaveBeenCalledWith({ top: 588, behavior: 'instant' }));
+    } finally {
+      geometry.mockRestore();
+      styles.mockRestore();
+      if (previousScroll) Object.defineProperty(HTMLElement.prototype, 'scrollBy', previousScroll);
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollBy;
+      if (previousHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', previousHeight);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
+    }
+  });
+
+  it('explains when a notification record is absent from the conversation', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getTranscript.mockResolvedValue({ entries: [{ ...demoTranscriptEntry(0), line: 12 }], total: 1, offset: 0, hasMore: false });
+    mockedApi.listNotifications.mockResolvedValue({ ...demoNotificationPage, notifications: [{
+      ...demoNotificationPage.notifications[1], ruleId: 'secretExposure',
+      location: { ...demoNotificationPage.notifications[1].location, sourceLine: 99999 },
+    }] });
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    fireEvent.click(drawer.querySelectorAll('.notification-card')[0]);
+    expect(await screen.findByText(/Log line 99999 is not available in this conversation/)).toBeTruthy();
+    expect(document.querySelectorAll('.transcript-entry.highlighted')).toHaveLength(0);
+  });
+
   it('drops a record highlight when the reader moves to another session', async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0], demoSessions[1]]));
 

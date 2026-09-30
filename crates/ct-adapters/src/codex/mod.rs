@@ -146,6 +146,10 @@ impl AgentAdapter for CodexAdapter {
     fn transcript_text(&self, raw_line: &str) -> Option<String> {
         parse::transcript_text(raw_line)
     }
+
+    fn transcript_blocks(&self, raw_line: &str) -> Vec<ct_domain::ports::TranscriptBlock> {
+        parse::transcript_blocks(raw_line)
+    }
 }
 
 /// Build a descriptor from a session file cheaply.

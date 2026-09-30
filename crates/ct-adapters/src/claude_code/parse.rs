@@ -910,7 +910,70 @@ fn message_text(message: &Value) -> String {
     }
 }
 
+pub(crate) fn transcript_blocks(line: &str) -> Vec<ct_domain::ports::TranscriptBlock> {
+    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        return Vec::new();
+    };
+    let role = match str_field(&value, "type").as_deref() {
+        Some("assistant") => MessageRole::Assistant,
+        Some("user") => MessageRole::User,
+        _ => return Vec::new(),
+    };
+    let Some(blocks) = value
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| {
+            let text = block_text(block)?;
+            let char_len = text.chars().count().min(u32::MAX as usize) as u32;
+            let kind = match block_type(block) {
+                Some("thinking" | "redacted_thinking") => EventKind::Reasoning {
+                    char_len,
+                    redacted: is_redacted_thinking(block)
+                        || block_type(block) == Some("redacted_thinking"),
+                },
+                Some("tool_use") => EventKind::ToolCall {
+                    tool: str_field(block, "name").unwrap_or_else(|| "unknown".into()),
+                    call_id: str_field(block, "id"),
+                    char_len,
+                    target: block.get("input").and_then(crate::tool_target::describe),
+                },
+                Some("tool_result") => EventKind::ToolResult {
+                    tool: None,
+                    call_id: str_field(block, "tool_use_id"),
+                    char_len,
+                    is_error: block
+                        .get("is_error")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                },
+                _ => EventKind::Message {
+                    role,
+                    preview: String::new(),
+                    char_len,
+                },
+            };
+            let opaque = matches!(block_type(block), Some("image" | "redacted_thinking"))
+                || is_redacted_thinking(block)
+                || text.starts_with("[unsupported content block:");
+            Some(ct_domain::ports::TranscriptBlock {
+                kind,
+                text,
+                chars: (!opaque).then_some(char_len),
+            })
+        })
+        .collect()
+}
+
 fn block_text(block: &Value) -> Option<String> {
+    if let Some(text) = block.as_str() {
+        return Some(text.into());
+    }
     match block_type(block)? {
         "text" => block
             .get("text")
@@ -923,7 +986,11 @@ fn block_text(block: &Value) -> Option<String> {
             Some(thinking) if !thinking.is_empty() => thinking.to_string(),
             _ => "[thinking, recorded without its text]".into(),
         }),
-        "tool_use" => block.get("input").map(|input| input.to_string()),
+        "redacted_thinking" => Some("[thinking, recorded without its text]".into()),
+        "tool_use" => block.get("input").map(|input| match input {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        }),
         "tool_result" => Some(match block.get("content") {
             Some(Value::String(text)) => text.clone(),
             Some(Value::Array(inner)) => inner
@@ -934,7 +1001,10 @@ fn block_text(block: &Value) -> Option<String> {
             other => other.map(Value::to_string).unwrap_or_default(),
         }),
         "image" => Some("[inline image]".into()),
-        _ => None,
+        other => Some(match block.get("text").and_then(Value::as_str) {
+            Some(text) => format!("[unsupported content block: {other}]\n{text}"),
+            None => format!("[unsupported content block: {other}]"),
+        }),
     }
 }
 

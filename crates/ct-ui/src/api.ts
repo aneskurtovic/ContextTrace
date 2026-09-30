@@ -212,6 +212,13 @@ const transcriptKinds = new Set([
   'compaction',
 ]);
 
+function isTranscriptPart(value: unknown): boolean {
+  return isRecord(value) && typeof value.kind === 'string' && transcriptKinds.has(value.kind) &&
+    isStringOrNull(value.label) && typeof value.text === 'string' &&
+    typeof value.truncated === 'boolean' && isNumberOrNull(value.chars) &&
+    typeof value.error === 'boolean' && typeof value.collapsed === 'boolean';
+}
+
 function isTranscriptEntry(value: unknown): value is TranscriptEntry {
   return (
     isRecord(value) &&
@@ -229,7 +236,9 @@ function isTranscriptEntry(value: unknown): value is TranscriptEntry {
     typeof value.sidechain === 'boolean' &&
     typeof value.error === 'boolean' &&
     typeof value.line === 'number' &&
-    typeof value.collapsed === 'boolean'
+    typeof value.collapsed === 'boolean' &&
+    (value.unavailable === undefined || typeof value.unavailable === 'boolean') &&
+    (value.parts === undefined || (Array.isArray(value.parts) && value.parts.every(isTranscriptPart)))
   );
 }
 

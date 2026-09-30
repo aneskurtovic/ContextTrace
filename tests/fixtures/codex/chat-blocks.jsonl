@@ -1,0 +1,6 @@
+{"type":"session_meta","payload":{"id":"chat-codex","cli_version":"0.156.1","base_instructions":{"text":"Synthetic base instructions."}}}
+{"type":"turn_context","payload":{"model":"fixture-model"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>synthetic workspace</environment_context>"},{"type":"input_text","text":"Please explain this diagram."},{"type":"input_image","image_url":"data:image/png;base64,U1lOVEhFVElD"},{"type":"encrypted_content","encrypted_content":"opaque-fixture"}]}}
+{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"A readable synthetic reasoning summary."}],"encrypted_content":"opaque-fixture"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"First answer paragraph."},{"type":"output_text","text":"Second answer paragraph."},{"type":"future_block","data":"opaque-fixture"}]}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10}}}}

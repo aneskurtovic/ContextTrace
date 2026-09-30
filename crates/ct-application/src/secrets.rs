@@ -260,6 +260,9 @@ fn scan_source(
 
     let mut counts = BTreeMap::new();
     for found in find_secrets(&text) {
+        if !credible_scan_match(&text, found) {
+            continue;
+        }
         *counts.entry(found.kind).or_insert(0usize) += 1;
     }
     report
@@ -271,6 +274,95 @@ fn scan_source(
             line_no: source.line_no,
             event_type: event_type.to_string(),
         }));
+}
+
+/// Alerts need stronger evidence than redaction: source code and documentation
+/// routinely bind secret-related names to types, references and example text.
+/// Keep the conservative matches for exports and archives, but do not turn
+/// every such binding into an exposure notification.
+fn credible_scan_match(text: &str, found: SecretMatch) -> bool {
+    let value = &text[found.start..found.end];
+    if found.kind == SecretKind::OpenAiApiKey
+        && !value.starts_with("sk-proj-")
+        && !value.starts_with("sk-svcacct-")
+    {
+        // Legacy keys have an alphanumeric body; long `sk-` labels in source
+        // code and test names are not enough evidence for an alert.
+        return value[3..].len() >= 40 && value[3..].bytes().all(|b| b.is_ascii_alphanumeric());
+    }
+    if found.kind != SecretKind::EnvironmentSecret {
+        return true;
+    }
+    if value
+        .bytes()
+        .any(|b| matches!(b, b'<' | b'>' | b'{' | b'[' | b'&' | b'=' | b':' | b'?'))
+        || value.starts_with("!!")
+        || value.starts_with('/')
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.contains('/') && value.contains('.')
+        || value.starts_with("[REDACTED")
+    {
+        return false;
+    }
+
+    let before = text[..found.start].trim_end();
+    let quoted = before.ends_with(['\'', '"']);
+    let binding = before.trim_end_matches(['\'', '"']).trim_end();
+    // A colon followed by an unquoted type is a declaration, not a literal.
+    // Quoted JSON keys and HTTP credential headers remain eligible.
+    if let Some(name) = binding.strip_suffix(':') {
+        let name = name.trim_end();
+        if !quoted && !name.ends_with(['\'', '"']) && !name.ends_with("api-key") {
+            return false;
+        }
+    }
+    // A quoted sentence truncated at its first space is not a token value.
+    if quoted
+        && text
+            .as_bytes()
+            .get(found.end)
+            .is_some_and(u8::is_ascii_whitespace)
+    {
+        return false;
+    }
+    // Bare member references and identifiers are common in code assignments.
+    // A quoted literal may be alphabetic; an unquoted token needs more than
+    // just a long variable name to support an alert.
+    let identifier = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && part.as_bytes()[0].is_ascii_alphabetic()
+    };
+    if value.contains('.') && value.split('.').all(identifier) {
+        return false;
+    }
+    if !quoted
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphabetic() || matches!(b, b'_' | b'-'))
+    {
+        return false;
+    }
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("placeholder") || lower.contains("example") || lower.contains("changeme") {
+        return false;
+    }
+    // Repeated fillers and long prose words are not useful credential evidence.
+    let mut frequencies = [0usize; 256];
+    for byte in value.bytes() {
+        frequencies[usize::from(byte)] += 1;
+    }
+    let length = value.len() as f64;
+    let entropy: f64 = frequencies
+        .iter()
+        .filter(|&&count| count > 0)
+        .map(|&count| {
+            let probability = count as f64 / length;
+            -probability * probability.log2()
+        })
+        .sum();
+    entropy >= 3.0
 }
 
 fn source_key(source: SourceRef) -> (u32, u64, u32, u32) {
@@ -1117,6 +1209,64 @@ eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYnVuZGxlLmpzIiwic291cmNlcyI6W119Cg==";
     }
 
     struct Lines(&'static str);
+
+    #[test]
+    fn scans_skip_code_and_prose_without_weakening_redaction() {
+        for text in [
+            "cancellationToken = cancellationToken",
+            "clientSecret = settings.ClientSecret",
+            "clientSecret = config.Values[0]",
+            "clientSecret = config.authToken?.ToString",
+            "secret_exposure: feed-and-os-notifications",
+            "API_TOKEN=some-long-label",
+            "secret: Option<String>",
+            "api_key = configuration.api_key",
+            "API_KEY=./credentials/client.key",
+            "secret = &configuration",
+            "authToken ==expectedAuthToken",
+            "API_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "clientSecret=long_example_secret_value",
+            r#"{"secret":"configuration information only"}"#,
+            r#"{"secret":"[REDACTED:environment-secret]"}"#,
+        ] {
+            let mut report = SecretScanReport::default();
+            scan_source(
+                &Lines(text),
+                SourceRef::new(FileId(0), 0, 100, 7),
+                None,
+                "user",
+                &mut report,
+            );
+            assert_eq!(report.occurrence_count(), 0, "false alert for {text}");
+            let (_, redactions) = redact_text(text);
+            assert!(
+                redactions > 0,
+                "redaction must stay conservative for {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn scans_still_find_generic_literals_in_env_json_and_headers() {
+        for text in [
+            "API_KEY=8f2b1c9d44ae5107bd33",
+            "DATABASE_PASSWORD='HorseBatteryViolet!7'",
+            r#"{"clientSecret":"a71f0c4e9d2b6538fa19"}"#,
+            "x-api-key: 8f2b1c9d44ae5107bd33",
+        ] {
+            let mut report = SecretScanReport::default();
+            scan_source(
+                &Lines(text),
+                SourceRef::new(FileId(0), 0, 100, 7),
+                None,
+                "user",
+                &mut report,
+            );
+            assert_eq!(report.occurrence_count(), 1, "missed literal in {text}");
+            assert_eq!(report.findings[0].kind, SecretKind::EnvironmentSecret);
+            assert_eq!(report.findings[0].line_no, 7);
+        }
+    }
 
     impl RawEventSource for Lines {
         fn fetch(&self, _source: SourceRef) -> PortResult<String> {

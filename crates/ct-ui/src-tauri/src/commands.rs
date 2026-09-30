@@ -2002,6 +2002,20 @@ pub struct TranscriptEntrySummary {
     /// than reads. Decided in the application layer so the CLI and the desktop
     /// cannot disagree about what a conversation looks like.
     collapsed: bool,
+    parts: Vec<TranscriptPartSummary>,
+    unavailable: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscriptPartSummary {
+    kind: &'static str,
+    label: Option<String>,
+    text: String,
+    truncated: bool,
+    chars: Option<u32>,
+    error: bool,
+    collapsed: bool,
 }
 
 impl From<ct_application::TranscriptEntry> for TranscriptEntrySummary {
@@ -2018,6 +2032,20 @@ impl From<ct_application::TranscriptEntry> for TranscriptEntrySummary {
             error: value.error,
             line: value.line,
             collapsed: value.kind.collapsed_by_default(),
+            unavailable: value.unavailable,
+            parts: value
+                .parts
+                .into_iter()
+                .map(|part| TranscriptPartSummary {
+                    kind: transcript_kind_label(part.kind),
+                    label: part.label,
+                    text: part.text,
+                    truncated: part.truncated,
+                    chars: part.chars,
+                    error: part.error,
+                    collapsed: part.kind.collapsed_by_default(),
+                })
+                .collect(),
         }
     }
 }

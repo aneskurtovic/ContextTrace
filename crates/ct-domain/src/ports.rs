@@ -15,6 +15,7 @@ use crate::model::analysis::ContentMeasurement;
 use crate::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use crate::model::compaction_diff::CompactionDiff;
 use crate::model::context::{CompactionEvent, ContextItem};
+use crate::model::event::EventKind;
 use crate::model::identity::{SessionId, TurnNumber};
 use crate::model::notification::{
     NotificationCandidate, NotificationRecord, NotificationSettings, OsDeliveryStatus,
@@ -24,6 +25,15 @@ use crate::model::provenance::SourceRef;
 use crate::model::session::{AgentKind, AgentSession, SessionDescriptor};
 use crate::model::tokens::TokenCount;
 use std::fmt;
+
+/// One display block within a recorded conversation item. These classifications
+/// describe the reader's view only; they never change parsed events or accounting.
+pub struct TranscriptBlock {
+    pub kind: EventKind,
+    pub text: String,
+    /// Readable character count, absent when the original content is opaque.
+    pub chars: Option<u32>,
+}
 
 /// Failure at a port boundary.
 #[derive(Debug)]
@@ -204,6 +214,12 @@ pub trait AgentAdapter: Send + Sync {
     /// time.
     fn transcript_text(&self, _raw_line: &str) -> Option<String> {
         None
+    }
+
+    /// Preserve distinct speakers and tool blocks within one source record.
+    /// An empty list uses the ordinary record-level transcript fallback.
+    fn transcript_blocks(&self, _raw_line: &str) -> Vec<TranscriptBlock> {
+        Vec::new()
     }
 
     /// Diff each compaction's literal replacement history against the history

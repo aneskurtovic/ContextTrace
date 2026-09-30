@@ -17,7 +17,7 @@ feed they write is a desktop artefact.
 | Large context contributor | One item took an outsized share of a turn | Token threshold and the share of the turn it must reach |
 | Tool failures are repeating | Consecutive tool calls returned errors | Streak length |
 | Context compacted | The agent compacted, and how much it reclaimed | Delivery only |
-| Secret entered model context | A credential-shaped string reached the context | Delivery only |
+| Potential secret in model context | A credential-shaped string reached the context | Delivery only |
 | Agent log format changed | This build met an event type it does not recognise | Delivery only |
 | Duplicate context detected | Identical content repeated inside one turn | Token threshold |
 | Low-information context | A large, highly-compressible block ranked as waste | Token threshold |
@@ -28,6 +28,11 @@ feed they write is a desktop artefact.
 Two rules share one label on the wire: duplicate and low-information findings
 both report as `contextWaste`, because they are the same complaint about the
 same turn measured two ways.
+
+Generic secret-like assignments produce warnings and skip common source-code,
+path and placeholder matches. Provider-specific patterns retain critical
+severity, but neither kind proves that a credential is live. Exports and
+archives use broader redaction than the notification scan.
 
 ## Delivery is per rule, and has three settings
 
@@ -68,6 +73,11 @@ record -- a secret, a run of failing tools -- open the conversation, load
 pages until that record is reached, expand it and ring it. Compactions instead
 open the turn view, which has a purpose-built inspector for their replacement
 history.
+
+The record header stays in view after expansion and full-text loading. If a
+named log line is absent from the conversation, the view says so rather than
+silently landing on a different record. Selecting the same finding again
+reopens and scrolls to its record.
 
 The ring sits on the whole record rather than on the matched text. Secret
 findings deliberately carry no offsets and no matched value, so the record is

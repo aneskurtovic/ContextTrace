@@ -155,6 +155,7 @@ pub(crate) fn transcript_text(line: &str) -> Option<String> {
     let value: Value = serde_json::from_str(line.trim()).ok()?;
     let payload = value.get("payload")?;
     match str_field(&value, "type").as_deref()? {
+        "session_meta" => payload.get("base_instructions").and_then(instruction_text),
         "response_item" => response_item_text(payload),
         // The summary the harness wrote in place of the discarded history.
         // Shown because a reader scrolling past a compaction should see what
@@ -166,13 +167,85 @@ pub(crate) fn transcript_text(line: &str) -> Option<String> {
 
 /// The readable text of one content block, or `None` when it carries none.
 fn block_text(block: &Value) -> Option<String> {
+    if let Some(text) = block.as_str() {
+        return Some(text.into());
+    }
     for key in ["text", "input_text", "output_text"] {
         if let Some(text) = block.get(key).and_then(Value::as_str) {
             return Some(text.to_string());
         }
     }
     // Naming it beats pasting a megabyte of base64 at a reader.
-    block.get("image_url").map(|_| "[inline image]".to_string())
+    if block.get("image_url").is_some()
+        || str_field(block, "type").as_deref() == Some("input_image")
+    {
+        return Some("[inline image]".into());
+    }
+    if str_field(block, "type").as_deref() == Some("encrypted_content") {
+        return Some("[encrypted content]".into());
+    }
+    Some(format!(
+        "[unsupported content block: {}]",
+        str_field(block, "type").unwrap_or_else(|| "unknown".into())
+    ))
+}
+
+pub(crate) fn transcript_blocks(line: &str) -> Vec<ct_domain::ports::TranscriptBlock> {
+    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        return Vec::new();
+    };
+    if str_field(&value, "type").as_deref() != Some("response_item") {
+        return Vec::new();
+    }
+    let Some(payload) = value.get("payload") else {
+        return Vec::new();
+    };
+    if str_field(payload, "type").as_deref() != Some("message") {
+        return Vec::new();
+    }
+    let Some(blocks) = payload.get("content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| {
+            let text = block_text(block)?;
+            let char_len = text.chars().count().min(u32::MAX as usize) as u32;
+            let injected = INJECTED_PROMPT_MARKERS
+                .iter()
+                .chain(
+                    [
+                        "<subagent_notification>",
+                        "<codex_internal_context",
+                        "<turn_aborted>",
+                    ]
+                    .iter(),
+                )
+                .any(|marker| text.trim_start().starts_with(marker));
+            let role = match str_field(payload, "role").as_deref() {
+                Some("assistant") => MessageRole::Assistant,
+                Some("developer") => MessageRole::Developer,
+                Some("system") => MessageRole::System,
+                _ if injected => MessageRole::Developer,
+                _ => MessageRole::User,
+            };
+            let opaque = block.get("image_url").is_some()
+                || matches!(
+                    str_field(block, "type").as_deref(),
+                    Some("input_image" | "encrypted_content")
+                )
+                || text.starts_with("[unsupported content block:");
+            Some(ct_domain::ports::TranscriptBlock {
+                kind: EventKind::Message {
+                    role,
+                    preview: String::new(),
+                    char_len,
+                },
+                chars: (!opaque).then_some(char_len),
+                text,
+            })
+        })
+        .collect()
 }
 
 fn response_item_text(payload: &Value) -> Option<String> {
@@ -180,6 +253,9 @@ fn response_item_text(payload: &Value) -> Option<String> {
 
     if let Some(blocks) = payload.get("content").and_then(Value::as_array) {
         parts.extend(blocks.iter().filter_map(block_text));
+    }
+    if let Some(summary) = payload.get("summary").and_then(Value::as_array) {
+        parts.extend(summary.iter().filter_map(block_text));
     }
 
     // Codex encodes a call's arguments as a JSON string; it is the most useful

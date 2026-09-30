@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -2972,11 +2973,17 @@ function TranscriptRow({
   session,
   onTurn,
   highlighted,
+  highlightRequest,
+  partIndex,
+  scrollTarget = true,
 }: {
   entry: TranscriptEntry;
   session: SessionSummary;
   onTurn: (turn: number, line?: number) => void;
   highlighted: boolean;
+  highlightRequest: number;
+  partIndex?: number;
+  scrollTarget?: boolean;
 }) {
   const row = useRef<HTMLLIElement | null>(null);
   const [expanded, setExpanded] = useState(!entry.collapsed);
@@ -2990,10 +2997,14 @@ function TranscriptRow({
     if (!needsFetch) return;
     setLoading(true);
     api.getTranscriptEntry(session.agent, session.id, entry.index)
-      .then(setFull)
+      .then((record) => {
+        const part = partIndex == null ? null : record.parts?.[partIndex];
+        if (partIndex != null && !part) throw new Error("This record changed. Reload the conversation.");
+        setFull(part ? { ...record, ...part } : record);
+      })
       .catch((problem: unknown) => setLoadError(errorMessage(problem)))
       .finally(() => setLoading(false));
-  }, [needsFetch, session.agent, session.id, entry.index]);
+  }, [needsFetch, session.agent, session.id, entry.index, partIndex]);
 
   // A notification names one record, and that record is usually collapsed and
   // a long way down the conversation. Opening it and bringing it into view is
@@ -3002,16 +3013,22 @@ function TranscriptRow({
   useEffect(() => {
     if (!highlighted) return;
     setExpanded(true);
+  }, [highlighted, highlightRequest]);
+
+  // Expansion and the full-text response both change the row's geometry.
+  // Align its header after layout, keeping even a very tall record readable.
+  useLayoutEffect(() => {
+    if (!highlighted || !expanded || !scrollTarget) return;
     const node = row.current;
     const pane = node && scrollingParent(node);
     if (!node || !pane) return;
     const nodeBox = node.getBoundingClientRect();
     const paneBox = pane.getBoundingClientRect();
     pane.scrollBy?.({
-      top: nodeBox.top - paneBox.top - (paneBox.height - nodeBox.height) / 2,
-      behavior: "smooth",
+      top: nodeBox.top - paneBox.top - 12,
+      behavior: "instant",
     });
-  }, [highlighted]);
+  }, [highlighted, highlightRequest, expanded, shown.text, loading, scrollTarget]);
 
   return (
     <li
@@ -3034,6 +3051,7 @@ function TranscriptRow({
             </>
           )}
           {" · "}line {entry.line}
+          {partIndex != null && (entry.parts?.length ?? 0) > 1 && ` · block ${partIndex + 1}/${entry.parts!.length}`}
         </span>
         <button
           type="button"
@@ -3047,10 +3065,11 @@ function TranscriptRow({
       {expanded ? (
         <>
           <pre className="transcript-text">{shown.text}</pre>
+          {shown.unavailable && <p className="transcript-load-error" role="status">The original text is unavailable; only a saved preview can be shown. Reload the conversation to recheck the source.</p>}
           {loading && <Spinner label="Reading the rest of this entry…" />}
           {shown.truncated && !loading && (
             <p className="transcript-truncation">
-              Showing the first {shown.text.length.toLocaleString()} of{" "}
+              Showing the first {Array.from(shown.text.replace(/…$/, '')).length.toLocaleString()} of{" "}
               {shown.chars?.toLocaleString() ?? "?"} characters.
             </p>
           )}
@@ -3083,6 +3102,7 @@ function TranscriptPanel({
   enabled,
   onTurn,
   highlightLine,
+  highlightRequest,
 }: {
   session: SessionSummary;
   modelUsage: ModelUsage[];
@@ -3090,6 +3110,7 @@ function TranscriptPanel({
   enabled: boolean;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
+  highlightRequest: number;
 }) {
   const [page, setPage] = useState<TranscriptPage | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -3144,6 +3165,13 @@ function TranscriptPanel({
     }
   };
 
+  const reloadTranscript = () => {
+    setPage(null);
+    setEntries([]);
+    setError(null);
+    setRetryGeneration((current) => current + 1);
+  };
+
   // The named record can sit past the first page, and a page that was never
   // fetched cannot be scrolled to. Keep pulling pages until the line arrives
   // or the transcript runs out; landing the reader at the top of a long
@@ -3151,22 +3179,26 @@ function TranscriptPanel({
   const highlightLoaded =
     highlightLine != null && entries.some((entry) => entry.line === highlightLine);
   useEffect(() => {
-    if (highlightLine == null || highlightLoaded || loading || error || !page?.hasMore) return;
+    if (!enabled || highlightLine == null || highlightLoaded || loading || error || !page?.hasMore) return;
     loadMore();
     // loadMore is redefined on every render; depending on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [error, highlightLine, highlightLoaded, loading, page?.hasMore]);
+  }, [enabled, error, highlightLine, highlightLoaded, loading, page?.hasMore]);
 
   const needle = searchText.trim().toLocaleLowerCase();
   const matchesTranscriptFilters = (entry: TranscriptEntry) =>
     (kindFilter === "all" || entry.kind === kindFilter) &&
     (!needle || `${entry.label ?? ""}\n${entry.text}`.toLocaleLowerCase().includes(needle));
-  const highlightedEntryHiddenByFilters = highlightLine != null && entries.some(
-    (entry) => entry.line === highlightLine && !matchesTranscriptFilters(entry),
+  const rows = entries.flatMap<{ entry: TranscriptEntry; partIndex: number | undefined }>((entry) => entry.parts?.length
+    ? entry.parts.map((part, partIndex) => ({ entry: { ...entry, ...part }, partIndex }))
+    : [{ entry, partIndex: undefined }]);
+  const highlightedEntryHiddenByFilters = highlightLine != null && rows.some(
+    ({ entry }) => entry.line === highlightLine && !matchesTranscriptFilters(entry),
   );
-  const visibleEntries = entries.filter((entry) =>
+  const visibleEntries = rows.filter(({ entry }) =>
     matchesTranscriptFilters(entry) || entry.line === highlightLine,
   );
+  const firstHighlightedRow = visibleEntries.findIndex(({ entry }) => entry.line === highlightLine);
 
   if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
   if (error && !entries.length) {
@@ -3196,15 +3228,16 @@ function TranscriptPanel({
         {/* Injected content and tool results are entries here, so this count
             is larger than the number of messages exchanged. Saying "entries"
             rather than "messages" is the difference. */}
-        <p>{visibleEntries.length} shown · {entries.length} loaded of {page?.total ?? entries.length}</p>
+        <p>{visibleEntries.length} blocks shown · {entries.length} records loaded of {page?.total ?? entries.length}</p>
+        <button type="button" className="quiet-action" onClick={reloadTranscript} disabled={loading}>Reload conversation</button>
       </header>
       <div className="transcript-tools" role="search">
-        <label><span>Find in loaded entries</span><input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Text or tool name" /></label>
+        <label><span>Find in loaded entries</span><input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Preview text or tool name" /></label>
         <label><span>Entry type</span><select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as TranscriptKind | "all")}>
           <option value="all">All types</option>
           {Object.entries(TRANSCRIPT_KIND_LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
         </select></label>
-        <small>Search covers loaded entries. Load another page to include more of the conversation.</small>
+        <small>Search covers loaded previews and tool names. Text beyond a truncated preview is not searched. Load another page to include more records.</small>
       </div>
       {highlightedEntryHiddenByFilters && (
         <p className="callout transcript-filter-override" role="status">
@@ -3217,14 +3250,24 @@ function TranscriptPanel({
           <button type="button" onClick={retryTranscript}>Retry</button>
         </p>
       )}
+      {highlightLine != null && !highlightLoaded && (
+        <p className="callout" role="status">
+          {page?.hasMore
+            ? `Loading the linked record at log line ${highlightLine}…`
+            : `Log line ${highlightLine} is not available in this conversation. The session may have changed, or the finding may refer to session metadata.`}
+        </p>
+      )}
       {visibleEntries.length ? <ol className="transcript-list">
-        {visibleEntries.map((entry) => (
+        {visibleEntries.map(({ entry, partIndex }, position) => (
           <TranscriptRow
-            key={entry.index}
+            key={`${entry.index}:${partIndex ?? 'record'}`}
             entry={entry}
             session={session}
             onTurn={onTurn}
-            highlighted={highlightLine != null && entry.line === highlightLine}
+            highlighted={enabled && highlightLine != null && entry.line === highlightLine}
+            scrollTarget={position === firstHighlightedRow}
+            highlightRequest={highlightRequest}
+            partIndex={partIndex}
           />
         ))}
       </ol> : <p className="empty-inline">No loaded entries match these filters.</p>}
@@ -3247,6 +3290,7 @@ function TranscriptCache({
   enabled,
   onTurn,
   highlightLine,
+  highlightRequest,
 }: {
   session: SessionSummary | null;
   modelUsage: ModelUsage[];
@@ -3254,6 +3298,7 @@ function TranscriptCache({
   enabled: boolean;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
+  highlightRequest: number;
 }) {
   const [visits, setVisits] = useState<TranscriptVisit[]>([]);
   useEffect(() => {
@@ -3273,12 +3318,14 @@ function TranscriptCache({
         return (
           <div className="transcript-session" key={`${visit.session.agent}:${visit.session.id}`} hidden={!isCurrent}>
             <TranscriptPanel
+              key={`${visit.session.path}:${visit.session.sizeBytes}:${visit.session.lastActivity ?? ''}`}
               session={visit.session}
               modelUsage={visit.modelUsage}
               unattributedModelTurns={visit.unattributedModelTurns}
               enabled={enabled && isCurrent}
               onTurn={onTurn}
               highlightLine={isCurrent ? highlightLine : null}
+              highlightRequest={highlightRequest}
             />
           </div>
         );
@@ -4195,8 +4242,9 @@ export default function App() {
   // at it would send the transcript paging through a session nobody asked
   // about. Keeping the two together lets the render gate on identity.
   const [notificationHighlight, setNotificationHighlight] = useState<
-    { agent: Agent; id: string; line: number } | null
+    { agent: Agent; id: string; line: number; request: number } | null
   >(null);
+  const recordNavigationRequest = useRef(0);
   const sessionRequest = useRef(0);
   const turnRequest = useRef(0);
   const doctorRequest = useRef(0);
@@ -4804,7 +4852,7 @@ export default function App() {
   );
 
   const selectTranscriptTurn = useCallback((turn: number, line?: number) => {
-    if (selected && line != null) setNotificationHighlight({ ...selected, line });
+    if (selected && line != null) setNotificationHighlight({ ...selected, line, request: ++recordNavigationRequest.current });
     setActiveView("turns");
     setFocusComposition(true);
     void selectTurn(turn);
@@ -4838,7 +4886,7 @@ export default function App() {
       pendingSessionFocus.current = `${destination.agent}:${destination.id}`;
     }
     setPendingNotificationTurn(null);
-    setNotificationHighlight({ ...destination, line: hit.line });
+    setNotificationHighlight({ ...destination, line: hit.line, request: ++recordNavigationRequest.current });
     setActiveView("chat");
     setSelected((current) => (sameSession(current, destination) ? current : destination));
   }, [isMobileViewport]);
@@ -4858,6 +4906,7 @@ export default function App() {
     const destination = { agent: notification.location.agent, id: notification.location.sessionId };
     setCorpusOpen(false);
     setSelected((current) => sameSession(current, destination) ? current : destination);
+    setPendingNotificationTurn(null);
     // A compaction also names a line, but it already has a destination: the
     // turn view opens its replacement-history inspector on that line. Only the
     // rules that point at the *content* of one record -- a secret, a run of
@@ -4867,7 +4916,7 @@ export default function App() {
       (notification.ruleId === 'secretExposure' || notification.ruleId === 'toolErrorStreak');
     setNotificationHighlight(
       recordRoute
-        ? { ...destination, line: notification.location.sourceLine! }
+        ? { ...destination, line: notification.location.sourceLine!, request: ++recordNavigationRequest.current }
         : null,
     );
     if (recordRoute) {
@@ -5935,6 +5984,7 @@ export default function App() {
           enabled={!corpusOpen && activeView === "chat" && visibleDetail != null}
           onTurn={selectTranscriptTurn}
           highlightLine={visibleDetail && sameSession(notificationHighlight, visibleDetail.session) ? notificationHighlight!.line : null}
+          highlightRequest={notificationHighlight?.request ?? 0}
         />
       </div>
       </div>

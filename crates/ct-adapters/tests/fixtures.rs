@@ -72,6 +72,129 @@ fn codex() -> (CodexAdapter, AgentSession) {
 }
 
 #[test]
+fn codex_chat_preserves_mixed_roles_images_and_readable_reasoning() {
+    let adapter = CodexAdapter::new();
+    let path = fixture("codex", "chat-blocks.jsonl");
+    let session = adapter
+        .load(&descriptor(path.clone(), AgentKind::Codex, "chat-codex"))
+        .unwrap();
+    let lines: Vec<String> = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        adapter.transcript_text(&lines[0]).unwrap(),
+        "Synthetic base instructions."
+    );
+    let blocks = adapter.transcript_blocks(&lines[2]);
+    assert_eq!(blocks.len(), 4);
+    assert!(matches!(
+        blocks[0].kind,
+        EventKind::Message {
+            role: ct_domain::MessageRole::Developer,
+            ..
+        }
+    ));
+    assert!(matches!(
+        blocks[1].kind,
+        EventKind::Message {
+            role: ct_domain::MessageRole::User,
+            ..
+        }
+    ));
+    assert_eq!(blocks[1].text, "Please explain this diagram.");
+    assert_eq!(blocks[2].text, "[inline image]");
+    assert_eq!(blocks[3].text, "[encrypted content]");
+    assert_eq!(blocks[2].chars, None);
+    assert_eq!(
+        adapter.transcript_text(&lines[3]).unwrap(),
+        "A readable synthetic reasoning summary.\n[encrypted reasoning]"
+    );
+    assert_eq!(
+        adapter.transcript_blocks(&lines[4])[2].text,
+        "[unsupported content block: future_block]"
+    );
+    assert_eq!(
+        session.events().len(),
+        6,
+        "display splitting does not change accounting events"
+    );
+}
+
+#[test]
+fn claude_chat_preserves_each_tool_identity_error_and_speaker() {
+    let adapter = ClaudeCodeAdapter::new();
+    let path = fixture("claude_code", "chat-blocks.jsonl");
+    let session = adapter
+        .load(&descriptor(
+            path.clone(),
+            AgentKind::ClaudeCode,
+            "chat-claude",
+        ))
+        .unwrap();
+    let lines: Vec<String> = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let blocks = adapter.transcript_blocks(&lines[1]);
+    assert_eq!(blocks.len(), 5);
+    assert!(matches!(
+        blocks[0].kind,
+        EventKind::Reasoning {
+            redacted: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        blocks[1].kind,
+        EventKind::Message {
+            role: ct_domain::MessageRole::Assistant,
+            ..
+        }
+    ));
+    for (block, id, target) in [
+        (&blocks[2], "call-a", "a.rs"),
+        (&blocks[3], "call-b", "b.rs"),
+    ] {
+        assert!(
+            matches!(&block.kind, EventKind::ToolCall { call_id: Some(call), target: Some(file), .. } if call == id && file.contains(target))
+        );
+    }
+    assert!(matches!(
+        blocks[4].kind,
+        EventKind::Reasoning { redacted: true, .. }
+    ));
+    assert_eq!(blocks[4].chars, None);
+    let results = adapter.transcript_blocks(&lines[2]);
+    assert_eq!(results.len(), 4);
+    assert!(
+        matches!(&results[0].kind, EventKind::ToolResult { call_id: Some(id), is_error: false, .. } if id == "call-a")
+    );
+    assert!(matches!(
+        results[1].kind,
+        EventKind::Message {
+            role: ct_domain::MessageRole::User,
+            ..
+        }
+    ));
+    assert!(
+        matches!(&results[2].kind, EventKind::ToolResult { call_id: Some(id), is_error: true, .. } if id == "call-b")
+    );
+    assert_eq!(results[2].text, "File unavailable.\n[inline image]");
+    assert_eq!(results[3].text, "[unsupported content block: future_block]");
+    assert_eq!(
+        session
+            .events()
+            .iter()
+            .filter(|event| event.occupies_context())
+            .count(),
+        3
+    );
+}
+
+#[test]
 fn codex_0_156_1_capture_classifies_usage_and_opaque_compaction() {
     let adapter = CodexAdapter::new();
     let d = descriptor(
