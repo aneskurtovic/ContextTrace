@@ -2703,7 +2703,7 @@ select option {
 }
 
 .app-body { display: grid; grid-template-columns: var(--sidebar-width, 250px) 5px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-width: 0; min-height: 0; }
-.app-body.sidebar-collapsed { grid-template-columns: 44px 0 minmax(0, 1fr); }
+.app-body.sidebar-collapsed { grid-template-columns: 44px minmax(0, 1fr); }
 .sidebar-resizer { position: relative; align-self: stretch; height: auto; min-height: 0; border-right: 1px solid transparent; background: transparent; cursor: col-resize; }
 .app-body.sidebar-collapsed .sidebar-resizer { display: none; }
 .sidebar-resizer:hover, .sidebar-resizer:focus-visible { background: var(--accent-line); outline: none; }
