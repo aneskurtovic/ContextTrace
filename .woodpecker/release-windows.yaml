@@ -1,9 +1,8 @@
 # Windows release packaging on the trusted Woodpecker runner.
 #
 # The tag-only workflow runs on the existing self-hosted Windows local agent.
-# It creates the signed installer, updater manifest, portable/CLI ZIPs, and
-# checksum manifest, waits for every validation workflow on that tag, then
-# uploads the verified files and promotes the release to stable on GitHub.
+# It waits for the tagged commit's Woodpecker push checks on main, creates the
+# signed assets, then publishes and verifies them on the Windows runner.
 
 labels:
   platform: windows/amd64
@@ -14,9 +13,7 @@ when:
     ref: refs/tags/v*
 
 depends_on:
-  - windows
-  - rust
-  - frontend
+  - release-gate
 
 variables:
   - &shell powershell

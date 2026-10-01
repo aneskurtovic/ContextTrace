@@ -13,10 +13,13 @@ these six files for the release:
 - `ContextTrace-<version>-windows-x64-cli.zip` — `ct.exe` and license;
 - `SHA256SUMS.txt` — checksums for the downloadable files.
 
-The tag pipeline waits for the `windows`, `rust` and `frontend` validation
-workflows to succeed before packaging. The Windows release workflow then signs
-and stages the six files, creates a public prerelease, uploads the files, checks
-all uploaded digests, and promotes the release to stable. The updater reads the
+The tag pipeline's Linux gate waits for successful `windows`, `rust` and
+`frontend` Woodpecker **push** statuses on the exact tagged commit. The Windows
+push check runs only on `main`, so the tag does not repeat those three checks.
+Missing or pending checks wait for up to one hour; failed checks stop the
+release. The Windows release workflow then signs and stages the six files,
+creates a public prerelease, uploads the files, checks all uploaded digests,
+and promotes the release to stable. The updater reads the
 stable `releases/latest/download/latest.json` feed, so the prerelease remains
 outside its update channel until all assets are verified. `latest.json` is
 uploaded last, and the final promotion explicitly sets and verifies GitHub's
@@ -41,8 +44,9 @@ tags, because the tag workflow also receives the updater signing key.
 4. Confirm only trusted maintainers can create release tags. Never run
    untrusted pull-request code on a self-hosted Windows runner with access to
    the signing secret.
-5. Ensure the validation workflows and their release dependencies are present
-   on the target branch before pushing the version-matched tag.
+5. Ensure the tagged commit was pushed to `main` and its Woodpecker push checks
+   are present. The release gate waits for those checks to pass before it uses
+   the Windows runner for packaging.
 
 The release script builds the production desktop binary before restoring the
 updater private key to the process environment for NSIS bundling. The key is

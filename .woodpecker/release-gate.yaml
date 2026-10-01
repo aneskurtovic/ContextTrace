@@ -1,0 +1,16 @@
+# Tag validation reuses the checks already run for this exact commit on main.
+# Keep the wait on Linux so a pending push check does not occupy the Windows
+# runner needed by that check. No release secrets are available here.
+labels:
+  platform: linux/amd64
+  backend: docker
+
+when:
+  - event: tag
+    ref: refs/tags/v*
+
+steps:
+  - name: verify-main-validation
+    image: node:22-bookworm-slim
+    commands:
+      - node scripts/release/verify-main-validation.mjs

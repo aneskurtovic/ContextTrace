@@ -1,9 +1,8 @@
 # The React/Vite half of the desktop app.
 #
 # This is the one job that was on `windows-latest` for no reason at all: it runs
-# `tsc`, `vitest` and `vite`, none of which touch a Windows API. Verified on
-# Linux before this file was committed -- 75 tests across 4 files, production
-# bundle built.
+# `tsc`, `vitest` and `vite`, none of which touch a Windows API. The current
+# frontend suite and production bundle run here on pushes and pull requests.
 #
 # The Tauri side of the desktop app is a different question and stays on the
 # Windows agent, because it links a real WebView2 application. See windows.yaml.
@@ -17,7 +16,7 @@ labels:
   backend: docker
 
 when:
-  - event: [push, pull_request, manual, tag]
+  - event: [push, pull_request, manual]
     evaluate: 'RELEASE_UPLOAD != "true"'
 
 variables:

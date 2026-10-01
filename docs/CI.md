@@ -5,6 +5,12 @@ job for the native Tauri/MSVC build and Windows-specific CLI smoke tests. The
 Windows job is limited to trusted repository events; do not enable untrusted
 pull requests on any self-hosted runner that can access the host or secrets.
 
+The `main` push runs the frontend, Rust and Windows validation workflows. A
+version tag does not run them again. Its Linux release gate checks their latest
+GitHub commit statuses for the exact tagged SHA, then the Woodpecker Windows
+workflow packages, publishes and verifies the release. The gate receives no
+release secrets and does not use the Windows runner while checks are pending.
+
 ## Local checks
 
 Portable checks intended for Linux and Windows:
