@@ -1378,10 +1378,8 @@ fn visit_content(payload: &Value, f: &mut dyn FnMut(Component<'_>)) {
                     f(Component::UnmeasuredMedia);
                 }
             }
-            for key in ["encrypted_content"] {
-                if let Some(s) = block.get(key).and_then(Value::as_str) {
-                    f(Component::Opaque(Cow::Borrowed(s)));
-                }
+            if let Some(s) = block.get("encrypted_content").and_then(Value::as_str) {
+                f(Component::Opaque(Cow::Borrowed(s)));
             }
         }
     }
