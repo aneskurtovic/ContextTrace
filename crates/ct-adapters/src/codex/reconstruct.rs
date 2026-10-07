@@ -174,7 +174,11 @@ fn classify(
             (
                 ContextCategory::ToolOutputs,
                 ContextSource::ToolExecution { tool: name.clone() },
-                tool_target::label(&name, matched.and_then(|(_, t)| *t)),
+                if event.raw_type == "response_item/image_generation_call" {
+                    "Image generation [media tokens unmeasured]".into()
+                } else {
+                    tool_target::label(&name, matched.and_then(|(_, t)| *t))
+                },
             )
         }
         EventKind::OversizedToolResult {
@@ -211,6 +215,8 @@ fn classify(
         } => (
             if mechanism == "base_instructions" {
                 ContextCategory::SystemInstructions
+            } else if mechanism == "context_compaction" {
+                ContextCategory::Summaries
             } else {
                 ContextCategory::DeveloperInstructions
             },

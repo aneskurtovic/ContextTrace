@@ -119,6 +119,11 @@ corpus local.
 | Claude Code persisted transcript JSONL | Supported by the Claude adapter and fixture contracts; latest-version certification is a release gate. |
 | Known historical format families | Retained and regression-tested when a fixture exists. |
 | Unknown/future producer versions | Best-effort parse with visible fidelity limits; no completeness guarantee. |
-| Codex stdout/app-server JSONL | Not the persisted-transcript adapter surface. |
-| Claude `stream-json` stdout | Not the persisted-transcript adapter surface. |
+| Codex stdout/app-server JSONL | Separate explicit timeline importer; no context reconstruction. See [stream imports](STREAM-IMPORTS.md). |
+| Claude `stream-json` stdout | Separate explicit timeline importer; no context reconstruction. |
 
+
+The [audit follow-up](FORMAT-FOLLOWUP-2026-10-08.md) adds reviewed persisted
+Codex 0.161.0 and Claude 2.1.293 captures, bounded input handling, nested drift
+diagnostics, and separately catalogued stream contracts. Rare new Codex shapes
+remain synthetic-only evidence.

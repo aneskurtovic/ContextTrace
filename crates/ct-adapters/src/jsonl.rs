@@ -14,11 +14,13 @@
 //! learn the least from.
 //!
 //! So lines above [`MAX_PARSE_BYTES`] are not fully parsed. We sniff their type
-//! from a bounded prefix and let the receiving adapter inspect the raw bytes
-//! before this reader reuses its buffer. That permits narrow, allocation-free
-//! recovery of context metadata without building a multi-megabyte JSON tree.
+//! from a bounded prefix. The callback receives at most the parse budget plus
+//! two framing bytes, with `truncated` set when the rest was drained. Adapters
+//! must report incomplete records rather than infer facts from a prefix.
 
 use ct_domain::ports::{PortError, PortResult};
+use serde::de::{IgnoredAny, MapAccess, Visitor};
+use serde::Deserializer;
 use serde_json::Value;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -46,6 +48,9 @@ pub struct LineRecord {
     pub value: Option<Value>,
     /// True when the line was skipped for size rather than being malformed.
     pub oversized: bool,
+    /// Only a bounded prefix is available to the callback. Never interpret it
+    /// as a complete JSON record or use it to estimate the missing payload.
+    pub truncated: bool,
     /// Type string recovered by prefix sniffing when `value` is `None`.
     pub sniffed_type: Option<String>,
 }
@@ -76,37 +81,33 @@ pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord, &[u8])) -> Port
 
     loop {
         buf.clear();
-        let read = reader
-            .read_until(b'\n', &mut buf)
+        let (read, framing) = read_bounded_line(&mut reader, &mut buf)
             .map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
         if read == 0 {
             break;
         }
-        line_no += 1;
+        line_no = line_no.saturating_add(1);
 
         // Strip the newline (and a Windows carriage return) without copying.
-        let mut content = &buf[..read];
-        if content.ends_with(b"\n") {
-            content = &content[..content.len() - 1];
-        }
-        if content.ends_with(b"\r") {
-            content = &content[..content.len() - 1];
-        }
+        let content_len = read - framing;
+        buf.truncate(content_len.min(buf.len() as u64) as usize);
+        let content = &buf[..];
 
         let line_offset = offset;
-        offset += read as u64;
+        offset = offset.saturating_add(read);
 
         if content.is_empty() {
             continue;
         }
 
-        let record = if content.len() > MAX_PARSE_BYTES {
+        let record = if content_len > MAX_PARSE_BYTES as u64 {
             LineRecord {
                 offset: line_offset,
-                len: content.len().min(u32::MAX as usize) as u32,
+                len: content_len.min(u32::MAX as u64) as u32,
                 line_no,
                 value: None,
                 oversized: true,
+                truncated: content_len > content.len() as u64,
                 sniffed_type: sniff_type(&content[..SNIFF_BYTES.min(content.len())]),
             }
         } else {
@@ -116,6 +117,7 @@ pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord, &[u8])) -> Port
                 line_no,
                 value: serde_json::from_slice(content).ok(),
                 oversized: false,
+                truncated: false,
                 sniffed_type: None,
             }
         };
@@ -126,21 +128,71 @@ pub fn read_lines(path: &Path, mut visit: impl FnMut(LineRecord, &[u8])) -> Port
     Ok(())
 }
 
+/// Drain an arbitrarily long line while retaining at most the parse budget
+/// plus CRLF framing. The buffer cannot grow with the input line's length.
+fn read_bounded_line(reader: &mut impl BufRead, buf: &mut Vec<u8>) -> std::io::Result<(u64, u64)> {
+    let mut total = 0u64;
+    let mut last = None;
+    let mut previous = None;
+    loop {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            break;
+        }
+        let used = chunk
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(chunk.len(), |i| i + 1);
+        let keep = used.min((MAX_PARSE_BYTES + 2).saturating_sub(buf.len()));
+        buf.extend_from_slice(&chunk[..keep]);
+        for &byte in &chunk[used.saturating_sub(2)..used] {
+            previous = last;
+            last = Some(byte);
+        }
+        total = total.saturating_add(used as u64);
+        let done = last == Some(b'\n');
+        reader.consume(used);
+        if done {
+            break;
+        }
+    }
+    let framing = u64::from(last == Some(b'\n'))
+        + u64::from(if last == Some(b'\n') {
+            previous == Some(b'\r')
+        } else {
+            last == Some(b'\r')
+        });
+    Ok((total, framing))
+}
+
 /// Recover a `"type":"..."` value from the head of an unparsed line.
 ///
-/// A deliberately dumb scan rather than a streaming JSON parser: both agents put
-/// `type` near the front of the object, and being wrong here costs a
-/// reclassification to "unrecognised", not incorrect output.
+/// Inspect only top-level keys; nested `type` fields and quoted lookalikes do
+/// not identify an envelope. The recovered type is a diagnostic, not evidence
+/// that the rest of an oversized record was valid JSON.
 fn sniff_type(head: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(head);
-    let key = "\"type\"";
-    let start = text.find(key)? + key.len();
-    let rest = &text[start..];
-    let colon = rest.find(':')?;
-    let after = rest[colon + 1..].trim_start();
-    let quoted = after.strip_prefix('"')?;
-    let end = quoted.find('"')?;
-    Some(quoted[..end].to_string())
+    struct TypeVisitor<'a>(&'a mut Option<String>);
+    impl<'de> Visitor<'de> for TypeVisitor<'_> {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a JSON object")
+        }
+        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "type" {
+                    *self.0 = Some(map.next_value::<String>()?);
+                    // Stop before the incomplete remainder. deserialize_map
+                    // otherwise insists on the closing brace after visit_map.
+                    return Err(serde::de::Error::custom("type recovered"));
+                }
+                map.next_value::<IgnoredAny>()?;
+            }
+            Ok(None)
+        }
+    }
+    let mut found = None;
+    let _ = serde_json::Deserializer::from_slice(head).deserialize_map(TypeVisitor(&mut found));
+    found
 }
 
 #[cfg(test)]
@@ -215,7 +267,9 @@ mod tests {
 
         let mut seen = Vec::new();
         read_lines(&path, |r, raw| {
-            assert_eq!(raw.len(), r.len as usize);
+            assert!(r.truncated);
+            assert!(raw.len() <= MAX_PARSE_BYTES + 2);
+            assert!(raw.len() < r.len as usize);
             seen.push((
                 r.oversized,
                 r.value.is_none(),
@@ -246,5 +300,43 @@ mod tests {
         assert_eq!(sniff_type(b"{ \"type\" : \"x\" }"), Some("x".into()));
         assert_eq!(sniff_type(b"{\"other\":1}"), None);
         assert_eq!(sniff_type(b"{\"type\":123}"), None);
+        assert_eq!(
+            sniff_type(br#"{"nested":{"type":"wrong"},"type":"outer"}"#),
+            Some("outer".into())
+        );
+        assert_eq!(
+            sniff_type(br#"{"text":"\"type\":\"wrong\"","type":"outer"}"#),
+            Some("outer".into())
+        );
+    }
+
+    #[test]
+    fn huge_line_is_drained_and_the_next_record_keeps_its_position() {
+        let path = temp_file("drained.jsonl", b"");
+        let mut file = File::create(&path).unwrap();
+        let chunk = vec![b'x'; 64 * 1024];
+        for _ in 0..160 {
+            file.write_all(&chunk).unwrap();
+        }
+        file.write_all(b"\r\n{\"type\":\"after\"}").unwrap();
+        drop(file);
+        let mut seen = Vec::new();
+        read_lines(&path, |r, raw| {
+            assert!(raw.len() <= MAX_PARSE_BYTES + 2);
+            seen.push((
+                r.offset,
+                r.len,
+                r.line_no,
+                r.truncated,
+                r.type_str().map(str::to_owned),
+            ));
+        })
+        .unwrap();
+        assert_eq!(seen[0].1, 10 * 1024 * 1024);
+        assert_eq!(
+            seen[1],
+            (10 * 1024 * 1024 + 2, 16, 2, false, Some("after".into()))
+        );
+        let _ = std::fs::remove_file(path);
     }
 }

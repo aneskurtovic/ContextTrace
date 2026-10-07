@@ -49,6 +49,12 @@ impl FileRawEventSource {
 
 impl RawEventSource for FileRawEventSource {
     fn fetch(&self, source: SourceRef) -> PortResult<String> {
+        if source.byte_len as usize > crate::jsonl::MAX_PARSE_BYTES {
+            return Err(PortError::Io(format!(
+                "raw event exceeds the {} byte inspection limit; inspect the source file directly",
+                crate::jsonl::MAX_PARSE_BYTES
+            )));
+        }
         let path = self.path_for(source.file)?;
         let mut file =
             File::open(path).map_err(|e| PortError::Io(format!("{}: {e}", path.display())))?;
@@ -80,6 +86,15 @@ impl RawEventSource for FileRawEventSource {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn enormous_source_ranges_are_rejected_before_allocating_or_opening() {
+        let source = FileRawEventSource::for_session("file-that-does-not-exist");
+        let error = source
+            .fetch(SourceRef::new(FileId(0), 0, u32::MAX, 1))
+            .unwrap_err();
+        assert!(error.to_string().contains("inspection limit"));
+    }
 
     fn temp_file(name: &str, contents: &[u8]) -> PathBuf {
         let mut path = std::env::temp_dir();

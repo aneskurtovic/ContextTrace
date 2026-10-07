@@ -10,9 +10,50 @@
     "claude-persisted-transcript": {
       "agent": "claude-code",
       "description": "Claude Code persisted transcript JSONL under the projects root"
+    },
+    "codex-exec": {
+      "agent": "codex",
+      "description": "Explicit saved codex-exec presentation stream; no persisted context reconstruction"
+    },
+    "codex-app-server": {
+      "agent": "codex",
+      "description": "Explicit saved codex-app-server presentation stream; no persisted context reconstruction"
+    },
+    "claude-stream": {
+      "agent": "claude-code",
+      "description": "Explicit saved claude-stream presentation stream; no persisted context reconstruction"
     }
   },
   "fixtures": [
+    {
+      "path": "tests/fixtures/claude_code/current-2.1.293.jsonl",
+      "agent": "claude-code",
+      "surface": "claude-persisted-transcript",
+      "producer_version": "2.1.293",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-capture-redacted",
+      "capabilities": [
+        "user-assistant-dag",
+        "request-usage",
+        "attachments",
+        "redacted-content"
+      ]
+    },
+    {
+      "path": "tests/fixtures/codex/current-0.161.0.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.161.0",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-capture-redacted",
+      "capabilities": [
+        "session-meta",
+        "turn-context",
+        "responses-items",
+        "token-count",
+        "redacted-content"
+      ]
+    },
     {
       "path": "tests/fixtures/codex/upstream-0.161.0.jsonl",
       "agent": "codex",
@@ -20,7 +61,18 @@
       "producer_version": "0.161.0",
       "provenance": "synthetic",
       "verification": "parser-contract-only",
-      "capabilities": ["additional-tools", "structured-tool-search", "legacy-local-shell", "opaque-agent-message", "audio-and-file-image", "compaction-alias", "configuration-control", "retained-review-evidence"]
+      "capabilities": [
+        "additional-tools",
+        "structured-tool-search",
+        "legacy-local-shell",
+        "opaque-agent-message",
+        "audio-and-file-image",
+        "compaction-alias",
+        "configuration-control",
+        "retained-review-evidence",
+        "image-generation",
+        "context-compaction-item"
+      ]
     },
     {
       "path": "tests/fixtures/codex/chat-blocks.jsonl",
@@ -29,7 +81,12 @@
       "producer_version": "0.156.1",
       "provenance": "synthetic",
       "verification": "parser-contract-only",
-      "capabilities": ["mixed-transcript-blocks", "base-instructions", "reasoning-summary", "opaque-content"]
+      "capabilities": [
+        "mixed-transcript-blocks",
+        "base-instructions",
+        "reasoning-summary",
+        "opaque-content"
+      ]
     },
     {
       "path": "tests/fixtures/claude_code/chat-blocks.jsonl",
@@ -38,7 +95,12 @@
       "producer_version": "2.1.282",
       "provenance": "synthetic",
       "verification": "parser-contract-only",
-      "capabilities": ["mixed-transcript-blocks", "multiple-tool-calls", "multiple-tool-results", "opaque-content"]
+      "capabilities": [
+        "mixed-transcript-blocks",
+        "multiple-tool-calls",
+        "multiple-tool-results",
+        "opaque-content"
+      ]
     },
     {
       "path": "tests/fixtures/codex/current-0.156.1.jsonl",
@@ -47,7 +109,13 @@
       "producer_version": "0.156.1",
       "provenance": "reviewed-local-capture",
       "verification": "real-local-shape-redacted",
-      "capabilities": ["session-meta", "token-usage-record", "response-compaction", "token-count", "redacted-content"]
+      "capabilities": [
+        "session-meta",
+        "token-usage-record",
+        "response-compaction",
+        "token-count",
+        "redacted-content"
+      ]
     },
     {
       "path": "tests/fixtures/codex/rollout.jsonl",
@@ -56,7 +124,14 @@
       "producer_version": "0.9.0",
       "provenance": "synthetic",
       "verification": "parser-contract-only",
-      "capabilities": ["session-meta", "turn-context", "responses-items", "token-count", "compaction", "unknown-event"]
+      "capabilities": [
+        "session-meta",
+        "turn-context",
+        "responses-items",
+        "token-count",
+        "compaction",
+        "unknown-event"
+      ]
     },
     {
       "path": "tests/fixtures/codex/subagent-root.jsonl",
@@ -65,7 +140,12 @@
       "producer_version": "0.9.0",
       "provenance": "synthetic",
       "verification": "parser-contract-only",
-      "capabilities": ["session-meta", "subagent-root", "turn-context", "token-count"]
+      "capabilities": [
+        "session-meta",
+        "subagent-root",
+        "turn-context",
+        "token-count"
+      ]
     },
     {
       "path": "tests/fixtures/codex/subagent-child.jsonl",
@@ -74,7 +154,12 @@
       "producer_version": "0.9.0",
       "provenance": "synthetic",
       "verification": "parser-contract-only",
-      "capabilities": ["session-meta", "subagent-child", "turn-context", "token-count"]
+      "capabilities": [
+        "session-meta",
+        "subagent-child",
+        "turn-context",
+        "token-count"
+      ]
     },
     {
       "path": "tests/fixtures/secrets/codex/rollout.jsonl",
@@ -83,7 +168,12 @@
       "producer_version": "0.9.0",
       "provenance": "synthetic",
       "verification": "privacy-smoke-only",
-      "capabilities": ["session-meta", "responses-items", "credential-shaped-content", "token-count"]
+      "capabilities": [
+        "session-meta",
+        "responses-items",
+        "credential-shaped-content",
+        "token-count"
+      ]
     },
     {
       "path": "tests/fixtures/claude_code/current-2.1.282.jsonl",
@@ -92,7 +182,14 @@
       "producer_version": "2.1.282",
       "provenance": "reviewed-local-capture",
       "verification": "real-local-capture-redacted",
-      "capabilities": ["sdk-cli-envelope", "user-assistant-dag", "sidecar-state", "atis-latch", "cost-state", "redacted-content"]
+      "capabilities": [
+        "sdk-cli-envelope",
+        "user-assistant-dag",
+        "sidecar-state",
+        "atis-latch",
+        "cost-state",
+        "redacted-content"
+      ]
     },
     {
       "path": "tests/fixtures/claude_code/current-2.1.268.jsonl",
@@ -101,7 +198,13 @@
       "producer_version": "2.1.268",
       "provenance": "reviewed-local-capture",
       "verification": "real-local-shape-redacted",
-      "capabilities": ["user-assistant-dag", "sidecar-state", "cost-state", "artifact-ledger", "redacted-content"]
+      "capabilities": [
+        "user-assistant-dag",
+        "sidecar-state",
+        "cost-state",
+        "artifact-ledger",
+        "redacted-content"
+      ]
     },
     {
       "path": "tests/fixtures/claude_code/session.jsonl",
@@ -110,8 +213,59 @@
       "producer_version": "2.1.199",
       "provenance": "synthetic",
       "verification": "parser-contract-only",
-      "capabilities": ["user-assistant-dag", "attachments", "tool-use", "usage", "iterations", "compaction", "unknown-event"]
+      "capabilities": [
+        "user-assistant-dag",
+        "attachments",
+        "tool-use",
+        "usage",
+        "iterations",
+        "compaction",
+        "unknown-event"
+      ]
+    },
+    {
+      "path": "tests/fixtures/streams/codex-exec-0.161.0.jsonl",
+      "agent": "codex",
+      "surface": "codex-exec",
+      "producer_version": "0.161.0",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-capture-redacted",
+      "version_basis": "capture-command",
+      "capabilities": [
+        "presentation-timeline",
+        "scoped-usage",
+        "explicit-import"
+      ],
+      "version_evidence": "codex-cli 0.161.0"
+    },
+    {
+      "path": "tests/fixtures/streams/codex-app-server-0.161.0.jsonl",
+      "agent": "codex",
+      "surface": "codex-app-server",
+      "producer_version": "0.161.0",
+      "provenance": "synthetic",
+      "verification": "pinned-upstream-contract",
+      "version_basis": "pinned-upstream",
+      "capabilities": [
+        "presentation-timeline",
+        "scoped-usage",
+        "explicit-import"
+      ],
+      "version_evidence": "rust-v0.161.0@979011409de0a60b52f179721948e65531d26144"
+    },
+    {
+      "path": "tests/fixtures/streams/claude-stream-2.1.293.jsonl",
+      "agent": "claude-code",
+      "surface": "claude-stream",
+      "producer_version": "2.1.293",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-capture-redacted",
+      "version_basis": "stream-init",
+      "capabilities": [
+        "presentation-timeline",
+        "scoped-usage",
+        "explicit-import"
+      ]
     }
   ]
 }
-

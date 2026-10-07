@@ -3,7 +3,8 @@
 ContextTrace reads persisted Codex CLI and Claude Code session JSONL. The
 descriptions here summarize the shapes supported by the committed fixtures and
 compatibility catalog; they do not promise support for every producer version
-or for live stdout/app-server streams. Examples and fixtures are synthetic or
+or for live stdout/app-server streams. Saved stream captures have a separate
+[explicit importer](STREAM-IMPORTS.md). Examples and fixtures are synthetic or
 redacted, not copied from a private session corpus.
 
 Back to the [README](../README.md) · see also

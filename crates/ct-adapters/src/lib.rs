@@ -36,6 +36,7 @@ mod fingerprint;
 pub mod jsonl;
 pub mod notifications;
 pub mod raw_source;
+pub mod streams;
 pub mod tokenizers;
 pub mod tool_target;
 pub mod walk;

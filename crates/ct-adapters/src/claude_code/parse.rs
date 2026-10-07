@@ -342,6 +342,16 @@ fn translate(
         }
     };
 
+    let raw_type = if matches!(kind, EventKind::Unrecognised) && raw_type == "system" {
+        format!(
+            "system/{}",
+            value
+                .and_then(|v| str_field(v, "subtype"))
+                .unwrap_or_else(|| "missing-subtype".into())
+        )
+    } else {
+        raw_type
+    };
     let content_measurement = include_content_analysis
         .then(|| value.and_then(|value| content_measurement(value, &kind)))
         .flatten();
@@ -570,7 +580,14 @@ fn attachment_label(attachment: &Value, mechanism: &str) -> String {
 fn system_kind(v: &Value) -> EventKind {
     let subtype = str_field(v, "subtype").unwrap_or_else(|| "system".into());
     if subtype != "compact_boundary" {
-        return EventKind::SessionEvent { subtype };
+        return if matches!(
+            subtype.as_str(),
+            "turn_duration" | "stop_hook_summary" | "api_error" | "local_command" | "informational"
+        ) {
+            EventKind::SessionEvent { subtype }
+        } else {
+            EventKind::Unrecognised
+        };
     }
 
     let meta = v.get("compactMetadata").unwrap_or(&Value::Null);
@@ -1099,6 +1116,17 @@ fn prompt_sum(v: &Value) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn novel_system_subtypes_are_reported_as_drift() {
+        assert!(matches!(
+            system_kind(&serde_json::json!({"type":"system","subtype":"future_context_injection"})),
+            EventKind::Unrecognised
+        ));
+        assert!(matches!(
+            system_kind(&serde_json::json!({"type":"system"})),
+            EventKind::Unrecognised
+        ));
+    }
     use serde_json::json;
 
     #[test]
@@ -1110,6 +1138,7 @@ mod tests {
                 line_no: 3,
                 value: None,
                 oversized,
+                truncated: false,
                 sniffed_type: oversized.then(|| "assistant".into()),
             };
             let (event, _) = translate(&record, &mut SessionMetadata::default(), false);

@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"capture-id-20"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"capture-id-32","type":"agent_message","text":"[redacted]"}}
+{"type":"turn.completed","usage":{"input_tokens":19623,"cached_input_tokens":13440,"cache_write_input_tokens":0,"output_tokens":7,"reasoning_output_tokens":0}}

@@ -28,3 +28,6 @@ The compatibility manifest and synthetic/redacted fixtures are maintained in
 the repository alongside the parser tests. Private session corpora, signing
 material, machine-specific runner configuration and unpublished credentials
 are not part of the public documentation.
+
+- [Parser audit follow-up](FORMAT-FOLLOWUP-2026-10-08.md): capture receipts, replay semantics, bounded input and acceptance limits.
+- [Saved stream imports](STREAM-IMPORTS.md): explicit stdout/app-server timeline import contracts.

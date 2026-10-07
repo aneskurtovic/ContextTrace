@@ -89,6 +89,111 @@ fn codex_161_upstream_contract_keeps_context_and_control_records_distinct() {
         EventKind::ToolCall { tool, char_len, .. } if tool == "tool_search" && *char_len > 0)));
     assert!(session.events().iter().any(|event| matches!(&event.kind,
         EventKind::Compacted(facts) if !facts.replacement_recorded)));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ToolResult { tool: Some(tool), .. } if tool == "image_generation")));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ContextInjection { mechanism, .. } if mechanism == "context_compaction")));
+}
+
+#[test]
+fn real_current_captures_preserve_versions_usage_and_source_positions() {
+    for (agent, name, version) in [
+        (AgentKind::Codex, "current-0.161.0.jsonl", "0.161.0"),
+        (AgentKind::ClaudeCode, "current-2.1.293.jsonl", "2.1.293"),
+    ] {
+        let adapter: Box<dyn AgentAdapter> = if agent == AgentKind::Codex {
+            Box::new(CodexAdapter::new())
+        } else {
+            Box::new(ClaudeCodeAdapter::new())
+        };
+        let path = fixture(
+            if agent == AgentKind::Codex {
+                "codex"
+            } else {
+                "claude_code"
+            },
+            name,
+        );
+        let session = adapter
+            .load(&descriptor(path.clone(), agent, "current-capture"))
+            .unwrap();
+        assert_eq!(session.metadata().agent_version.as_deref(), Some(version));
+        assert_eq!(session.unrecognised_total(), 0);
+        assert_eq!(session.turn_count(), 1);
+        assert!(session.peak_prompt_tokens().unwrap() > 0);
+        assert!(session
+            .events()
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::Message { .. })));
+        let raw = std::fs::read(path).unwrap();
+        for e in session.events() {
+            let start = e.source.byte_offset as usize;
+            assert!(serde_json::from_slice::<serde_json::Value>(
+                &raw[start..start + e.source.byte_len as usize]
+            )
+            .is_ok());
+        }
+    }
+}
+
+#[test]
+fn opaque_context_compaction_keeps_history_until_a_recorded_replacement_boundary() {
+    let path = std::env::temp_dir().join(format!(
+        "ct-context-compaction-{}.jsonl",
+        std::process::id()
+    ));
+    let records = [
+        serde_json::json!({"type":"session_meta","payload":{"id":"opaque-compaction","cli_version":"0.161.0"}}),
+        serde_json::json!({"type":"turn_context","payload":{"model":"synthetic-model"}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"keep this message"}]}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"context_compaction","encrypted_content":"opaque"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":5}}}}),
+        serde_json::json!({"type":"compacted","payload":{"replacement_history":[]}}),
+        serde_json::json!({"type":"turn_context","payload":{"model":"synthetic-model"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"output_tokens":5}}}}),
+    ];
+    std::fs::write(
+        &path,
+        records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let adapter = CodexAdapter::new();
+    let session = adapter
+        .load(&descriptor(
+            path.clone(),
+            AgentKind::Codex,
+            "opaque-compaction",
+        ))
+        .unwrap();
+    let before = adapter
+        .reconstruct(
+            &session,
+            TurnNumber::new(1).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
+        .unwrap();
+    assert!(before
+        .items
+        .iter()
+        .any(|i| i.provenance.source == Some(session.events()[2].source)));
+    assert!(before.preceding_compaction.is_none());
+    let after = adapter
+        .reconstruct(
+            &session,
+            TurnNumber::new(2).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
+        .unwrap();
+    assert!(!after
+        .items
+        .iter()
+        .any(|i| i.provenance.source == Some(session.events()[2].source)));
+    assert!(after.preceding_compaction.is_some());
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

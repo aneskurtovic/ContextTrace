@@ -35,6 +35,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Import a saved stdout/app-server JSONL timeline without treating it as persisted history.
+    Import {
+        input: std::path::PathBuf,
+        #[arg(long, value_parser = ["codex-exec", "codex-app-server", "claude-stream"])]
+        surface: String,
+        /// Producer version recorded when capturing the stream.
+        #[arg(long)]
+        producer_version: String,
+    },
     /// Run a read-only MCP server over stdin/stdout.
     Mcp,
 
@@ -565,6 +574,21 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let archive_store = ct_runtime::archive_store();
 
     match cli.command {
+        Command::Import {
+            input,
+            surface,
+            producer_version,
+        } => {
+            use ct_adapters::streams::{StreamAdapter, StreamSurface};
+            let adapter = StreamAdapter::new(
+                input.parent().unwrap_or(std::path::Path::new(".")),
+                StreamSurface::parse(&surface).unwrap(),
+                producer_version,
+            );
+            let report = adapter.import(&input)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(i32::from(report.session.unrecognised_total() != 0));
+        }
         Command::Mcp => mcp::serve(&app, &archive_store)?,
 
         Command::Families { agent, json } => {

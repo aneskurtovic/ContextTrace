@@ -410,44 +410,48 @@ fn translate(
             ("response_item", Some(i)) | ("event_msg", Some(i)) => format!("{raw_outer}/{i}"),
             _ => raw_outer.clone(),
         };
-        let kind = match (raw_outer.as_str(), inner.as_deref(), payload_start) {
-            ("compacted", _, payload_start) => EventKind::Compacted(CompactionFacts {
-                replacement_recorded: payload_start
-                    .and_then(|start| find_field_value(raw, b"replacement_history", start))
-                    .is_some(),
-                ..Default::default()
-            }),
-            ("response_item", Some("compaction" | "compaction_summary"), payload_start) => {
-                EventKind::Compacted(CompactionFacts {
+        let kind = if record.truncated {
+            EventKind::Unrecognised
+        } else {
+            match (raw_outer.as_str(), inner.as_deref(), payload_start) {
+                ("compacted", _, payload_start) => EventKind::Compacted(CompactionFacts {
                     replacement_recorded: payload_start
                         .and_then(|start| find_field_value(raw, b"replacement_history", start))
                         .is_some(),
                     ..Default::default()
-                })
-            }
-            (
-                "response_item",
-                Some("function_call_output" | "custom_tool_call_output" | "tool_search_output"),
-                Some(payload_start),
-            ) => match oversized_output_facts(raw, payload_start) {
-                Some((non_image_chars, image_count, image_payload_chars)) => {
-                    EventKind::OversizedToolResult {
-                        call_id: string_field(raw, b"call_id", payload_start),
-                        non_image_chars,
-                        image_count,
-                        image_payload_chars,
-                    }
+                }),
+                ("response_item", Some("compaction" | "compaction_summary"), payload_start) => {
+                    EventKind::Compacted(CompactionFacts {
+                        replacement_recorded: payload_start
+                            .and_then(|start| find_field_value(raw, b"replacement_history", start))
+                            .is_some(),
+                        ..Default::default()
+                    })
                 }
-                None => EventKind::OversizedToolResult {
-                    call_id: string_field(raw, b"call_id", payload_start),
-                    non_image_chars: 0,
-                    image_count: 0,
-                    image_payload_chars: 0,
+                (
+                    "response_item",
+                    Some("function_call_output" | "custom_tool_call_output" | "tool_search_output"),
+                    Some(payload_start),
+                ) => match oversized_output_facts(raw, payload_start) {
+                    Some((non_image_chars, image_count, image_payload_chars)) => {
+                        EventKind::OversizedToolResult {
+                            call_id: string_field(raw, b"call_id", payload_start),
+                            non_image_chars,
+                            image_count,
+                            image_payload_chars,
+                        }
+                    }
+                    None => EventKind::OversizedToolResult {
+                        call_id: string_field(raw, b"call_id", payload_start),
+                        non_image_chars: 0,
+                        image_count: 0,
+                        image_payload_chars: 0,
+                    },
                 },
-            },
-            _ => EventKind::SessionEvent {
-                subtype: raw_type.clone(),
-            },
+                _ => EventKind::SessionEvent {
+                    subtype: raw_type.clone(),
+                },
+            }
         };
         return Event {
             id: EventId::Ordinal(record.line_no),
@@ -1041,6 +1045,20 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
             label: "Additional tool definitions".into(),
             char_len,
         },
+        // Durable opaque item. Upstream installs the actual replacement in a
+        // separate `compacted` rollout record; the encrypted item alone cannot
+        // tell us which preceding messages were dropped.
+        Some("context_compaction") => EventKind::ContextInjection {
+            mechanism: "context_compaction".into(),
+            label: "Opaque context compaction item (replacement not recorded here)".into(),
+            char_len,
+        },
+        Some("image_generation_call") => EventKind::ToolResult {
+            tool: Some("image_generation".into()),
+            call_id: str_field(payload, "id"),
+            char_len,
+            is_error: str_field(payload, "status").as_deref() == Some("failed"),
+        },
         // A durable backend configuration control, not a model message.
         Some("configuration_update") => EventKind::SessionEvent {
             subtype: "configuration_update".into(),
@@ -1098,6 +1116,93 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
 
 /// `event_msg` lines are UI/telemetry notifications. Most do not occupy context;
 /// the exception that matters is `token_count`.
+// Pinned to Codex 0.161.0 protocol::EventMsg. Unknown variants must warn.
+// Rollback and raw-response wrappers require semantic handling, so stay unknown.
+const KNOWN_EVENT_MESSAGES: &[&str] = &[
+    "error",
+    "warning",
+    "auth_recovery_started",
+    "auth_recovery_completed",
+    "guardian_warning",
+    "realtime_conversation_started",
+    "realtime_conversation_realtime",
+    "realtime_conversation_closed",
+    "realtime_conversation_sdp",
+    "model_reroute",
+    "model_verification",
+    "turn_moderation_metadata",
+    "safety_buffering",
+    "context_compacted",
+    "turn_started",
+    "thread_settings_applied",
+    "turn_complete",
+    "agent_message",
+    "user_message",
+    "agent_reasoning",
+    "agent_reasoning_raw_content",
+    "agent_reasoning_section_break",
+    "session_configured",
+    "environment_connected",
+    "environment_disconnected",
+    "thread_goal_updated",
+    "thread_queue_changed",
+    "mcp_startup_update",
+    "mcp_startup_complete",
+    "mcp_tool_call_begin",
+    "mcp_tool_call_end",
+    "web_search_begin",
+    "web_search_end",
+    "image_generation_begin",
+    "image_generation_end",
+    "exec_command_begin",
+    "exec_command_output_delta",
+    "terminal_interaction",
+    "exec_command_end",
+    "view_image_tool_call",
+    "exec_approval_request",
+    "request_permissions",
+    "request_user_input",
+    "dynamic_tool_call_request",
+    "dynamic_tool_call_response",
+    "elicitation_request",
+    "apply_patch_approval_request",
+    "guardian_assessment",
+    "deprecation_notice",
+    "stream_error",
+    "patch_apply_begin",
+    "patch_apply_updated",
+    "patch_apply_end",
+    "turn_diff",
+    "realtime_conversation_list_voices_response",
+    "plan_update",
+    "turn_aborted",
+    "shutdown_complete",
+    "entered_review_mode",
+    "exited_review_mode",
+    "raw_response_completed",
+    "item_started",
+    "item_completed",
+    "hook_started",
+    "hook_completed",
+    "agent_message_content_delta",
+    "plan_delta",
+    "reasoning_content_delta",
+    "reasoning_raw_content_delta",
+    "collab_agent_spawn_begin",
+    "collab_agent_spawn_end",
+    "collab_agent_interaction_begin",
+    "collab_agent_interaction_end",
+    "collab_waiting_begin",
+    "collab_waiting_end",
+    "collab_close_begin",
+    "collab_close_end",
+    "collab_resume_begin",
+    "collab_resume_end",
+    "sub_agent_activity",
+    "task_started",
+    "task_complete",
+];
+
 fn translate_event_msg(
     payload: &Value,
     inner: Option<&str>,
@@ -1127,10 +1232,10 @@ fn translate_event_msg(
                 api_calls: Some(1),
             })
         }
-        Some(other) => EventKind::SessionEvent {
+        Some(other) if KNOWN_EVENT_MESSAGES.contains(&other) => EventKind::SessionEvent {
             subtype: other.to_string(),
         },
-        None => EventKind::Unrecognised,
+        _ => EventKind::Unrecognised,
     }
 }
 
@@ -1241,6 +1346,9 @@ fn parse_time(v: Option<&Value>) -> Option<DateTime<Utc>> {
 pub(crate) enum Component<'a> {
     Text(&'a str),
     Opaque(Cow<'a, str>),
+    /// The log carries a media reference/payload, not its token cost. Keep it
+    /// out of text estimates and exact recounts. Its cost stays unattributed.
+    UnmeasuredMedia,
 }
 
 impl Component<'_> {
@@ -1248,6 +1356,7 @@ impl Component<'_> {
         match self {
             Component::Text(s) => s.chars().count(),
             Component::Opaque(s) => s.chars().count(),
+            Component::UnmeasuredMedia => 0,
         }
     }
 }
@@ -1264,17 +1373,25 @@ fn visit_content(payload: &Value, f: &mut dyn FnMut(Component<'_>)) {
                     f(Component::Text(s));
                 }
             }
-            // The ordinary path keeps the historical serialized-character
-            // proxy, so inline image bytes are charged here. The oversized
-            // lexical path excludes image payloads because it cannot assign
-            // them an honest text-token estimate; the two paths are therefore
-            // intentionally different until the image-accounting follow-up.
-            for key in ["image_url", "file_id", "audio_url", "encrypted_content"] {
+            for key in ["image_url", "file_id", "audio_url"] {
+                if block.get(key).is_some() {
+                    f(Component::UnmeasuredMedia);
+                }
+            }
+            for key in ["encrypted_content"] {
                 if let Some(s) = block.get(key).and_then(Value::as_str) {
                     f(Component::Opaque(Cow::Borrowed(s)));
                 }
             }
         }
+    }
+
+    if str_field(payload, "type").as_deref() == Some("image_generation_call") {
+        if let Some(prompt) = payload.get("revised_prompt").and_then(Value::as_str) {
+            f(Component::Text(prompt));
+        }
+        // Even an empty result is not a text-only item suitable for BPE.
+        f(Component::UnmeasuredMedia);
     }
 
     for key in ["arguments", "input"] {
@@ -1300,7 +1417,12 @@ fn visit_content(payload: &Value, f: &mut dyn FnMut(Component<'_>)) {
     match payload.get("output") {
         Some(Value::String(s)) => f(Component::Text(s)),
         Some(other @ Value::Object(_)) | Some(other @ Value::Array(_)) => {
-            f(Component::Opaque(Cow::Owned(other.to_string())))
+            let mut media = false;
+            let proxy = without_media_references(other, &mut media);
+            if media {
+                f(Component::UnmeasuredMedia);
+            }
+            f(Component::Opaque(Cow::Owned(proxy.to_string())))
         }
         _ => {}
     }
@@ -1324,6 +1446,39 @@ fn visit_content(payload: &Value, f: &mut dyn FnMut(Component<'_>)) {
     }
 }
 
+fn without_media_references(value: &Value, media: &mut bool) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter_map(|(key, value)| {
+                    let typed = matches!(
+                        map.get("type").and_then(Value::as_str),
+                        Some("input_image" | "image" | "input_audio" | "audio")
+                    );
+                    if ["image_url", "audio_url", "file_id"].contains(&key.as_str())
+                        && (typed
+                            || value.as_str().is_some_and(|s| {
+                                s.starts_with("data:image/") || s.starts_with("data:audio/")
+                            }))
+                    {
+                        *media = true;
+                        None
+                    } else {
+                        Some((key.clone(), without_media_references(value, media)))
+                    }
+                })
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(|v| without_media_references(v, media))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
 /// Character count of the parts of a payload that occupy context.
 pub(crate) fn content_chars(payload: &Value) -> u32 {
     let mut total: usize = 0;
@@ -1342,7 +1497,7 @@ pub(crate) fn content_text(payload: &Value) -> Option<String> {
     let mut opaque = false;
     visit_content(payload, &mut |part| match part {
         Component::Text(s) => text.push_str(s),
-        Component::Opaque(_) => opaque = true,
+        Component::Opaque(_) | Component::UnmeasuredMedia => opaque = true,
     });
     (!opaque && !text.is_empty()).then_some(text)
 }
@@ -1390,6 +1545,62 @@ fn preview_of(payload: &Value, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nested_drift_is_visible_but_known_metadata_does_not_duplicate_context() {
+        let mut metadata = SessionMetadata::default();
+        assert!(matches!(
+            translate_event_msg(
+                &serde_json::json!({}),
+                Some("future_context_injection"),
+                &mut metadata
+            ),
+            EventKind::Unrecognised
+        ));
+        for kind in [
+            "task_started",
+            "thread_goal_updated",
+            "agent_message",
+            "item_completed",
+        ] {
+            assert!(matches!(
+                translate_event_msg(&serde_json::json!({}), Some(kind), &mut metadata),
+                EventKind::SessionEvent { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn media_reference_length_is_not_a_text_token_proxy() {
+        for key in ["image_url", "file_id", "audio_url"] {
+            for len in [12, 100_000] {
+                let payload = serde_json::json!({"content":[{"type":"input_text","text":"hello"},{key:"x".repeat(len)}]});
+                assert_eq!(content_chars(&payload), 5);
+                assert!(content_text(&payload).is_none());
+            }
+        }
+        let payload = serde_json::json!({"type":"image_generation_call","id":"ig_1","status":"completed","revised_prompt":"draw","result":"A".repeat(100_000)});
+        assert!(matches!(
+            translate_response_item(&payload, Some("image_generation_call")),
+            EventKind::ToolResult { char_len: 4, .. }
+        ));
+        assert!(content_text(&payload).is_none());
+    }
+
+    #[test]
+    fn encrypted_context_compaction_item_does_not_assert_a_replacement_boundary() {
+        let payload = serde_json::json!({"type":"context_compaction","encrypted_content":"opaque"});
+        assert!(matches!(
+            translate_response_item(&payload, Some("context_compaction")),
+            EventKind::ContextInjection { char_len: 6, .. }
+        ));
+        assert!(matches!(
+            translate_response_item(
+                &serde_json::json!({"type":"compaction_trigger"}),
+                Some("compaction_trigger")
+            ),
+            EventKind::Unrecognised
+        ));
+    }
     use serde_json::json;
     use std::fs;
 
@@ -1401,7 +1612,7 @@ mod tests {
             json!({"type":"input_image", "file_id":"file-example"}),
         ] {
             let payload = json!({"content":[{"type":"input_text","text":"hello"},opaque]});
-            assert!(content_chars(&payload) > 5);
+            assert!(content_chars(&payload) >= 5);
             assert_eq!(content_text(&payload), None);
         }
     }
@@ -1474,6 +1685,7 @@ mod tests {
                 line_no: 1,
                 value: Some(value),
                 oversized: false,
+                truncated: false,
                 sniffed_type: None,
             };
             let event = translate(&record, &[], &mut SessionMetadata::default(), true);
@@ -1495,6 +1707,7 @@ mod tests {
             line_no: 1,
             value: None,
             oversized: true,
+            truncated: false,
             sniffed_type: Some("response_item".into()),
         }
     }
@@ -1777,12 +1990,8 @@ mod tests {
                 {"type": "input_image", "image_url": "data:image/png;base64,AAAA"}
             ]
         });
-        // "hello" plus the full data URL, which is counted because inline
-        // images really do occupy context.
-        assert_eq!(
-            content_chars(&payload),
-            5 + "data:image/png;base64,AAAA".len() as u32
-        );
+        // Image patches occupy context but base64 length is not their cost.
+        assert_eq!(content_chars(&payload), 5);
     }
 
     #[test]
