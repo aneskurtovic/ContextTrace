@@ -64,3 +64,9 @@ release artifact.
 - Automated checks do not inspect private user session corpora.
 
 Release-specific gates are listed in [the release procedure](RELEASING.md).
+
+The [maintainer handoff](../HANDOFF.md) records the latest local validation and
+the successful Windows single-thread frontend retry command. That diagnostic
+retry does not replace the configured Woodpecker frontend check. Pipeline
+results must be checked on the exact pushed commit, separately from older
+release pipelines and local corpus evidence.

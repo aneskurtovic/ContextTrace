@@ -1,0 +1,12 @@
+{"timestamp":"2026-10-07T18:00:00Z","type":"session_meta","payload":{"id":"synthetic-codex-161","cli_version":"0.161.0","cwd":"C:\\synthetic"}}
+{"timestamp":"2026-10-07T18:00:01Z","type":"turn_context","payload":{"model":"synthetic-model"}}
+{"timestamp":"2026-10-07T18:00:02Z","type":"response_item","payload":{"type":"additional_tools","role":"developer","tools":[{"type":"function","name":"example","parameters":{"type":"object"}}]}}
+{"timestamp":"2026-10-07T18:00:03Z","type":"response_item","payload":{"type":"tool_search_call","call_id":"search-1","execution":"server","arguments":{"query":"find example"}}}
+{"timestamp":"2026-10-07T18:00:04Z","type":"response_item","payload":{"type":"tool_search_output","call_id":"search-1","output":[{"type":"text","text":"example tool"}]}}
+{"timestamp":"2026-10-07T18:00:05Z","type":"response_item","payload":{"type":"local_shell_call","id":"shell-1","status":"completed","action":{"type":"exec","command":["git","status"]}}}
+{"timestamp":"2026-10-07T18:00:06Z","type":"response_item","payload":{"type":"agent_message","author":"synthetic-author","recipient":"synthetic-recipient","content":[{"type":"input_text","text":"visible"},{"type":"encrypted_content","encrypted_content":"opaque"}]}}
+{"timestamp":"2026-10-07T18:00:07Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"audio attachment"},{"type":"input_audio","audio_url":"data:audio/wav;base64,AAAA"},{"type":"input_image","file_id":"file-synthetic"}]}}
+{"timestamp":"2026-10-07T18:00:08Z","type":"response_item","payload":{"type":"configuration_update","reasoning":{"effort":"medium"}}}
+{"timestamp":"2026-10-07T18:00:08Z","type":"retained_context","payload":{"type":"verified_answer","turn_id":"turn-synthetic","call_id":"call-synthetic","questions":[{"question":"Synthetic question?","answer":"Synthetic answer."}],"acceptance_order":1}}
+{"timestamp":"2026-10-07T18:00:09Z","type":"response_item","payload":{"type":"compaction_summary","encrypted_content":"opaque"}}
+{"timestamp":"2026-10-07T18:00:10Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10},"model_context_window":400000}}}

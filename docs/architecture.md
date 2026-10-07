@@ -91,9 +91,9 @@ model did not need.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the commands listed in the [README](../README.md#commands) | Implemented |
-| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented; earlier startup and quiet updater behavior passed on a separate laptop; 0.1.5 installer/update acceptance remains open |
+| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented; historical separate-laptop acceptance does not establish current 0.1.8 installer/update acceptance |
 | Standalone JSONL fixture files | Implemented |
-| Reproducible CI, installable release artifacts, release documentation | Woodpecker CI and packaging workflows are configured; 0.1.5 Windows assets are published |
+| Reproducible CI, installable release artifacts, release documentation | Woodpecker CI and packaging workflows are configured; 0.1.8 Windows assets are published |
 | Session metadata search | Implemented server-side with explicit paging |
 | SQLite index | Deferred until measured desktop performance requires it |
 
@@ -118,3 +118,7 @@ degradation. Private session corpora are never committed; optional local
 format-drift sweeps run against user-selected data and are not part of the CI
 fixture corpus. The fixture catalog is the reproducible public compatibility
 evidence; it is not an automatic capture of upstream agent releases.
+
+The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records the current parser
+findings and local validation. [HANDOFF](../HANDOFF.md) tracks the remaining
+capture, semantic coverage and nested drift-detection work.

@@ -1,5 +1,8 @@
 # JSONL format compatibility
 
+The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records current producer
+versions, parser fixes, sampled corpus evidence and remaining coverage limits.
+
 ContextTrace supports the persisted, on-disk session formats written by:
 
 - **Codex CLI** under `sessions` and `archived_sessions`;
@@ -59,7 +62,15 @@ The current fixtures are deliberately synthetic and therefore provide
 captures derived from real local JSONL and contain no prompts, source, tool
 output, identifiers or credentials.
 
-The current local evidence is:
+The 2026-10-07 evidence adds a synthetic upstream contract for Codex **0.161.0**
+and a local corpus sweep of 229 sessions / 100,651 events. The only remaining
+unrecognised event was one malformed Claude line. Recent Codex files included
+0.161.0; recent Claude files reached 2.1.292. Installed Claude **2.1.293** still
+needs a version-matched persisted capture. See the audit for unsupported item
+variants and [HANDOFF](../HANDOFF.md) for follow-up work. These observations
+do not certify every feature of either current producer.
+
+The historical reviewed-capture evidence is:
 
 - Codex CLI **0.156.1**: a redacted persisted-rollout shape capture covering
   `token_usage_record` and `response_item/compaction`.
@@ -69,7 +80,8 @@ The current local evidence is:
 - Claude Code **2.1.268** remains as a historical local capture covering the
   artifact-ledger sidecars.
 
-The installed version is now backed by a reviewed persisted capture. A release
+The versions listed above are backed by reviewed persisted captures; they are
+historical evidence, not the latest installed versions. A release
 may claim a producer version only when a redacted persisted capture or an
 equivalent reviewed local corpus is available.
 

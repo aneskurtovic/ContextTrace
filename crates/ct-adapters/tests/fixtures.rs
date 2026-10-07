@@ -72,6 +72,26 @@ fn codex() -> (CodexAdapter, AgentSession) {
 }
 
 #[test]
+fn codex_161_upstream_contract_keeps_context_and_control_records_distinct() {
+    let adapter = CodexAdapter::new();
+    let session = adapter
+        .load(&descriptor(
+            fixture("codex", "upstream-0.161.0.jsonl"),
+            AgentKind::Codex,
+            "synthetic-codex-161",
+        ))
+        .unwrap();
+    assert_eq!(session.unrecognised_total(), 0);
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ContextInjection { mechanism, char_len, .. }
+        if mechanism == "additional_tools" && *char_len > 0)));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ToolCall { tool, char_len, .. } if tool == "tool_search" && *char_len > 0)));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::Compacted(facts) if !facts.replacement_recorded)));
+}
+
+#[test]
 fn codex_chat_preserves_mixed_roles_images_and_readable_reasoning() {
     let adapter = CodexAdapter::new();
     let path = fixture("codex", "chat-blocks.jsonl");

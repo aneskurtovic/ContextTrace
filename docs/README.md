@@ -20,6 +20,8 @@ supporting detail.
 - [CI](CI.md): automated checks, local equivalents and coverage limits.
 - [Release procedure](RELEASING.md): Windows packaging and acceptance gates.
 - [MVP status](MVP-STATUS.md): current implementation and publication state.
+- [Maintainer handoff](../HANDOFF.md): completed work, validation and ordered next steps.
+- [2026-10-07 format audit](FORMAT-AUDIT-2026-10-07.md): parser findings and coverage gaps.
 - [Roadmap](ROADMAP.md): public, non-committal areas of future work.
 
 The compatibility manifest and synthetic/redacted fixtures are maintained in

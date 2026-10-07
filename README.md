@@ -9,7 +9,7 @@ session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: source and the Windows 0.1.5 binary release are public.**
+> **Status: source and the Windows 0.1.8 binary release are public.**
 > The CLI and Windows desktop app implement the discovery-to-diagnosis
 > workflow. Compatibility is limited to the persisted JSONL formats and
 > producer versions covered by committed fixtures. See [MVP status](docs/MVP-STATUS.md)
@@ -34,6 +34,10 @@ Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
 The supported input surface is their persisted local session JSONL; see the
 [format compatibility policy](docs/FORMAT-COMPATIBILITY.md) for versioned
 fixtures, limits and the update process.
+
+The [2026-10-07 format audit](docs/FORMAT-AUDIT-2026-10-07.md) records recent
+parser fixes and remaining coverage gaps. Maintainers should start with
+[HANDOFF.md](HANDOFF.md) for validation evidence and next steps.
 
 ## Features
 
@@ -252,7 +256,7 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-The updater-enabled 0.1.5 Windows release is available. See the [install
+The updater-enabled 0.1.8 Windows release is available. See the [install
 instructions](#install) and [release downloads](https://github.com/aneskurtovic/ContextTrace/releases/latest).
 
 Configurable local pricing/forecasting, instruction-file comparisons and

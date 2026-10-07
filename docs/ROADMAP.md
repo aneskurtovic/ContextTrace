@@ -7,6 +7,10 @@ interest, not a schedule or commitment.
 
 ## Current focus
 
+The [maintainer handoff](../HANDOFF.md) lists the immediate follow-up work from
+the [2026-10-07 parser audit](FORMAT-AUDIT-2026-10-07.md), including current
+producer captures, remaining Codex variants and nested drift diagnostics.
+
 - Publish and validate the Windows desktop release, including updater behavior
   and installation on a separate clean host.
 - Keep persisted-session format support evidence-based: track producer

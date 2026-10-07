@@ -22,6 +22,14 @@ Some payloads are encrypted, structured or image-bearing rather than ordinary
 text. Tokenizing a JSON serialization or encoded image would not measure what
 the model saw, so those items are not presented as exact text-token counts.
 
+The 0.161.0 schema contract additionally covers structured `tool_search_call`
+arguments, legacy `local_shell_call`, `additional_tools`, the
+`compaction_summary` alias and `configuration_update` controls. Known
+`retained_context` families are model-invisible host evidence and do not add
+another copy of their text to context. Audio URLs, file-based images and nested
+encrypted content remain opaque estimates. See the
+[dated audit](FORMAT-AUDIT-2026-10-07.md) for unhandled variants and evidence limits.
+
 ## Claude Code
 
 Assistant records can contain a `usage` object with input, cache-creation and
@@ -41,3 +49,7 @@ Reasoning text may be redacted while an opaque signature remains, and a tool
 result persisted to disk may be larger than the content that was sent to the
 model. Such records require conservative size estimates and explicit
 measurement limits.
+
+Malformed JSON and skipped oversized Claude records are unrecognised events,
+so diagnostics expose the lost information instead of treating it as harmless
+session metadata. Parsing continues with subsequent records.

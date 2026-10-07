@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "last_reviewed": "2026-09-24",
+  "last_reviewed": "2026-10-07",
   "fixtures_are": "redacted synthetic parser contracts unless provenance says otherwise",
   "surfaces": {
     "codex-persisted-rollout": {
@@ -13,6 +13,15 @@
     }
   },
   "fixtures": [
+    {
+      "path": "tests/fixtures/codex/upstream-0.161.0.jsonl",
+      "agent": "codex",
+      "surface": "codex-persisted-rollout",
+      "producer_version": "0.161.0",
+      "provenance": "synthetic",
+      "verification": "parser-contract-only",
+      "capabilities": ["additional-tools", "structured-tool-search", "legacy-local-shell", "opaque-agent-message", "audio-and-file-image", "compaction-alias", "configuration-control", "retained-review-evidence"]
+    },
     {
       "path": "tests/fixtures/codex/chat-blocks.jsonl",
       "agent": "codex",

@@ -291,11 +291,10 @@ fn translate(
     let mut extras = LineExtras::default();
 
     let kind = match value {
-        // Oversized or unparseable records remain diagnostic session events;
-        // Claude Code has no lexical oversized-content recovery path yet.
-        None => EventKind::SessionEvent {
-            subtype: raw_type.clone(),
-        },
+        // Neither malformed JSON nor a skipped oversized record proves that
+        // the content was harmless metadata. Keep the loss visible to doctor
+        // and reconstruction fidelity rather than reporting a clean parse.
+        None => EventKind::Unrecognised,
         Some(v) => {
             absorb_metadata(v, metadata, timestamp);
             match raw_type.as_str() {
@@ -1101,6 +1100,23 @@ fn prompt_sum(v: &Value) -> u64 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn skipped_or_malformed_records_are_visible_fidelity_losses() {
+        for oversized in [false, true] {
+            let record = LineRecord {
+                offset: 42,
+                len: 100,
+                line_no: 3,
+                value: None,
+                oversized,
+                sniffed_type: oversized.then(|| "assistant".into()),
+            };
+            let (event, _) = translate(&record, &mut SessionMetadata::default(), false);
+            assert!(matches!(event.kind, EventKind::Unrecognised));
+            assert_eq!(event.source.byte_offset, 42);
+        }
+    }
 
     #[test]
     fn prompt_size_includes_cache_fields() {

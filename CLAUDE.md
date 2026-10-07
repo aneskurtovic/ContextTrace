@@ -32,7 +32,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/check-fixture-man
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/test-fixture-manifest.ps1
 ```
 
-Verification snapshot (2026-09-25): the commands above passed, including all
+Latest parser-audit verification (2026-10-07): 468 Rust tests passed (one
+ignored), formatting and workspace Clippy passed, 11 fixtures and validator
+regressions passed, and the frontend production build passed. All 156 frontend
+tests passed with a single-thread/15-second-timeout retry after Windows worker
+startup and timing failures. Existing dependencies were used; no new desktop
+packaging or clean-host acceptance was performed. See [HANDOFF](HANDOFF.md)
+for next steps and [the audit](docs/FORMAT-AUDIT-2026-10-07.md) for exact limits.
+
+Historical verification snapshot (2026-09-25): the commands above passed, including all
 Rust workspace tests, 148 frontend tests, the frontend production build and
 the 8-fixture compatibility manifest checks. The Windows Tauri production
 build also passed with `tauri build --no-bundle --ci -- --locked`. Full results
