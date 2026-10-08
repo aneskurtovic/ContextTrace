@@ -14,11 +14,8 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 }
 
 $version = $Tag.Substring(1)
-$releaseNotesPath = Join-Path $PSScriptRoot "../../docs/releases/$Tag.md"
-$releaseNotes = 'Windows x64 release. Woodpecker validation, packaging and asset integrity checks passed.'
-if (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf) {
-    $releaseNotes = Get-Content -LiteralPath $releaseNotesPath -Raw -Encoding UTF8
-}
+. (Join-Path $PSScriptRoot 'release-notes.ps1')
+$releaseNotes = Get-ReleaseNotes -Tag $Tag
 $assetPrefix = "ContextTrace-$version-windows-x64"
 $installerName = "$assetPrefix-setup.exe"
 $assetNames = @(
@@ -135,6 +132,9 @@ if ($existingRelease.Count -gt 0) {
         prerelease = $true
         generate_release_notes = $false
     } | ConvertTo-Json
+    if (($releaseBody | ConvertFrom-Json).body -isnot [string]) {
+        throw 'Release notes must serialize as a JSON string.'
+    }
     try {
         $release = Invoke-RestMethod -Method Post -Uri "$apiRoot/releases" -Headers $headers -ContentType 'application/json' -Body $releaseBody
     } catch {
