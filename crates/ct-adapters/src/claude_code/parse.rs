@@ -576,13 +576,22 @@ fn attachment_label(attachment: &Value, mechanism: &str) -> String {
     }
 }
 
-/// Classify a `system` line. The one that matters is `compact_boundary`.
+/// Classify a `system` line. Only `compact_boundary` changes replay history.
 fn system_kind(v: &Value) -> EventKind {
     let subtype = str_field(v, "subtype").unwrap_or_else(|| "system".into());
     if subtype != "compact_boundary" {
         return if matches!(
             subtype.as_str(),
-            "turn_duration" | "stop_hook_summary" | "api_error" | "local_command" | "informational"
+            "turn_duration"
+                | "stop_hook_summary"
+                | "api_error"
+                | "local_command"
+                | "informational"
+                // User-facing recaps and remote-control notices, not model
+                // messages. Preserve source references and text extraction
+                // without adding context weight or an eviction boundary.
+                | "away_summary"
+                | "bridge_status"
         ) {
             EventKind::SessionEvent { subtype }
         } else {

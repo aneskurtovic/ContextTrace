@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "last_reviewed": "2026-10-07",
+  "last_reviewed": "2026-10-08",
   "fixtures_are": "redacted synthetic parser contracts unless provenance says otherwise",
   "surfaces": {
     "codex-persisted-rollout": {
@@ -265,6 +265,20 @@
         "presentation-timeline",
         "scoped-usage",
         "explicit-import"
+      ]
+    },
+    {
+      "path": "tests/fixtures/claude_code/presentation-notices-2.1.239.jsonl",
+      "agent": "claude-code",
+      "surface": "claude-persisted-transcript",
+      "producer_version": "2.1.239",
+      "provenance": "reviewed-local-capture",
+      "verification": "real-local-shape-redacted",
+      "capabilities": [
+        "away-summary",
+        "bridge-status",
+        "presentation-only-system-events",
+        "redacted-content"
       ]
     }
   ]

@@ -1,9 +1,8 @@
 //! Adapter tests against committed synthetic session files.
 //!
-//! These fixtures are hand-authored, never captured. Real session logs contain
-//! source code, prompts, terminal output and potentially secrets, so they stay
-//! out of the repository entirely -- the corpus smoke test reads them locally
-//! and gitignored.
+//! Fixture provenance is declared in tests/fixtures/compatibility.json. Most
+//! contracts are hand-authored; reviewed captures retain only redacted shapes.
+//! Private session logs stay out of the repository.
 //!
 //! Each fixture is built to encode a specific way the real formats can mislead a
 //! reader, so a regression shows up as a named failing test rather than as a
@@ -387,6 +386,102 @@ fn content_measurements_are_opt_in_to_the_analyses_that_use_them() {
 // ---------------------------------------------------------------------------
 // Claude Code
 // ---------------------------------------------------------------------------
+
+#[test]
+fn claude_presentation_notices_preserve_text_and_source_without_context_weight() {
+    let adapter = ClaudeCodeAdapter::new();
+    let path = fixture("claude_code", "presentation-notices-2.1.239.jsonl");
+    let session = adapter
+        .load(&descriptor(
+            path.clone(),
+            AgentKind::ClaudeCode,
+            "claude-notices",
+        ))
+        .unwrap();
+    assert_eq!(session.metadata().agent_version.as_deref(), Some("2.1.239"));
+    assert_eq!(session.unrecognised_total(), 0);
+    assert_eq!(session.turn_count(), 0, "notices are not model requests");
+    let raw = std::fs::read_to_string(path).unwrap();
+    assert_eq!(session.events().len(), 2);
+    for (event, subtype) in session
+        .events()
+        .iter()
+        .zip(["away_summary", "bridge_status"])
+    {
+        assert!(
+            matches!(&event.kind, EventKind::SessionEvent { subtype: actual } if actual == subtype)
+        );
+        assert!(!event.occupies_context());
+        assert_eq!(event.char_len(), None);
+        let start = event.source.byte_offset as usize;
+        let line = &raw[start..start + event.source.byte_len as usize];
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            adapter.transcript_text(line).as_deref(),
+            record["content"].as_str()
+        );
+        assert_eq!(event.links.uuid.as_deref(), record["uuid"].as_str());
+        assert_eq!(
+            event.links.parent_uuid.as_deref(),
+            record["parentUuid"].as_str()
+        );
+    }
+
+    // A synthetic chain through both captured shapes must retain the original
+    // prompt, while neither notice becomes model context or a compaction.
+    let path = std::env::temp_dir().join(format!("ct-claude-notices-{}.jsonl", std::process::id()));
+    let mut records = vec![serde_json::json!({
+        "type":"user", "uuid":"prompt", "parentUuid":null,
+        "message":{"role":"user", "content":"Keep this original prompt."}
+    })];
+    let mut parent = "prompt".to_string();
+    for line in raw.lines() {
+        let mut record: serde_json::Value = serde_json::from_str(line).unwrap();
+        record["parentUuid"] = parent.into();
+        parent = record["uuid"].as_str().unwrap().to_string();
+        records.push(record);
+    }
+    records.push(serde_json::json!({
+        "type":"assistant", "uuid":"answer", "parentUuid":parent, "requestId":"request",
+        "message":{"role":"assistant", "content":[{"type":"text", "text":"Done."}],
+            "usage":{"input_tokens":20,"output_tokens":2}}
+    }));
+    std::fs::write(
+        &path,
+        records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let session = adapter
+        .load(&descriptor(
+            path.clone(),
+            AgentKind::ClaudeCode,
+            "notice-chain",
+        ))
+        .unwrap();
+    let _ = std::fs::remove_file(path);
+    let context = adapter
+        .reconstruct(
+            &session,
+            TurnNumber::new(1).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
+        .unwrap();
+    assert_eq!(session.unrecognised_total(), 0);
+    assert_eq!(session.turn_count(), 1);
+    assert!(context.preceding_compaction.is_none());
+    assert!(context
+        .items
+        .iter()
+        .any(|item| item.preview.as_deref() == Some("Keep this original prompt.")));
+    assert!(context
+        .items
+        .iter()
+        .all(|item| ![2, 3].contains(&item.provenance.source.unwrap().line_no)));
+}
 
 #[test]
 fn claude_2_1_268_capture_classifies_current_sidecar_state() {

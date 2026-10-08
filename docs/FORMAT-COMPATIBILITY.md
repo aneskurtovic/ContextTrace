@@ -85,12 +85,37 @@ historical evidence, not the latest installed versions. A release
 may claim a producer version only when a redacted persisted capture or an
 equivalent reviewed local corpus is available.
 
-The adapters are intentionally tolerant of known outer envelopes. For example,
-an unrecognised `event_msg` subtype or Claude `system` subtype may still be
-classified as a generic session event when its envelope is known. That keeps
-the session readable, but it does not always reduce the fidelity score. This is
-a known limitation of the current drift signal and is why semantic fixture
-tests, versioned captures and manual release review remain necessary.
+Unknown Codex `event_msg` and Claude `system` subtypes produce fidelity
+warnings even when their outer envelopes are known. Only explicitly supported
+subtypes are classified as session metadata.
+
+### Claude presentation notices (v0.1.10)
+
+`system/away_summary` and `system/bridge_status` are now recognised as session
+events. The former is a user-facing recap; the latter is a remote-control
+notice. Original byte ranges and adapter text extraction are preserved for
+raw inspection. The conversation view continues to include model-context
+records and compactions. Neither notice contributes model-context tokens,
+starts a model request, or establishes a compaction boundary.
+
+The minimal reviewed fixture contains redacted, nonadjacent records from one
+Claude **2.1.239** persisted transcript; parent links to omitted records remain
+external. A separate synthetic-chain regression verifies that replay traverses
+these notices without dropping the original prompt or counting notice text.
+Unknown future subtypes and malformed JSON still warn.
+
+Classification was checked against the installed Claude **2.1.294** executable
+(SHA-256 `1f6471eb5a1c21a1f8b54a7827329d64433424dcce51717a54e837adb542163a`).
+Its `j6o` and `$6o` constructors create these presentation records; `S_` excludes
+system records other than `local_command`, and the request converter skips
+them. This is local producer-code evidence, not a complete version certification.
+The fixture catalog records the persisted capture's own producer version.
+
+The updated development CLI scanned 43 local Claude sessions / 21,574 events:
+one unrecognised event (the existing malformed JSON line), no unreadable files,
+and no remaining `away_summary` or `bridge_status` warnings. Doctor still exits
+1 for the malformed record. This is local parser verification; the change is
+included in v0.1.10 and was absent from v0.1.9.
 
 ## Update procedure
 
