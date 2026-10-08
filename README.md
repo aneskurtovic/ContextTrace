@@ -9,10 +9,10 @@ session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: source and the Windows 0.1.8 binary release are public.**
+> **Status: source and the Windows 0.1.9 binary release are public.**
 > The CLI and Windows desktop app implement the discovery-to-diagnosis
-> workflow. Compatibility is limited to the persisted JSONL formats and
-> producer versions covered by committed fixtures. See [MVP status](docs/MVP-STATUS.md)
+> workflow. Context reconstruction and explicit stream imports have separate
+> contracts, limited to the surfaces and producer versions covered by fixtures. See [MVP status](docs/MVP-STATUS.md)
 > for current verification and release gates.
 
 ![ContextTrace dark overview showing prompt growth and the selected-turn snapshot with synthetic demonstration data](docs/images/desktop-overview-dark.png)
@@ -31,9 +31,11 @@ It is not a chat-history viewer. The workflow it exists for is:
 > understand the behaviour.
 
 Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
-The supported input surface is their persisted local session JSONL; see the
+Context reconstruction uses their persisted local session JSONL; see the
 [format compatibility policy](docs/FORMAT-COMPATIBILITY.md) for versioned
-fixtures, limits and the update process.
+fixtures, limits and the update process. Saved Codex exec/app-server and Claude
+stdout captures have a separate [CLI timeline importer](docs/STREAM-IMPORTS.md);
+those streams do not expose complete request history.
 
 The [2026-10-07 format audit](docs/FORMAT-AUDIT-2026-10-07.md) records recent
 parser fixes and remaining coverage gaps. Maintainers should start with
@@ -58,6 +60,7 @@ What runs today:
 | Exact duplicate detection | Identical content repeated in a turn, and its token cost | CLI + desktop |
 | Low-information scoring | Large, highly-compressible blocks ranked by likely waste | CLI + desktop |
 | Secret scanning and redacted export | Where credential-shaped strings appear, without ever printing them | CLI + desktop |
+| Saved stream import | A presentation timeline and separately scoped usage from an explicitly selected stdout/app-server capture | CLI |
 | Format-drift sweep | Whether this build recognises every event type across a local corpus | CLI |
 | Parse fidelity | How much of one session this build understood, and what it did not | CLI + desktop |
 | NDJSON export | The whole session as typed records, cross-checked against the totals | CLI + desktop |

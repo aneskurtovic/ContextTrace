@@ -83,6 +83,22 @@ It is not a compatibility route through the persisted adapters.
 
 Validation, packaging, publication and uploaded-asset verification must use
 Woodpecker. See [RELEASING](RELEASING.md). Local tests are development evidence.
+Source commit `193150f0dc1da52a0ba604b152341c1b0e6946f6` passed frontend,
+Linux Rust (including Rust 1.88 MSRV), Windows desktop/CLI and smoke checks in
+[Woodpecker push pipeline 90](https://ci.aneskurtovic.com/repos/5/pipeline/90).
+The initial candidate hit a newer Linux Clippy single-element-loop lint; the
+correction is included in the validated release commit.
+
+[Tag pipeline 91](https://ci.aneskurtovic.com/repos/5/pipeline/91) passed its
+exact-commit gate and Windows packaging/publication steps. It uploaded and
+verified the digests of all six release assets, checked updater metadata
+against the staged signature and versioned installer URL, and confirmed the
+latest stable release pointer. The GitHub API independently lists
+[v0.1.9](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.9) at
+that source commit, neither draft nor prerelease, with all six assets uploaded.
+Publication time was 2026-10-07 22:25:26 UTC (2026-10-08 in Sarajevo). No
+interactive workstation packaging was used as release evidence.
+
 The maintainer confirmed no separate clean Windows PC or VM is available.
 Version-matched installer, portable, upgrade, uninstall/archive preservation
 and signed updater acceptance cannot be completed in this session. A public
@@ -94,7 +110,10 @@ release or green CI does not close that acceptance gate.
 - All 16 catalogued fixtures and the validator rejection regressions passed.
 - All 156 frontend tests passed with the normal command, and production build passed.
 - The explicit CLI import command passed its smoke check.
-- The corpus sweep had no unreadable files; unsupported nested Claude system
-  records and the malformed line remain diagnostics, with doctor exit 1.
+- The final corpus sweep read 237 sessions / 104,495 events, with no unreadable
+  files and 36 unrecognised events: 34 Claude away_summary records, one
+  bridge_status record and one malformed line. These remain diagnostics, with
+  doctor exit 1. The actively written corpus can grow after this receipt.
 
-These local checks do not establish Woodpecker success or release acceptance.
+These local checks are separate from the Woodpecker results above. Neither
+establishes clean-host acceptance or real capture certification of rare shapes.

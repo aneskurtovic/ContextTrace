@@ -36,8 +36,10 @@ Latest follow-up verification (2026-10-08): 480 Rust tests passed (one ignored),
 formatting and strict workspace Clippy passed, all 16 fixtures and validator
 regressions passed, and 156 frontend tests plus the production build passed.
 Separate stdout import contracts and current-version captures were added; see
-[the follow-up](docs/FORMAT-FOLLOWUP-2026-10-08.md). Woodpecker validation and
-release results are separate; clean-host acceptance is unavailable.
+[the follow-up](docs/FORMAT-FOLLOWUP-2026-10-08.md). Release commit `193150f`
+passed Woodpecker push pipeline 90; tag pipeline 91 packaged and published
+v0.1.9 and verified all six uploaded assets. Clean-host acceptance is unavailable
+and rare Codex shapes still lack feature-matched real captures.
 
 Historical parser-audit verification (2026-10-07): 468 Rust tests passed (one
 ignored), formatting and workspace Clippy passed, 11 fixtures and validator

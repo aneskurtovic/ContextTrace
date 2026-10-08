@@ -1,6 +1,6 @@
 # ContextTrace MVP status
 
-Assessment date: **2026-10-07**
+Assessment date: **2026-10-08**
 
 ## Current state
 
@@ -11,31 +11,39 @@ optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
 
-The latest public stable release is **v0.1.8**, published 2026-10-01. The
-release API was checked on 2026-10-07 and lists all six expected assets. Source
-commit `3afd229` has successful Woodpecker push checks in pipeline 86 and tag
-release checks in pipeline 87. This check did not download or rehash assets.
-Separate-host installer, portable and signed updater acceptance for 0.1.8 has
-not been established in this audit. Historical acceptance is recorded below.
+The latest public stable release is **v0.1.9**, published 2026-10-08 in
+Sarajevo (2026-10-07 22:25:26 UTC). Release commit
+`193150f0dc1da52a0ba604b152341c1b0e6946f6` passed all frontend, Linux Rust
+(including MSRV), Windows desktop/CLI and smoke checks in
+[Woodpecker push pipeline 90](https://ci.aneskurtovic.com/repos/5/pipeline/90).
+[Tag pipeline 91](https://ci.aneskurtovic.com/repos/5/pipeline/91) passed the
+exact-commit gate, packaged and published the release, verified all six
+uploaded-asset digests, and confirmed the latest stable release pointer.
+GitHub release metadata independently confirms that tag and source commit,
+all six uploaded assets, and neither draft nor prerelease status.
 
-The 2026-10-07 parser audit is a source change after that release, not part of
-the published 0.1.8 binaries. See [the audit](FORMAT-AUDIT-2026-10-07.md) and
-[HANDOFF](../HANDOFF.md) for implementation details and next steps.
+The release includes the [original parser audit](FORMAT-AUDIT-2026-10-07.md)
+and [eight-task follow-up](FORMAT-FOLLOWUP-2026-10-08.md). Explicit saved-stream
+imports provide timeline evidence separately from persisted context replay.
+See [HANDOFF](../HANDOFF.md) for the remaining evidence gaps.
 
-## Latest local development verification (2026-10-07)
+## Latest local development verification (2026-10-08)
 
-- Rust workspace: 468 tests passed, one ignored; formatting and workspace Clippy passed.
-- Frontend: 156 tests passed with one thread and a 15-second test timeout after
-  worker startup/timing failures; the production build passed. Existing dependencies were used.
-- All 11 fixture catalog entries and validator regression checks passed.
-- The final corpus sweep read 229 sessions / 100,651 events, with no unreadable
-  files. One malformed Claude record remained correctly flagged; `doctor` exited 1.
-- The synthetic Codex 0.161.0 contract does not certify all features; Claude
-  2.1.293 still needs a version-matched persisted capture.
+- Rust workspace: 480 tests passed, one ignored; formatting and strict Clippy passed.
+- Frontend: 156 tests passed with the normal command; production build passed.
+- All 16 fixture catalog entries and validator regression checks passed.
+- The final corpus sweep read 237 sessions / 104,495 events with no unreadable
+  files. It flagged 34 Claude away_summary records, one bridge_status record
+  and one malformed line; `doctor` correctly exited 1.
+- Fresh redacted Codex 0.161.0 and Claude 2.1.293 persisted/stdout captures
+  have dedicated semantic contracts. The app-server fixture and rare newly
+  covered Codex shapes retain explicitly synthetic evidence.
 
-These are local source checks. The push containing these changes needs its own
-exact-commit Woodpecker statuses; the older pipelines below do not certify it.
-No new packaging, publication or clean-host acceptance was performed.
+Local verification is development evidence. Woodpecker validation, packaging
+and publication are separately verified above. No separate clean Windows host
+or VM is available, so version-matched installer, portable, upgrade,
+uninstall/archive preservation and signed updater acceptance remain unverified.
+Green CI and historical acceptance do not close those gates.
 
 ## Historical release and acceptance evidence
 
@@ -80,15 +88,16 @@ upgrade flow remains to be tested with 0.1.5.
 
 | Gate | State |
 |---|---|
-| Core CLI and desktop workflows | Implemented; v0.1.8 source passed Woodpecker push pipeline 86; parser-audit changes require their own push checks |
-| Persisted Codex/Claude compatibility | 2026-10-07 audit and 11 fixtures; current-version capture and semantic coverage gaps remain |
-| Public source documentation | Organized; examples are synthetic and relative links have been checked |
-| Windows production build | Successful v0.1.8 Woodpecker Windows checks; tag release pipeline 87 succeeded |
-| Signed updater package and feed | v0.1.8 stable; six expected assets listed and Woodpecker release status successful; downloaded bytes not reverified in this audit |
-| Installed and portable desktop acceptance | Historical 0.1.3 acceptance; no version-matched 0.1.8 acceptance established here |
-| Signed in-app upgrade | Version-matched 0.1.8 clean-host acceptance remains unverified here |
+| Core CLI and desktop workflows | Implemented; release commit passed all Woodpecker push checks in pipeline 90 |
+| Persisted Codex/Claude compatibility | 16 fixtures across five surfaces, current-version captures and semantic tests; rare Codex shapes lack feature-matched real captures |
+| Explicit stdout/app-server import | Dedicated CLI timeline contracts; complete request-history reconstruction unavailable for these surfaces |
+| Public source documentation | Updated for v0.1.9 and explicit stream imports |
+| Windows production build | Successful in Woodpecker push pipeline 90 and tag packaging pipeline 91 |
+| Updater package and feed | v0.1.9 signature asset and metadata produced; all six uploaded digests and latest stable pointer verified in pipeline 91 |
+| Installed/portable, upgrade and uninstall/archive preservation acceptance | Separate clean host unavailable; no version-matched 0.1.9 acceptance |
+| Signed in-app upgrade | Separate clean host unavailable; no version-matched 0.1.9 acceptance |
 | CLI user acceptance | Not requested; automated Windows validation is separate from user acceptance |
-| Public stable release | [ContextTrace v0.1.8](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.8), checked 2026-10-07 |
+| Public stable release | [ContextTrace v0.1.9](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.9), checked 2026-10-08 |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
 `%LOCALAPPDATA%\ContextTrace-archive` data directory, which may contain the
