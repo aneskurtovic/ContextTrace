@@ -62,8 +62,10 @@ The Woodpecker Windows tag pipeline must perform packaging, publishing, and
 published-asset verification on its configured Windows agent. Do not replace
 those gates with commands run from an interactive workstation. The pipeline
 checks the staged files against `SHA256SUMS.txt`, compares GitHub's uploaded
-asset digests with the same checksums, verifies the updater signature and
-version-pinned installer URL, and confirms the latest stable release pointer.
+asset digests with the same checksums, checks that updater signature metadata
+matches the staged `.sig` file and that the installer URL is version-pinned,
+and confirms the latest stable release pointer. These publication checks do
+not perform a clean-host in-app signature verification or an Authenticode check.
 These commands are useful when investigating an artifact, but are not a
 substitute for the Woodpecker result:
 
