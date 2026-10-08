@@ -11,8 +11,10 @@ The [maintainer handoff](../HANDOFF.md) lists the immediate follow-up work from
 the [2026-10-07 parser audit](FORMAT-AUDIT-2026-10-07.md), including current
 producer captures, remaining Codex variants and nested drift diagnostics.
 
-- Publish and validate the Windows desktop release, including updater behavior
-  and installation on a separate clean host.
+- Keep Windows releases validated and published through Woodpecker; verify
+  updater behavior and installation separately on a clean host.
+- Validate native session restoration and visible terminal behavior with real
+  installed Codex/Claude CLIs; automated stub tests cover command handling.
 - Keep persisted-session format support evidence-based: track producer
   versions, add redacted fixtures for new shapes, and test semantic behavior.
 - Improve diagnostics and communicate uncertainty without implying that logs

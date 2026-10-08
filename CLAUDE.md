@@ -33,7 +33,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/check-fixture-man
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/test-fixture-manifest.ps1
 ```
 
-Latest patch release (2026-10-08): v0.1.12 adds clickable local file targets
+## v0.1.13 project organization and native resume
+
+Temporary workspaces are grouped in the project dropdown, with reversible
+visibility preferences. Session rows offer native Codex/Claude resume with
+folder validation, command preview/copy and subagent parent routing. See
+[projects and resume](docs/projects-and-resume.md) for requirements.
+
+Local development checks passed: 495 Rust tests (one ignored), formatting and
+strict Clippy, 176 frontend tests with one worker and a 15-second timeout,
+the frontend production build, 17 fixture entries, validator regressions and
+the PowerShell 5.1 release-note check. A Windows stub CLI exercised the
+production resume command builder. Real-agent session restoration, native
+desktop visual QA, and clean-host installer/updater acceptance remain unverified.
+
+At preparation time, v0.1.13 Woodpecker push validation, tag packaging,
+publication and uploaded-asset verification are pending. The latest verified
+stable release is v0.1.12, described below. Publication evidence will be recorded
+after the pipeline completes.
+
+Previous verified patch release (2026-10-08): v0.1.12 adds clickable local file targets
 and fixes notification navigation and Windows toast activation. Commit
 `303b502` passed all configured Woodpecker push checks in pipeline 100:
 488 Rust tests passed (one ignored), 167 frontend tests passed, and Windows

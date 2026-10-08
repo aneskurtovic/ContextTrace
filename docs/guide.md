@@ -5,6 +5,16 @@ are fictional; examples do not reproduce local session data. For the meaning
 and limits of measurements, see [methodology](methodology.md); for input
 structure, see [formats](formats.md). Back to the [README](../README.md).
 
+## Finding and resuming sessions
+
+The desktop groups temporary working folders under **Temporary workspaces**.
+Use **Manage project visibility** to hide an entry or keep it visible; those
+preferences affect the dropdown only. Each session row offers **Resume** (or
+**Resume parent** for a subagent). Review the working folder and command before
+opening the installed agent in a terminal. See [projects and resume](projects-and-resume.md)
+for required original logs, missing-folder handling and the distinction between
+native saved context and a new conversation from a summary.
+
 ## Reading the conversation
 
 The desktop Conversation tab shows recorded content blocks in log order.

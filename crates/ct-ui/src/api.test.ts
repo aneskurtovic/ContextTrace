@@ -29,6 +29,8 @@ import {
   listenForNotificationUpdates,
   listenForSessionUpdates,
   listProjects,
+  prepareResume,
+  resumeSession,
   markNotificationsRead,
   runDoctor,
   searchSessions,
@@ -58,6 +60,30 @@ afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   invoke.mockReset();
   listen.mockReset();
+});
+
+describe('native resume IPC', () => {
+  it('requires the desktop bridge and sends only session identity and the chosen folder', async () => {
+    await expect(prepareResume('codex', 'id')).rejects.toThrow('desktop app');
+    await expect(resumeSession('claude-code', 'id')).rejects.toThrow('desktop app');
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const plan = { agent: 'codex', id: 'id', project: null, directory: 'C:/work', command: 'codex resume id', canLaunch: true, reason: null, isParent: false };
+    invoke.mockResolvedValueOnce(plan);
+    await expect(prepareResume('codex', 'id', 'C:/work')).resolves.toEqual(plan);
+    expect(invoke).toHaveBeenLastCalledWith('prepare_resume', { agent: 'codex', id: 'id', directory: 'C:/work' });
+    invoke.mockResolvedValueOnce(undefined);
+    await resumeSession('claude-code', 'child');
+    expect(invoke).toHaveBeenLastCalledWith('resume_session', { agent: 'claude-code', id: 'child', directory: null });
+  });
+
+  it('rejects inconsistent launchability and forwards the temporary workspace filter', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValueOnce({ agent: 'codex', id: 'id', project: null, directory: null, command: 'cmd', canLaunch: true, reason: 'missing folder', isParent: false });
+    await expect(prepareResume('codex', 'id')).rejects.toThrow('invalid response');
+    invoke.mockResolvedValueOnce({ sessions: [], total: 0, offset: 0, hasMore: false });
+    await searchSessions(undefined, undefined, 0, 200, false, { kind: 'temporary' });
+    expect(invoke).toHaveBeenLastCalledWith('search_sessions', expect.objectContaining({ project: 'temporary' }));
+  });
 });
 
 describe('file and toast activation IPC contracts', () => {
@@ -381,6 +407,24 @@ describe("desktop IPC response validation", () => {
   });
 
   describe('demo-path project and subagent filtering', () => {
+    it('keeps temporary grouping and filtering consistent for Windows and Unix fixtures', async () => {
+      const session = demoSessions.find((session) => session.threadRole.kind === 'root')!;
+      const original = session.project;
+      try {
+        for (const [path, temporary] of [
+          ['C:\\Users\\demo\\AppData\\Local\\Temp\\.tmp123', true],
+          ['/private/var/tmp/task', true],
+          ['C:/repos/tmp-project', false],
+          ['/tmp/../repos/project', false],
+        ] as const) {
+          session.project = path;
+          const options = await listProjects();
+          expect(options.find((option) => option.path === path)?.temporary).toBe(temporary);
+          const group = await searchSessions(undefined, undefined, 0, 200, false, { kind: 'temporary' });
+          expect(group.sessions.some((row) => row.id === session.id)).toBe(temporary);
+        }
+      } finally { session.project = original; }
+    });
     // These exercise the branch `!inTauri()` takes, which has to apply the
     // same two filters the backend does so the browser build behaves
     // identically -- nothing above this block calls `searchSessions` or

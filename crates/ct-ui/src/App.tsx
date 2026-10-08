@@ -9,6 +9,7 @@ import {
   type MutableRefObject,
 } from "react";
 import * as api from "./api";
+import ProjectPicker from './ProjectPicker';
 import {
   errorMessage,
   formatActivity,
@@ -50,6 +51,7 @@ import type {
   NotificationStatus,
   ProjectFilter,
   ProjectOption,
+  ResumePlan,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -261,16 +263,19 @@ function SessionListItem({
   session,
   selected,
   onSelect,
+  onResume,
 }: {
   session: SessionSummary;
   selected: boolean;
   onSelect: () => void;
+  onResume: () => void;
 }) {
   // Narrowed through the value itself rather than a boolean alias, so the
   // union tells the compiler `parent` is a string in this branch.
   const role = session.threadRole;
   const name = sessionName(session);
   return (
+    <div className="session-list-entry">
     <button
       className={`session-row ${selected ? "selected" : ""}`}
       onClick={onSelect}
@@ -302,7 +307,75 @@ function SessionListItem({
       </span>
       <span className="session-activity">{formatActivity(session.lastActivity)}</span>
     </button>
+    <button type="button" className="session-resume" onClick={onResume} aria-haspopup="dialog"
+      aria-label={`${role.kind === 'subagent' ? 'Resume parent of' : 'Resume'} ${agentLabel(session.agent)} conversation: ${name}`}
+      title={role.kind === 'subagent' ? 'Resume the parent session in a terminal' : 'Resume this session in a terminal'}>
+      {role.kind === 'subagent' ? 'Resume parent' : 'Resume'}
+    </button>
+    </div>
   );
+}
+
+function ResumeDialog({ session, onClose }: { session: SessionSummary; onClose: () => void }) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [directory, setDirectory] = useState<string | undefined>(undefined);
+  const [plan, setPlan] = useState<ResumePlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useModalFocusTrap(true, ref, () => { if (!busy) onClose(); });
+  useEffect(() => {
+    let active = true;
+    setPlan(null); setError(null); setStatus(null);
+    const timer = window.setTimeout(() => {
+      api.prepareResume(session.agent, session.id, directory)
+        .then((value) => { if (active) setPlan(value); })
+        .catch((cause) => { if (active) setError(errorMessage(cause)); });
+    }, directory === undefined ? 0 : 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [session.agent, session.id, directory, retry]);
+
+  async function launch() {
+    if (!plan?.canLaunch || busy) return;
+    setBusy(true); setError(null); setStatus(null);
+    try {
+      await api.resumeSession(session.agent, session.id, directory);
+      setStatus('Terminal opened. Check the agent CLI for session restoration or errors.');
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="resume-backdrop" onClick={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section ref={ref} className="resume-dialog" role="dialog" aria-modal="true" aria-labelledby="resume-title" tabIndex={-1}>
+      <h2 id="resume-title">Resume {agentLabel(session.agent)} session</h2>
+      <p className="resume-session-name">{sessionName(session)}</p>
+      {plan?.isParent && <p>This is a subagent transcript. Resume will open its parent session: <code>{plan.id}</code>.</p>}
+      <p>Continue the saved conversation, including any compaction state saved by the agent. To summarize its context, use <code>/compact</code> inside the resumed session.</p>
+      <label>Working folder
+        <input data-modal-initial-focus value={directory ?? plan?.directory ?? session.project ?? ''}
+          disabled={busy} placeholder="Enter an existing absolute folder path"
+          onChange={(event) => { setPlan(null); setDirectory(event.target.value); }} />
+      </label>
+      {plan?.project && <p className="resume-recorded-folder">Recorded folder: {plan.project}</p>}
+      {plan ? <>
+        <label>PowerShell command<textarea readOnly value={plan.command} rows={3} /></label>
+        {plan.reason && <p role="status">{plan.reason}</p>}
+        <p>The terminal runs with your agent's configured permissions and may connect to its service. No prompt is sent automatically.</p>
+      </> : !error && <Spinner label="Preparing native resume…" />}
+      {error && <p role="alert">{error}</p>}
+      {status && <p role="status">{status}</p>}
+      <div className="resume-actions">
+        <button type="button" onClick={onClose} disabled={busy}>Close</button>
+        <button type="button" disabled={busy} onClick={() => setRetry((value) => value + 1)}>Retry checks</button>
+        <button type="button" disabled={!plan || busy} onClick={async () => {
+          try { await navigator.clipboard.writeText(plan!.command); setStatus('Resume command copied.'); }
+          catch (cause) { setError(`Could not copy the command: ${errorMessage(cause)}`); }
+        }}>Copy command</button>
+        <button type="button" disabled={!plan?.canLaunch || busy} onClick={() => void launch()}>{busy ? 'Opening…' : 'Open terminal'}</button>
+      </div>
+    </section>
+  </div>;
 }
 
 function MemorySearchResults({
@@ -2828,9 +2901,9 @@ function CorpusPanel({
         </div>
       </section>
 
-      {projectFilter.kind === "path" && (
+      {projectFilter.kind !== "any" && (
         <div className="corpus-filter-notice" role="status">
-          <span>Session list filter: <strong title={projectFilter.path}>{projectName(projectFilter.path)}</strong>. The dashboard totals and charts still cover all local sessions.</span>
+          <span>Session list filter: <strong title={projectFilter.kind === 'path' ? projectFilter.path : undefined}>{projectFilter.kind === 'path' ? projectName(projectFilter.path) : projectFilter.kind === 'temporary' ? 'Temporary workspaces' : 'No recorded folder'}</strong>. The dashboard totals and charts still cover all local sessions.</span>
           <button type="button" onClick={onClearProjectFilter}>Clear filter</button>
         </div>
       )}
@@ -4211,6 +4284,7 @@ export default function App() {
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>({ kind: "any" });
   const [showSubagents, setShowSubagents] = useState(false);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [resumeTarget, setResumeTarget] = useState<SessionSummary | null>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [memoryHits, setMemoryHits] = useState<MemoryHit[]>([]);
@@ -4315,7 +4389,7 @@ export default function App() {
   const paletteWasOpen = useRef(false);
   const appContentRef = useRef<HTMLDivElement | null>(null);
   const onboardingOpen = notificationSettings != null && !notificationSettings.onboardingComplete;
-  const modalOpen = onboardingOpen || notificationDrawerOpen || paletteOpen;
+  const modalOpen = onboardingOpen || notificationDrawerOpen || paletteOpen || resumeTarget != null;
 
   useEffect(() => {
     if (!mobileSidebarOpen) {
@@ -4407,6 +4481,7 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (resumeTarget) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !notificationDrawerOpen && !onboardingOpen) {
         event.preventDefault();
         openPalette();
@@ -4430,7 +4505,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closePalette, corpusOpen, detailFor, notificationDrawerOpen, onboardingOpen, openPalette, paletteOpen, selected]);
+  }, [closePalette, corpusOpen, detailFor, notificationDrawerOpen, onboardingOpen, openPalette, paletteOpen, selected, resumeTarget]);
 
   // Recomputed when the agent, subagent, or search filter changes, so the
   // count beside an option always describes what selecting it would actually
@@ -5435,6 +5510,7 @@ export default function App() {
       data-theme={theme}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
+      {resumeTarget && <ResumeDialog key={`${resumeTarget.agent}:${resumeTarget.id}`} session={resumeTarget} onClose={() => setResumeTarget(null)} />}
       {notificationSettings && (
         <NotificationOnboarding
           settings={notificationSettings}
@@ -5638,30 +5714,7 @@ export default function App() {
         </div>
 
         <div className="filter-row secondary">
-          <select
-            aria-label="Filter sessions by project"
-            value={projectFilter.kind === "path" ? projectFilter.path : projectFilter.kind}
-            onChange={(event) => {
-              const chosen = event.target.value;
-              setProjectFilter(
-                chosen === "any"
-                  ? { kind: "any" }
-                  : chosen === "unrecorded"
-                    ? { kind: "unrecorded" }
-                    : { kind: "path", path: chosen },
-              );
-            }}
-          >
-            <option value="any">All projects</option>
-            {projectFilter.kind === "path" && !projectOptions.some((option) => option.path === projectFilter.path) && (
-              <option value={projectFilter.path}>{projectName(projectFilter.path)} · no sessions for this agent</option>
-            )}
-            {projectOptions.map((option) => (
-              <option key={option.path ?? "unrecorded"} value={option.path ?? "unrecorded"}>
-                {option.label} · {option.count}
-              </option>
-            ))}
-          </select>
+          <ProjectPicker options={projectOptions} value={projectFilter} onChange={setProjectFilter} />
           <label className="subagent-toggle">
             <input
               type="checkbox"
@@ -5709,6 +5762,7 @@ export default function App() {
               session={visibleDetail.session}
               selected
               onSelect={() => selectSession(visibleDetail.session)}
+              onResume={() => setResumeTarget(visibleDetail.session)}
             />
           </div>
         )}
@@ -5724,6 +5778,7 @@ export default function App() {
                   session={session}
                   selected={selected?.agent === session.agent && selected?.id === session.id}
                   onSelect={() => selectSession({ agent: session.agent, id: session.id })}
+                  onResume={() => setResumeTarget(session)}
                 />
               ))}
               {hasMoreSessions && (

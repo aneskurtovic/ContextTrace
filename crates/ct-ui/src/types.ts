@@ -395,12 +395,14 @@ export type TemporalGhost =
 /**
  * Which project the session list is narrowed to.
  *
- * Three states rather than `string | null`, because the absence of a project
+ * Explicit states rather than `string | null`, because the absence of a project
  * is itself selectable: a Codex rollout whose log never recorded a `cwd` has
- * no folder to name, and "every project" is not the same request.
+ * no folder to name, and "every project" is not the same request. Temporary
+ * workspaces form a selectable group as well as retaining individual paths.
  */
 export type ProjectFilter =
   | { kind: 'any' }
+  | { kind: 'temporary' }
   | { kind: 'unrecorded' }
   | { kind: 'path'; path: string };
 
@@ -409,6 +411,19 @@ export interface ProjectOption {
   path: string | null;
   label: string;
   count: number;
+  temporary?: boolean;
+  directoryState?: 'available' | 'missing' | 'unknown';
+}
+
+export interface ResumePlan {
+  agent: Agent;
+  id: string;
+  project: string | null;
+  directory: string | null;
+  command: string;
+  canLaunch: boolean;
+  reason: string | null;
+  isParent: boolean;
 }
 
 export interface SessionPage {

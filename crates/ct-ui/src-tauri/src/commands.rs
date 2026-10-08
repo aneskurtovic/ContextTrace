@@ -23,6 +23,8 @@ use tauri::{AppHandle, Emitter};
 
 pub mod local_files;
 pub mod notifications;
+mod projects;
+pub mod resume;
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
 const MAX_SESSION_PAGE_SIZE: usize = 1_000;
@@ -371,6 +373,10 @@ impl AppState {
             .filter(|descriptor| match project {
                 None => true,
                 Some(ProjectFilter::Unrecorded) => descriptor.project.is_none(),
+                Some(ProjectFilter::Temporary) => descriptor
+                    .project
+                    .as_deref()
+                    .is_some_and(projects::is_temporary),
                 Some(ProjectFilter::Path(path)) => {
                     descriptor.project.as_deref() == Some(path.as_str())
                 }
@@ -398,6 +404,8 @@ impl AppState {
         let mut projects: Vec<ProjectSummary> = counts
             .into_iter()
             .map(|(path, count)| ProjectSummary {
+                temporary: path.as_deref().is_some_and(projects::is_temporary),
+                directory_state: projects::directory_state(path.as_deref()),
                 label: match &path {
                     Some(path) => leaf_name(path),
                     // Not "unknown project": the log recorded no folder, which
@@ -1851,13 +1859,13 @@ impl From<ThreadRole> for ThreadRoleSummary {
 
 /// Which project a session listing is narrowed to.
 ///
-/// Three states, because `Option<String>` can only express two and the third
-/// is real: a Codex rollout whose log never recorded a `cwd` has no folder to
-/// name, and "every project" must not be confused with "the ones with none".
+/// Exact path, unrecorded folder, or the temporary-workspace group. `None` at
+/// the command boundary means all projects, including sessions without a cwd.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProjectFilter {
     Unrecorded,
+    Temporary,
     Path(String),
 }
 
@@ -1865,6 +1873,8 @@ pub enum ProjectFilter {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
+    pub temporary: bool,
+    pub directory_state: projects::DirectoryState,
     /// The full path, which is what the filter matches on. `None` is the entry
     /// for sessions whose log recorded no folder.
     pub path: Option<String>,
@@ -3703,7 +3713,7 @@ mod tests {
         (state, homes, id.to_string())
     }
 
-    fn catalog_descriptor(index: usize, project: &str) -> SessionDescriptor {
+    pub(super) fn catalog_descriptor(index: usize, project: &str) -> SessionDescriptor {
         SessionDescriptor {
             id: ct_domain::SessionId::new(format!("catalog-{index:04}")).unwrap(),
             agent: AgentKind::Codex,
@@ -4194,12 +4204,54 @@ mod tests {
         assert_eq!(
             projects,
             vec![ProjectSummary {
+                temporary: false,
+                directory_state: projects::directory_state(Some("C:/repos/alpha")),
                 label: "alpha".to_string(),
                 path: Some("C:/repos/alpha".to_string()),
                 count: 1,
             }],
             "only the alpha project should survive the query, with its \
              subagent-excluded count of 1, not the unfiltered catalog"
+        );
+    }
+
+    #[test]
+    fn temporary_group_uses_the_same_catalog_and_preserves_all_sessions() {
+        let mut temporary = catalog_descriptor(0, "C:/Users/me/AppData/Local/Temp/.tmp123");
+        temporary.agent = AgentKind::Codex;
+        let ordinary = catalog_descriptor(1, "C:/repos/tmp-project");
+        let state = catalog_state(vec![temporary, ordinary]);
+        let projects = state.list_projects(None, None, None).unwrap();
+        assert_eq!(
+            projects.iter().map(|project| project.count).sum::<usize>(),
+            2
+        );
+        assert_eq!(
+            projects.iter().filter(|project| project.temporary).count(),
+            1
+        );
+        let group = state
+            .search_sessions(
+                None,
+                None,
+                Some(ProjectFilter::Temporary),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(group.total, 1);
+        assert_eq!(
+            group.sessions[0].project.as_deref(),
+            Some("C:/Users/me/AppData/Local/Temp/.tmp123")
+        );
+        assert_eq!(
+            state
+                .search_sessions(None, None, None, None, None, None, None)
+                .unwrap()
+                .total,
+            2
         );
     }
 

@@ -76,7 +76,7 @@ impl<'a> TargetIndex<'a> {
     }
 }
 
-fn local_absolute(path: &str) -> bool {
+pub(super) fn local_absolute(path: &str) -> bool {
     if path.chars().any(char::is_control) || path.contains("://") {
         return false;
     }

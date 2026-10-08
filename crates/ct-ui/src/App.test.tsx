@@ -38,6 +38,8 @@ vi.mock("./api", () => ({
   getStartup: vi.fn(),
   searchSessions: vi.fn(),
   listProjects: vi.fn(),
+  prepareResume: vi.fn(),
+  resumeSession: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
   getCorpus: vi.fn(),
@@ -186,6 +188,47 @@ afterEach(() => {
 afterEach(() => window.localStorage.clear());
 
 describe("desktop accessibility and state handling", () => {
+  it.each(['codex', 'claude-code'] as const)('prepares and launches %s without selecting the row or sending a prompt', async (agent) => {
+    const session = demoSessions.find((session) => session.agent === agent && session.threadRole.kind === 'root')!;
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    mockedApi.prepareResume.mockResolvedValue({ agent, id: session.id, project: session.project, directory: session.project, command: `${agent === 'codex' ? 'codex resume' : 'claude --resume'} ${session.id}`, canLaunch: true, reason: null, isParent: false });
+    mockedApi.resumeSession.mockResolvedValue(undefined);
+    render(<App />);
+    const button = await screen.findByRole('button', { name: /^Resume .* conversation:/ });
+    button.focus();
+    fireEvent.click(button);
+    const dialog = await screen.findByRole('dialog', { name: /^Resume .* session$/ });
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: 'Open terminal' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(mockedApi.prepareResume).toHaveBeenCalledWith(agent, session.id, undefined);
+    expect(mockedApi.inspectSession).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open terminal' }));
+    await waitFor(() => expect(mockedApi.resumeSession).toHaveBeenCalledWith(agent, session.id, undefined));
+    expect(await within(dialog).findByText(/Terminal opened/)).not.toBeNull();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Resume .* session$/ })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(button));
+  });
+
+  it('requires a valid replacement folder and explains parent-session resume', async () => {
+    const session = { ...demoSessions[0], project: 'C:/Temp/gone', threadRole: { kind: 'subagent' as const, parent: 'parent' } };
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    mockedApi.prepareResume.mockImplementation(async (_agent, _id, directory) => ({
+      agent: session.agent, id: 'parent', project: session.project, directory: directory ?? session.project,
+      command: 'codex resume parent', canLaunch: directory === 'C:/work',
+      reason: directory === 'C:/work' ? null : 'The working folder is missing. Enter an existing folder.', isParent: true,
+    }));
+    mockedApi.resumeSession.mockRejectedValue(new Error('The agent CLI is unavailable.'));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Resume parent of/ }));
+    const dialog = await screen.findByRole('dialog', { name: /^Resume .* session$/ });
+    expect(await within(dialog).findByText(/This is a subagent transcript/)).not.toBeNull();
+    expect((within(dialog).getByRole('button', { name: 'Open terminal' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Working folder'), { target: { value: 'C:/work' } });
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: 'Open terminal' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open terminal' }));
+    expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'The agent CLI is unavailable.');
+  });
+
   it("shows the models used in both Overview and Chat", async () => {
     const detail = demoDetail(demoSessions[0].id);
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
@@ -821,7 +864,7 @@ describe("desktop accessibility and state handling", () => {
     );
 
     // A different session is a new question, even though Turns is already open.
-    const secondRow = await screen.findByRole("button", { name: new RegExp(second.title!.text) });
+    const secondRow = await screen.findByRole("button", { name: new RegExp(`^Claude Code session: ${second.title!.text}`) });
     fireEvent.click(secondRow);
     await openView("Context");
     await waitFor(() =>

@@ -97,10 +97,14 @@ portable desktop startup. On a separate clean Windows host:
 8. open a local image from Context composition, reveal it in Explorer, and copy
    its full path. Repeat with a long path and spaces, a deleted temporary file,
    and a non-file tool label; record actual Windows file-association behavior.
+9. resume an existing Codex and Claude conversation from the installed app,
+   confirm the displayed ID is restored, and check a missing temporary folder
+   with a replacement directory plus subagent parent routing. Confirm visible
+   terminal behavior and report CLI versions; stub tests do not close this gate.
 
 The Woodpecker tag pipeline publishes automatically after its validation,
 packaging and uploaded-asset checks pass. The separate-host checks remain the
 post-publication acceptance pass; they do not control release creation. The
-unsigned development installer can trigger SmartScreen; do not describe a
+development installer without Authenticode signing can trigger SmartScreen; do not describe a
 release as signed unless Windows reports a valid Authenticode signature and
 the updater's Tauri signature also verifies.

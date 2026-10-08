@@ -32,6 +32,7 @@ import type {
   OsDelivery,
   ProjectFilter,
   ProjectOption,
+  ResumePlan,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -294,11 +295,27 @@ function asStartup(value: unknown): StartupSummary {
 /** The wire form the Rust `ProjectFilter` deserialises from. */
 function projectArgument(filter: ProjectFilter | undefined): unknown {
   if (!filter || filter.kind === 'any') return null;
+  if (filter.kind === 'temporary') return 'temporary';
   return filter.kind === 'unrecorded' ? 'unrecorded' : { path: filter.path };
+}
+
+// Browser fixtures have no host filesystem. Native classification, including
+// custom system temp roots, is supplied by the backend instead.
+function demoTemporaryFolder(path: string | null): boolean {
+  if (!path) return false;
+  const parts: string[] = [];
+  for (const part of path.replace(/\\/g, '/').split('/')) {
+    if (part === '..') parts.pop();
+    else if (part !== '.') parts.push(part);
+  }
+  const normalized = parts.join('/');
+  return /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/temp|windows\/temp)(?:\/|$)/i.test(normalized) ||
+    /^\/(?:private\/)?(?:var\/)?tmp(?:\/|$)/.test(normalized);
 }
 
 function matchesProject(session: SessionSummary, filter: ProjectFilter | undefined): boolean {
   if (!filter || filter.kind === 'any') return true;
+  if (filter.kind === 'temporary') return demoTemporaryFolder(session.project);
   if (filter.kind === 'unrecorded') return session.project == null;
   return session.project === filter.path;
 }
@@ -311,7 +328,9 @@ function asProjectOptions(value: unknown): ProjectOption[] {
       isStringOrNull(option.path) &&
       typeof option.label === 'string' &&
       typeof option.count === 'number' &&
-      Number.isInteger(option.count))
+      Number.isInteger(option.count) &&
+      (option.temporary === undefined || typeof option.temporary === 'boolean') &&
+      (option.directoryState === undefined || ['available', 'missing', 'unknown'].includes(String(option.directoryState))))
   ) {
     throw malformed('the project list');
   }
@@ -357,6 +376,8 @@ export function listProjects(
         path,
         label: path ? projectName(path) : 'No recorded folder',
         count,
+        temporary: demoTemporaryFolder(path),
+        directoryState: 'unknown' as const,
       })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label)),
     );
   }
@@ -365,6 +386,21 @@ export function listProjects(
     query: query?.trim() || null,
     includeSubagents,
   }).then(asProjectOptions);
+}
+
+export async function prepareResume(agent: Agent, id: string, directory?: string): Promise<ResumePlan> {
+  if (!inTauri()) throw new Error('Resuming sessions requires the desktop app and a locally installed agent CLI.');
+  const value = await invoke<unknown>('prepare_resume', { agent, id, directory: directory ?? null });
+  if (!isRecord(value) || !agents.has(String(value.agent)) || typeof value.id !== 'string' ||
+      !isStringOrNull(value.project) || !isStringOrNull(value.directory) || typeof value.command !== 'string' ||
+      typeof value.canLaunch !== 'boolean' || !isStringOrNull(value.reason) || typeof value.isParent !== 'boolean' ||
+      value.canLaunch !== (value.reason === null)) throw malformed('resume preparation');
+  return value as unknown as ResumePlan;
+}
+
+export async function resumeSession(agent: Agent, id: string, directory?: string): Promise<void> {
+  if (!inTauri()) throw new Error('Resuming sessions requires the desktop app and a locally installed agent CLI.');
+  await invoke('resume_session', { agent, id, directory: directory ?? null });
 }
 
 function asSessionPage(value: unknown): SessionPage {

@@ -46,6 +46,8 @@ pub fn run() {
             commands::get_startup,
             commands::search_sessions,
             commands::list_projects,
+            commands::resume::prepare_resume,
+            commands::resume::resume_session,
             commands::search_memory,
             commands::inspect_session,
             commands::get_context,

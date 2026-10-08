@@ -13,6 +13,7 @@ supporting detail.
 - [Methodology](methodology.md): what the measurements mean and their limits.
 - [Notifications](notifications.md): desktop notification rules and settings.
 - [Local files](local-files.md): opening recorded file targets from context composition.
+- [Projects and resume](projects-and-resume.md): temporary workspace grouping, project visibility and native session continuation.
 - [Updater](UPDATER.md): update behavior and release feed.
 
 ## Project and maintenance

@@ -62,11 +62,14 @@ release artifact.
 - A passing unsigned build does not establish that updater signatures,
   published feed metadata or downloadable asset hashes are correct.
 - Automated checks do not inspect private user session corpora.
+- Resume tests use a stub CLI to check the production PowerShell command
+  builder. They do not prove real-agent session restoration or visible
+  terminal behavior in an installed desktop app.
 
 Release-specific gates are listed in [the release procedure](RELEASING.md).
 
 The [maintainer handoff](../HANDOFF.md) records the latest local validation and
-the successful Windows single-thread frontend retry command. That diagnostic
+the local single-worker frontend verification command. That diagnostic
 retry does not replace the configured Woodpecker frontend check. Pipeline
 results must be checked on the exact pushed commit, separately from older
 release pipelines and local corpus evidence.

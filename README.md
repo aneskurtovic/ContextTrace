@@ -9,7 +9,7 @@ session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: source and the Windows 0.1.9 binary release are public.**
+> **Status: source and Windows releases are public.**
 > The CLI and Windows desktop app implement the discovery-to-diagnosis
 > workflow. Context reconstruction and explicit stream imports have separate
 > contracts, limited to the surfaces and producer versions covered by fixtures. See [MVP status](docs/MVP-STATUS.md)
@@ -50,6 +50,8 @@ What runs today:
 | Corpus summary | Where a month of sessions went, and what the totals could not measure | CLI + desktop |
 | Session transcript | What was actually said, with injected content and tool results in place | CLI + desktop |
 | Named sessions | Which session is which, from the log's own title or first prompt | CLI + desktop |
+| Project organization | Temporary workspaces grouped separately, with reversible project visibility preferences | Desktop |
+| Native session resume | Open a saved Codex or Claude Code conversation in a Windows terminal | Desktop |
 | Context composition | What filled a turn's context window, by category and confidence | CLI + desktop |
 | Largest contributors | Which items are biggest, ranked and named by what they acted on | CLI + desktop |
 | Item lifecycle tracing | When an item entered context, and when — or why — it left | CLI + desktop |
@@ -70,8 +72,7 @@ What runs today:
 
 ## Install
 
-Windows x64 is the supported surface. After a stable release is published,
-install the latest desktop version for the current user from PowerShell:
+Windows x64 is the supported surface. Install the latest stable desktop version for the current user from PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/aneskurtovic/ContextTrace/main/scripts/install.ps1 | iex
@@ -159,7 +160,7 @@ already gone, those copies are the only remaining evidence, and an uninstaller
 must not be able to take them with it. The consequence is that they outlive the
 app, so delete that directory yourself if you want them gone — and note it holds
 session content, including credentials if anything was archived with `--raw`.
-Nothing else survives removal.
+Other local settings, including webview project visibility preferences, are not covered by the archive-preservation guarantee.
 
 Until a release candidate has a verified Windows signature, expect
 SmartScreen to warn about the unsigned installer. See
@@ -259,7 +260,7 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-The updater-enabled 0.1.8 Windows release is available. See the [install
+Updater-enabled Windows releases are available. See the [install
 instructions](#install) and [release downloads](https://github.com/aneskurtovic/ContextTrace/releases/latest).
 
 Configurable local pricing/forecasting, instruction-file comparisons and
@@ -332,12 +333,15 @@ See [methodology](docs/methodology.md) for how the ratio is derived, what
 ## Privacy
 
 **Local-first.** Session data contains source code, prompts, terminal
-output and potentially secrets. ContextTrace has no upload, telemetry or
-cloud code. The desktop capability set is core-only and its
-content-security policy permits only local Tauri IPC; session data stays on
-the machine.
+output and potentially secrets. ContextTrace analyzes logs locally and has no
+session-upload or telemetry feature. The webview content-security policy limits
+connections to local Tauri IPC. Native updater checks contact GitHub; opening a
+local file delegates to Windows. **Resume** starts the installed agent CLI,
+which may contact its service and write its own session state.
 
-**Read-only.** Agent directories are inputs. ContextTrace never writes to them.
+**Read-only analysis.** Agent directories are inputs; ContextTrace does not
+rewrite their logs. A resumed agent runs with its own configured permissions
+and can write to its session storage and working folder.
 
 **One ContextTrace-owned directory.** `ct archive <id>` keeps a copy of a session so
 it outlives its log — a log that is rotated, pruned, or lost with a wiped home
@@ -346,11 +350,13 @@ gone. Copies go to a ContextTrace-owned directory, never back to an agent's, and
 `ct roots` prints its exact path whether or not anything has been archived yet.
 Nothing is archived until you ask for it.
 
-The desktop app writes to that same directory and no other: its Archive panel
+The desktop app uses that directory for its analysis data: its Archive panel
 does what `ct archive` does, its Export panel writes NDJSON to an `exports`
 subdirectory, and notification history/preferences plus the remembered corpus
 sweep live in their own subdirectories. These automatic state writes contain
 ContextTrace's local summaries and settings, not a copy of the agent roots.
+Project visibility preferences are stored separately in the local desktop
+webview. CLI exports can be redirected to a destination you choose.
 
 An archive concentrates by construction what was previously scattered: one place
 holding every prompt, tool output and credential a machine has produced is a
@@ -375,8 +381,9 @@ redact by default applies to it unchanged.
 | [Methodology](docs/methodology.md) | How two agents' logs become comparable numbers, and where the tool refuses to answer |
 | [Architecture](docs/architecture.md) | Crate layout, the invariants the type system enforces, fixtures and testing |
 | [MVP status](docs/MVP-STATUS.md) | What's implemented, what's gated, and the release plan |
-| [Release procedure](docs/RELEASING.md) | How Windows release candidates are built, checked and optionally signed |
+| [Release procedure](docs/RELEASING.md) | How Woodpecker packages, signs for the updater, publishes and verifies Windows releases |
 | [Continuous integration](docs/CI.md) | What runs on Linux, what needs real Windows, and what a green pipeline still does not prove |
+| [Projects and resume](docs/projects-and-resume.md) | Temporary folders, project visibility and native conversation continuation |
 | [Updater](docs/UPDATER.md) | Desktop update behavior and release-feed requirements |
 | [Documentation index](docs/README.md) | Public documentation map |
 | [Notifications](docs/notifications.md) | The twelve rules, how delivery is decided, and why a delivered toast is not assumed |

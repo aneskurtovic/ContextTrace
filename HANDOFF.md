@@ -2,6 +2,25 @@
 
 Updated: **2026-10-08**. The maintainer confirmed all seven original parser-audit follow-ups plus release work as eight tasks.
 
+## v0.1.13 project organization and native resume
+
+Temporary workspaces are grouped in the project dropdown, with reversible
+visibility preferences. Session rows offer native Codex/Claude resume with
+folder validation, command preview/copy and subagent parent routing. See
+[projects and resume](docs/projects-and-resume.md) for requirements.
+
+Local development checks passed: 495 Rust tests (one ignored), formatting and
+strict Clippy, 176 frontend tests with one worker and a 15-second timeout,
+the frontend production build, 17 fixture entries, validator regressions and
+the PowerShell 5.1 release-note check. A Windows stub CLI exercised the
+production resume command builder. Real-agent session restoration, native
+desktop visual QA, and clean-host installer/updater acceptance remain unverified.
+
+At preparation time, v0.1.13 Woodpecker push validation, tag packaging,
+publication and uploaded-asset verification are pending. The latest verified
+stable release is v0.1.12, described below. Publication evidence will be recorded
+after the pipeline completes.
+
 ## v0.1.12 patch release
 
 Local file targets in Context composition now open with their full recorded
@@ -33,7 +52,7 @@ published and verified all six assets for
 confirmed as latest stable on 2026-10-08. The original eight-task evidence below
 describes the v0.1.9 milestone; its remaining capture and clean-host gaps persist.
 
-## Original v0.1.9 milestone
+## Original v0.1.9 milestone (historical snapshot)
 
 | Task | Current evidence and remaining gate |
 |---|---|
@@ -58,12 +77,12 @@ Follow [CLAUDE](CLAUDE.md), [CI](docs/CI.md) and [RELEASING](docs/RELEASING.md).
 Never substitute workstation packaging for the Woodpecker Windows tag pipeline.
 Local verification is development evidence; clean-host acceptance is separate.
 
-The latest local Claude sweep read 43 sessions / 21,574 events, with no
+The v0.1.10 local Claude sweep read 43 sessions / 21,574 events, with no
 unreadable files and one malformed line. The away_summary/bridge_status
 warnings are resolved. Doctor correctly exits 1 for malformed input; do not
 suppress that warning to manufacture a green sweep.
 
-The latest stable release is v0.1.12 at `303b502383c8f02b2a860b657af3ffb11627ff6f`.
+The latest verified stable release at v0.1.13 preparation is v0.1.12 at `303b502383c8f02b2a860b657af3ffb11627ff6f`.
 GitHub latest-release metadata was checked on 2026-10-08 (Sarajevo): all six
 expected assets are uploaded, and the release is neither draft nor prerelease.
 The remaining work requires external evidence: feature-matched real Codex

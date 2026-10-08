@@ -1,7 +1,7 @@
 # JSONL format compatibility
 
-The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records current producer
-versions, parser fixes, sampled corpus evidence and remaining coverage limits.
+The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records producer
+versions as of that audit, parser fixes, sampled corpus evidence and remaining coverage limits.
 
 ContextTrace supports the persisted, on-disk session formats written by:
 
@@ -65,10 +65,16 @@ output, identifiers or credentials.
 The 2026-10-07 evidence adds a synthetic upstream contract for Codex **0.161.0**
 and a local corpus sweep of 229 sessions / 100,651 events. The only remaining
 unrecognised event was one malformed Claude line. Recent Codex files included
-0.161.0; recent Claude files reached 2.1.292. Installed Claude **2.1.293** still
-needs a version-matched persisted capture. See the audit for unsupported item
-variants and [HANDOFF](../HANDOFF.md) for follow-up work. These observations
-do not certify every feature of either current producer.
+0.161.0; recent Claude files reached 2.1.292. The [2026-10-08 follow-up](FORMAT-FOLLOWUP-2026-10-08.md) subsequently added
+reviewed persisted/stdout captures for Codex **0.161.0** and Claude **2.1.293**.
+Rare Codex shapes still lack feature-matched real captures.
+
+Upstream was rechecked on 2026-10-08 for v0.1.13: the
+[Codex stable release](https://github.com/openai/codex/releases/tag/rust-v0.161.0)
+is still **0.161.0**; the [Claude changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
+now lists **2.1.294**. No version-matched 2.1.294 capture or real-agent resume
+acceptance was added in this patch; it remains unverified. These observations
+do not certify every feature of either producer.
 
 The historical reviewed-capture evidence is:
 
@@ -140,8 +146,8 @@ corpus local.
 
 | Input surface | Current commitment |
 |---|---|
-| Codex persisted rollout JSONL | Supported by the Codex adapter and fixture contracts; latest-version certification is a release gate. |
-| Claude Code persisted transcript JSONL | Supported by the Claude adapter and fixture contracts; latest-version certification is a release gate. |
+| Codex persisted rollout JSONL | Supported by the Codex adapter and fixture contracts; version-specific claims require reviewed capture evidence. |
+| Claude Code persisted transcript JSONL | Supported by the Claude adapter and fixture contracts; version-specific claims require reviewed capture evidence. |
 | Known historical format families | Retained and regression-tested when a fixture exists. |
 | Unknown/future producer versions | Best-effort parse with visible fidelity limits; no completeness guarantee. |
 | Codex stdout/app-server JSONL | Separate explicit timeline importer; no context reconstruction. See [stream imports](STREAM-IMPORTS.md). |

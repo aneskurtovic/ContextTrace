@@ -15,8 +15,8 @@ the type system rather than by documentation — see
 code must match on before it can extract a number.
 
 **Adapter-based.** Agent formats are foreign models behind anti-corruption
-layers. Adding Cursor, Gemini CLI or OpenCode means implementing one trait and
-adding one line to the composition root.
+layers. An additional agent needs an adapter implementing the domain port, composition
+root registration, fixture evidence and any required CLI/desktop presentation.
 
 ## Ports and adapters
 
@@ -91,9 +91,9 @@ model did not need.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the commands listed in the [README](../README.md#commands) | Implemented |
-| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented; historical separate-laptop acceptance does not establish current 0.1.8 installer/update acceptance |
+| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented, including project organization and native agent resume; current release acceptance is tracked in [MVP status](MVP-STATUS.md) |
 | Standalone JSONL fixture files | Implemented |
-| Reproducible CI, installable release artifacts, release documentation | Woodpecker CI and packaging workflows are configured; 0.1.8 Windows assets are published |
+| Reproducible CI, installable release artifacts, release documentation | Woodpecker validates main and packages/publishes version tags; see [MVP status](MVP-STATUS.md) for verified publication |
 | Session metadata search | Implemented server-side with explicit paging |
 | SQLite index | Deferred until measured desktop performance requires it |
 
@@ -119,6 +119,6 @@ format-drift sweeps run against user-selected data and are not part of the CI
 fixture corpus. The fixture catalog is the reproducible public compatibility
 evidence; it is not an automatic capture of upstream agent releases.
 
-The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records the current parser
-findings and local validation. [HANDOFF](../HANDOFF.md) tracks the remaining
+The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records parser
+findings and local validation as of that date. [HANDOFF](../HANDOFF.md) tracks the remaining
 capture, semantic coverage and nested drift-detection work.
