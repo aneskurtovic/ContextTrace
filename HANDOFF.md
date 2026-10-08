@@ -16,10 +16,16 @@ the PowerShell 5.1 release-note check. A Windows stub CLI exercised the
 production resume command builder. Real-agent session restoration, native
 desktop visual QA, and clean-host installer/updater acceptance remain unverified.
 
-At preparation time, v0.1.13 Woodpecker push validation, tag packaging,
-publication and uploaded-asset verification are pending. The latest verified
-stable release is v0.1.12, described below. Publication evidence will be recorded
-after the pipeline completes.
+Release commit `b15cb80dbed1b697579b4ff840b0f3e39ace365a` passed all
+configured frontend, Rust/MSRV and Windows desktop/CLI checks in
+[Woodpecker push pipeline 104](https://ci.aneskurtovic.com/repos/5/pipeline/104).
+CI recorded 495 Rust tests passed (one ignored) and 176 frontend tests passed.
+[Tag pipeline 105](https://ci.aneskurtovic.com/repos/5/pipeline/105) packaged and
+published [v0.1.13](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.13),
+verified all six uploaded asset digests and confirmed the latest stable pointer.
+GitHub metadata independently confirmed the six assets and stable publication
+on 2026-10-08. Signature metadata checks and clean-host updater acceptance are
+distinct; see [release procedure](docs/RELEASING.md).
 
 ## v0.1.12 patch release
 
@@ -82,9 +88,10 @@ unreadable files and one malformed line. The away_summary/bridge_status
 warnings are resolved. Doctor correctly exits 1 for malformed input; do not
 suppress that warning to manufacture a green sweep.
 
-The latest verified stable release at v0.1.13 preparation is v0.1.12 at `303b502383c8f02b2a860b657af3ffb11627ff6f`.
-GitHub latest-release metadata was checked on 2026-10-08 (Sarajevo): all six
-expected assets are uploaded, and the release is neither draft nor prerelease.
+The latest stable release is v0.1.13 at `b15cb80dbed1b697579b4ff840b0f3e39ace365a`.
+GitHub latest-release metadata was checked on 2026-10-08: all six expected
+assets are uploaded, and the release is neither draft nor prerelease.
 The remaining work requires external evidence: feature-matched real Codex
-captures and a separate clean Windows host. Neither gap is closed by green CI.
+captures, a Claude 2.1.294 capture, real-agent resume verification and a
+separate clean Windows host. These gaps are not closed by green CI.
 Do not describe all eight tasks as fully accepted.

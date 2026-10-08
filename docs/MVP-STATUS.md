@@ -25,14 +25,20 @@ the PowerShell 5.1 release-note check. A Windows stub CLI exercised the
 production resume command builder. Real-agent session restoration, native
 desktop visual QA, and clean-host installer/updater acceptance remain unverified.
 
-At preparation time, v0.1.13 Woodpecker push validation, tag packaging,
-publication and uploaded-asset verification are pending. The latest verified
-stable release is v0.1.12, described below. Publication evidence will be recorded
-after the pipeline completes.
+Release commit `b15cb80dbed1b697579b4ff840b0f3e39ace365a` passed all
+configured frontend, Rust/MSRV and Windows desktop/CLI checks in
+[Woodpecker push pipeline 104](https://ci.aneskurtovic.com/repos/5/pipeline/104).
+CI recorded 495 Rust tests passed (one ignored) and 176 frontend tests passed.
+[Tag pipeline 105](https://ci.aneskurtovic.com/repos/5/pipeline/105) packaged and
+published [v0.1.13](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.13),
+verified all six uploaded asset digests and confirmed the latest stable pointer.
+GitHub metadata independently confirmed the six assets and stable publication
+on 2026-10-08. Signature metadata checks and clean-host updater acceptance are
+distinct; see [release procedure](RELEASING.md).
 
 ## Previous verified publication
 
-The latest verified public stable release at v0.1.13 preparation is **v0.1.12**, published 2026-10-08 at
+The previous stable release, **v0.1.12**, was published 2026-10-08 at
 08:44:29 UTC. Release commit `303b502383c8f02b2a860b657af3ffb11627ff6f` passed all
 frontend, Linux Rust (including MSRV), Windows desktop/CLI and smoke checks in
 [Woodpecker push pipeline 100](https://ci.aneskurtovic.com/repos/5/pipeline/100).
@@ -65,7 +71,8 @@ See [HANDOFF](../HANDOFF.md) for the remaining evidence gaps.
   Claude 2.1.294 was identified; no matching capture was added. See
   [compatibility](FORMAT-COMPATIBILITY.md) for limits.
 
-Local checks are development evidence. v0.1.13 CI and publication are pending.
+Local checks are development evidence. v0.1.13 CI, packaging and publication
+are independently recorded above.
 Separate clean-host installer, portable, upgrade, uninstall/archive preservation,
 signed updater, actual toast/file associations and real-agent resume acceptance
 remain unverified. Historical acceptance does not close those gates.
@@ -113,18 +120,18 @@ upgrade flow remains to be tested with 0.1.5.
 
 | Gate | State |
 |---|---|
-| Core CLI and desktop workflows | v0.1.13 implemented; exact-commit Woodpecker validation pending |
-| Persisted Codex/Claude compatibility | 17 fixtures across five surfaces, current-version captures and semantic tests; rare Codex shapes lack feature-matched real captures |
+| Core CLI and desktop workflows | v0.1.13 release commit passed exact-commit Woodpecker pipeline 104 |
+| Persisted Codex/Claude compatibility | 17 fixtures across five surfaces; reviewed Codex 0.161.0 and Claude 2.1.293 captures and semantic tests; Claude 2.1.294 and rare Codex shapes lack matching real captures |
 | Explicit stdout/app-server import | Dedicated CLI timeline contracts; complete request-history reconstruction unavailable for these surfaces |
 | Public source documentation | Updated for project organization, native resume and explicit evidence limits |
-| Windows production build | v0.1.12 verified in pipelines 100/101; v0.1.13 pending |
-| Updater package and feed | v0.1.12 verified in pipeline 101; v0.1.13 packaging/publication pending |
+| Windows production build | v0.1.13 built in push pipeline 104 and tag packaging pipeline 105 |
+| Updater package and feed | v0.1.13 updater artifacts produced; six uploaded digests, signature metadata and latest pointer checked in pipeline 105 |
 | Installed/portable, upgrade and uninstall/archive preservation acceptance | Separate clean host unavailable; no version-matched 0.1.13 acceptance |
 | Windows toast clicks and local file associations | Automated routing/path checks passed; installed Windows behavior remains unverified |
 | Signed in-app upgrade | Separate clean host unavailable; no version-matched 0.1.13 acceptance |
 | Native session resume | Stub command-builder and dialog tests passed; real-agent restoration and visible installed terminal unverified |
 | CLI user acceptance | Not requested; automated Windows validation is separate from user acceptance |
-| Public stable release | [ContextTrace v0.1.12](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.12), checked 2026-10-08 |
+| Public stable release | [ContextTrace v0.1.13](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.13), checked 2026-10-08 |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
 `%LOCALAPPDATA%\ContextTrace-archive` data directory, which may contain the

@@ -47,10 +47,16 @@ the PowerShell 5.1 release-note check. A Windows stub CLI exercised the
 production resume command builder. Real-agent session restoration, native
 desktop visual QA, and clean-host installer/updater acceptance remain unverified.
 
-At preparation time, v0.1.13 Woodpecker push validation, tag packaging,
-publication and uploaded-asset verification are pending. The latest verified
-stable release is v0.1.12, described below. Publication evidence will be recorded
-after the pipeline completes.
+Release commit `b15cb80dbed1b697579b4ff840b0f3e39ace365a` passed all
+configured frontend, Rust/MSRV and Windows desktop/CLI checks in
+[Woodpecker push pipeline 104](https://ci.aneskurtovic.com/repos/5/pipeline/104).
+CI recorded 495 Rust tests passed (one ignored) and 176 frontend tests passed.
+[Tag pipeline 105](https://ci.aneskurtovic.com/repos/5/pipeline/105) packaged and
+published [v0.1.13](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.13),
+verified all six uploaded asset digests and confirmed the latest stable pointer.
+GitHub metadata independently confirmed the six assets and stable publication
+on 2026-10-08. Signature metadata checks and clean-host updater acceptance are
+distinct; see [release procedure](docs/RELEASING.md).
 
 Previous verified patch release (2026-10-08): v0.1.12 adds clickable local file targets
 and fixes notification navigation and Windows toast activation. Commit
