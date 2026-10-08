@@ -1046,6 +1046,34 @@ describe("conversation", () => {
     expect(await screen.findByText(/The original text is unavailable; only a saved preview/)).toBeTruthy();
   });
 
+  it("shows cache tokens even when prices are unavailable", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getCost.mockResolvedValue({ ...demoCost(demoSessions[0].id, 0),
+      cacheUsage: { freshInputTokens: 200, cacheReadTokens: 800, cacheWriteTokens: null,
+        cacheReadShare: 0.8, completeTurns: 1, totalTurns: 2, multiCallTurns: 0 },
+      turns: [], forecast: null });
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    const cache = await screen.findByLabelText("Recorded cache usage");
+    expect(cache.textContent).toContain("800");
+    expect(cache.textContent).toContain("80%");
+    expect(cache.textContent).toContain("1 / 2 turns have a complete split");
+    expect(cache.textContent).toContain("Not reported");
+  });
+
+  it("shows context tokens used and total without inventing an unknown window", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getContext.mockResolvedValue({ ...demoContext(), totalTokens: 61_240,
+      contextWindow: null, utilisation: null });
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    const summary = await screen.findByLabelText("Selected turn summary");
+    expect(summary.textContent).toContain("61,240 tokens used / window not reported");
+    expect(summary.textContent).not.toContain("0%");
+  });
+
   it('reloads a cached conversation to include newly appended records', async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     const page = demoTranscript(0, 40);

@@ -2,6 +2,20 @@
 
 Updated: **2026-10-08**. The maintainer confirmed all seven original parser-audit follow-ups plus release work as eight tasks.
 
+## v0.1.15 cache/context metrics and instruction notifications
+
+Claude prompt snapshots no longer imply instruction drift, and historical
+instruction findings do not replay on appends. Codex cache reads are preserved
+for pricing. The desktop shows cache token counts and coverage plus used/total
+context for the selected model. Unsupported or incomplete billing usage stays
+unpriced. See [release notes](docs/releases/v0.1.15.md).
+
+Local development checks passed: 508 Rust tests (one ignored), formatting and
+strict Clippy, 180 frontend tests, the frontend build, all 17 fixture entries,
+validator regressions and PowerShell 5.1 release-note checks. Woodpecker push
+validation and tag publication are pending. Separate clean-host installer/updater
+acceptance and native desktop visual QA remain unverified.
+
 ## v0.1.14 automatic model pricing
 
 Spend & Forecast now loads LiteLLM's public prices automatically, using recorded

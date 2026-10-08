@@ -84,10 +84,7 @@ pub fn reconstruct(
     Ok(ReconstructedContext {
         items,
         observed_total: turn_data.prompt_tokens().map(TokenCount::observed),
-        context_window: turn_data
-            .usage
-            .context_window
-            .or(session.metadata().context_window),
+        context_window: session.context_window_at(turn),
         model: turn_data
             .model
             .clone()

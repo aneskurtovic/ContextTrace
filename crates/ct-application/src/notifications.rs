@@ -75,7 +75,7 @@ impl NotificationEngine {
         evaluate_pressure(session, prior, settings, &mut checkpoint, &mut candidates);
         evaluate_spikes(session, prior, settings, &mut candidates);
         evaluate_events(session, prior, settings, &mut checkpoint, &mut candidates);
-        evaluate_deep(session, settings, inputs, &mut candidates);
+        evaluate_deep(session, prior, settings, inputs, &mut candidates);
         advance(session, &mut checkpoint);
         NotificationEvaluation {
             candidates,
@@ -544,6 +544,7 @@ fn push_format_drift(
 
 fn evaluate_deep(
     session: &AgentSession,
+    prior: &SessionNotificationCheckpoint,
     settings: &NotificationSettings,
     inputs: NotificationInputs<'_>,
     out: &mut Vec<NotificationCandidate>,
@@ -559,6 +560,14 @@ fn evaluate_deep(
     }
     if let Some(drift) = inputs.instruction_drift {
         for change in &drift.changes {
+            // Deep analysis covers the whole file. Only newly completed turns
+            // may alert; baselining and ordinary appends must not replay history.
+            if !change
+                .to_turn
+                .is_some_and(|turn| prior.last_turn.is_none_or(|last| turn > last.get()))
+            {
+                continue;
+            }
             push_instruction(session, change, settings, out);
         }
     }
@@ -790,8 +799,8 @@ fn push_instruction(
         delivery,
         "Instructions changed",
         format!(
-            "{} instructions changed during the session.",
-            change.mechanism
+            "Recorded instruction signature changed for {} (label/size comparison).",
+            short_label(&change.to_label)
         ),
         turn,
         None,
@@ -929,6 +938,52 @@ mod tests {
         assert_eq!(candidates[0].location.line, Some(191));
         assert_eq!(candidates[0].location.turn, finding.turn);
         assert_eq!(candidates[0].title, "Potential secret in model context");
+    }
+
+    #[test]
+    fn historical_instruction_drift_does_not_replay_on_appends_or_restart() {
+        let before = session(&[100, 200], 1_000);
+        let prior = NotificationEngine::baseline(&before);
+        let after = session(&[100, 200, 300], 1_000);
+        let mut drift = InstructionDrift {
+            session_id: after.id().to_string(),
+            base_instructions_observed: false,
+            observations: vec![],
+            content_compared: false,
+            changes: vec![crate::InstructionChange {
+                mechanism: "nested_memory".into(),
+                from_turn: Some(1),
+                to_turn: Some(2),
+                from_label: "CLAUDE.md".into(),
+                to_label: "CLAUDE.md".into(),
+                from_char_len: 10,
+                to_char_len: 20,
+            }],
+        };
+        let settings = NotificationSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let evaluate = |drift: &InstructionDrift, prior: &SessionNotificationCheckpoint| {
+            NotificationEngine::evaluate(
+                &after,
+                prior,
+                &settings,
+                NotificationInputs {
+                    instruction_drift: Some(drift),
+                    ..Default::default()
+                },
+            )
+        };
+        assert!(evaluate(&drift, &prior).candidates.is_empty());
+        drift.changes[0].to_turn = Some(3);
+        let result = evaluate(&drift, &prior);
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(
+            result.candidates[0].rule,
+            NotificationRuleId::InstructionDrift
+        );
+        assert!(evaluate(&drift, &result.checkpoint).candidates.is_empty());
     }
 
     #[test]

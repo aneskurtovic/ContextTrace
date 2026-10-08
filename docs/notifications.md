@@ -25,6 +25,14 @@ feed they write is a desktop artefact.
 | Instructions changed | A recorded instruction artefact drifted | Delivery only |
 | Session cost budget crossed | Estimated session cost passed a budget | Budget amount |
 
+Instruction drift compares repeated signatures of the same recorded instruction
+artifact (base instructions, repository memory or a skill). Prompt snapshots,
+ordinary files, reminders and tool listings do not count as instruction changes.
+The comparison uses labels and character lengths, not instruction-body equality.
+Only changes in newly completed turns may notify; historical findings are not
+replayed when a log grows or monitoring resumes. To silence this rule immediately
+in an older installed app, set **Instructions changed** to **Feed only**.
+
 Two rules share one label on the wire: duplicate and low-information findings
 both report as `contextWaste`, because they are the same complaint about the
 same turn measured two ways.

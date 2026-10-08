@@ -14,6 +14,7 @@ import {
   errorMessage,
   formatActivity,
   formatBytes,
+  formatContextUsage,
   formatPercent,
   formatTokens,
   projectName,
@@ -1507,8 +1508,8 @@ function LiveMonitor({
   live: boolean;
   onLive: (live: boolean) => void;
 }) {
-  const utilisation = context?.utilisation ?? (detail.peakPromptTokens && detail.contextWindow ? detail.peakPromptTokens / detail.contextWindow : 0);
-  const tone = utilisation >= .9 ? "critical" : utilisation >= .75 ? "elevated" : "steady";
+  const utilisation = context ? context.utilisation : (detail.peakPromptTokens && detail.contextWindow ? detail.peakPromptTokens / detail.contextWindow : null);
+  const tone = (utilisation ?? 0) >= .9 ? "critical" : (utilisation ?? 0) >= .75 ? "elevated" : "steady";
   return (
     <section className={`live-monitor ${live ? "following" : ""} ${context || detail.peakPromptTokens ? "measured" : "unmeasured"}`} aria-label="Session context monitor">
       <div className="live-monitor-heading">
@@ -1516,13 +1517,13 @@ function LiveMonitor({
         <button type="button" onClick={() => onLive(!live)}>{live ? "Stop follow" : "Follow live"}</button>
       </div>
       <div className="live-gauge-wrap">
-        <div className="live-gauge" style={{ "--gauge": `${Math.min(100, utilisation * 100)}%` } as CSSProperties}>
+        <div className="live-gauge" style={{ "--gauge": `${Math.min(100, (utilisation ?? 0) * 100)}%` } as CSSProperties}>
           <span>{formatPercent(utilisation)}</span>
         </div>
-        <div><strong>{context ? `Selected turn ${context.turn}` : detail.peakTurn ? `Session peak · turn ${detail.peakTurn}` : "No measured turn"}</strong><p>{context ? `${formatTokens(context.totalTokens)} / ${formatTokens(context.contextWindow ?? detail.contextWindow ?? 0)}` : detail.peakPromptTokens ? `${formatTokens(detail.peakPromptTokens)} / ${formatTokens(detail.contextWindow ?? 0)}` : "No prompt size recorded"}</p></div>
+        <div><strong>{context ? `Selected turn ${context.turn} · ${context.model ?? "model not recorded"}` : detail.peakTurn ? `Session peak · turn ${detail.peakTurn}` : "No measured turn"}</strong><p>{context ? formatContextUsage(context.totalTokens, context.contextWindow) : formatContextUsage(detail.peakPromptTokens, detail.contextWindow)}</p></div>
       </div>
       <small>{live ? "Refreshes local session evidence every 2.5s · use Ctrl+C in the agent terminal to stop the run." : "This is the selected-turn snapshot or recorded session peak. Follow mode reads the local log as it grows; it never controls the agent. Follow pauses when you leave Overview."}</small>
-      <div className={`live-headroom ${tone}`}><span style={{ width: `${Math.min(100, utilisation * 100)}%` }} /></div>
+      <div className={`live-headroom ${tone}`}><span style={{ width: `${Math.min(100, (utilisation ?? 0) * 100)}%` }} /></div>
     </section>
   );
 }
@@ -1612,6 +1613,13 @@ function SpendDashboard({ cost, loading, enabled, onRun }: { cost: CostReport | 
       <div className="panel-heading"><div><span className="eyebrow">Cost forecast</span><h2 id="spend-heading">Spend dashboard</h2></div><span className="pricing-chip">{cost?.pricingVersion ?? "Loading automatic prices"}</span></div>
       <div className="spend-controls"><span>Automatic prices from LiteLLM</span><input value={forecastTurns} onChange={(event) => setForecastTurns(event.target.value)} inputMode="numeric" aria-label="Forecast turns" /><button type="button" onClick={() => onRun(null, Number(forecastTurns) || null)} disabled={loading}>{loading ? "Forecasting…" : "Refresh forecast"}</button></div>
       {cost ? <>
+        <div className="spend-hero cache-usage-grid" aria-label="Recorded cache usage">
+          <div><span>Fresh input</span><strong>{cost.cacheUsage.freshInputTokens?.toLocaleString() ?? "Not reported"}</strong><small>uncached tokens</small></div>
+          <div><span>Cache reads</span><strong>{cost.cacheUsage.cacheReadTokens?.toLocaleString() ?? "Not reported"}</strong><small>tokens served from cache</small></div>
+          <div><span>Cache writes</span><strong>{cost.cacheUsage.cacheWriteTokens?.toLocaleString() ?? "Not reported"}</strong><small>tokens stored in cache</small></div>
+          <div><span>Cache read share</span><strong>{formatPercent(cost.cacheUsage.cacheReadShare)}</strong><small>{cost.cacheUsage.completeTurns} / {cost.cacheUsage.totalTurns} turns have a complete split</small></div>
+        </div>
+        <p className="spend-note">Recorded request tokens, including unpriced turns. Read share is cached reads / total input for turns with a complete split; fresh input and writes are not cache lookup misses. Lookup hit/miss counts and unreported cache writes are unavailable.{cost.cacheUsage.multiCallTurns > 0 ? ` ${cost.cacheUsage.multiCallTurns} multi-call turn(s) retain only the largest request's input; these are excluded from spend.` : ""}</p>
         <div className="spend-hero">
           <div><span>Burn rate</span><strong>{burn === undefined ? "Unavailable" : "$" + (burn / 1_000_000).toFixed(4)}</strong><small>per modeled turn at current rates</small></div>
           <div><span>Projected session</span><strong>{cost.forecast ? "$" + (cost.forecast.projectedTotal / 1_000_000).toFixed(4) : "Unavailable"}</strong><small>{cost.forecast ? cost.forecast.additionalTurns + " additional turns" : "Forecast needs complete pricing"}</small></div>
@@ -3688,9 +3696,7 @@ function SessionWorkspace({
           label="Context used"
           value={formatPercent(peakUtilisation)}
           note={
-            detail.contextWindow
-              ? `${formatTokens(detail.contextWindow)} token window`
-              : "Window not reported"
+            `${formatContextUsage(detail.peakPromptTokens, detail.contextWindow)} · session peak`
           }
         />
         <Metric
@@ -3819,7 +3825,7 @@ function SessionWorkspace({
         <>
           <section className="panel selected-turn-summary" aria-label="Selected turn summary">
             <div><span className="eyebrow">Context · selected turn</span><strong>Turn {context.turn}</strong></div>
-            <span>{formatTokens(context.totalTokens)} measured tokens · {formatPercent(context.utilisation)} of the reported window</span>
+            <span>{formatContextUsage(context.totalTokens, context.contextWindow)} · {formatPercent(context.utilisation)} · {context.model ?? "model not recorded"}</span>
             <button type="button" className="quiet-action" onClick={onReturnToChat}>Return to conversation{transcriptHighlightLine != null ? ` · line ${transcriptHighlightLine}` : ""}</button>
           </section>
           <div className={contextLoading ? "context-grid refreshing" : "context-grid"}>

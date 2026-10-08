@@ -574,7 +574,9 @@ impl AppState {
             total_output_tokens: session.total_output_tokens(),
             peak_turn,
             peak_prompt_tokens: session.peak_prompt_tokens(),
-            context_window: metadata.context_window,
+            context_window: session
+                .peak_turn()
+                .and_then(|number| session.context_window_at(number)),
             fidelity: session.fidelity(),
             unrecognised_events: session.unrecognised_total(),
             unplaced_compactions: growth.unplaced_compactions,
@@ -2941,6 +2943,7 @@ pub struct CostReportSummary {
     turns: Vec<CostTurnSummary>,
     unpriced: Vec<UnpricedTurnSummary>,
     forecast: Option<CostForecastSummary>,
+    cache_usage: ct_application::cost::CacheUsageReport,
 }
 
 impl From<CostReport> for CostReportSummary {
@@ -2963,6 +2966,7 @@ impl From<CostReport> for CostReportSummary {
                 .map(UnpricedTurnSummary::from)
                 .collect(),
             forecast: value.forecast.map(CostForecastSummary::from),
+            cache_usage: value.cache_usage,
         }
     }
 }

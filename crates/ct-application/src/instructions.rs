@@ -212,10 +212,21 @@ pub fn inspect(session: &AgentSession) -> InstructionDrift {
         }
     }
 
-    let mut previous: BTreeMap<&str, &InstructionObservation> = BTreeMap::new();
+    let mut previous: BTreeMap<(&str, &str), &InstructionObservation> = BTreeMap::new();
     let mut changes = Vec::new();
     for observation in &observations {
-        if let Some(prior) = previous.insert(&observation.mechanism, observation) {
+        // A prompt snapshot, file read, reminder or tool listing is not an
+        // instruction revision. Compare repeated observations of the same
+        // instruction artifact, not unrelated files sharing an attachment type.
+        if !matches!(
+            observation.mechanism.as_str(),
+            "base_instructions" | "nested_memory" | "skill" | "dynamic_skill"
+        ) {
+            continue;
+        }
+        if let Some(prior) =
+            previous.insert((&observation.mechanism, &observation.label), observation)
+        {
             if prior.label != observation.label || prior.char_len != observation.char_len {
                 changes.push(InstructionChange {
                     mechanism: observation.mechanism.clone(),
@@ -283,6 +294,37 @@ mod tests {
     }
 
     struct FixedHasher;
+
+    #[test]
+    fn snapshots_and_unrelated_instruction_files_do_not_imply_drift() {
+        let mut events = vec![injection("CLAUDE.md", 10), injection("AGENTS.md", 20)];
+        for event in &mut events {
+            if let EventKind::ContextInjection { mechanism, .. } = &mut event.kind {
+                *mechanism = "nested_memory".into();
+            }
+        }
+        for chars in [100, 200, 300] {
+            let mut event = injection("prompt snapshot", chars);
+            if let EventKind::ContextInjection { mechanism, .. } = &mut event.kind {
+                *mechanism = "prompt_snapshot".into();
+            }
+            events.push(event);
+        }
+        let session = AgentSession::new(
+            SessionId::new("snapshots").unwrap(),
+            AgentKind::ClaudeCode,
+            SessionMetadata::default(),
+            events,
+            vec![],
+            vec![],
+        );
+        let report = inspect(&session);
+        assert_eq!(report.observations.len(), 5, "keep attachment evidence");
+        assert!(
+            report.changes.is_empty(),
+            "growing snapshots are not instructions"
+        );
+    }
 
     impl ContentHasher for FixedHasher {
         fn measure(&self, _bytes: &[u8]) -> ContentMeasurement {

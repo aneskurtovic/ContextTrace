@@ -1225,14 +1225,15 @@ fn translate_event_msg(
             if window.is_some() && metadata.context_window.is_none() {
                 metadata.context_window = window;
             }
+            let input = u32_field(last, "input_tokens");
+            let cached = u32_field(last, "cached_input_tokens");
+            // Normalize OpenAI's inclusive input total to the domain's
+            // disjoint fresh/read/write buckets. Reject inconsistent splits.
+            let cache_read = cached.filter(|cached| input.is_some_and(|input| *cached <= input));
             EventKind::TokenReport(TokenUsage {
-                input: u32_field(last, "input_tokens"),
+                input: input.map(|input| input - cache_read.unwrap_or(0)),
                 cache_creation: None,
-                // Codex reports cached tokens as a *subset* of input_tokens,
-                // unlike Anthropic which reports them separately. Folding it
-                // into `cache_read` here would double-count, so it is left out
-                // and `input_tokens` alone carries the prompt size.
-                cache_read: None,
+                cache_read,
                 output: u32_field(last, "output_tokens"),
                 reasoning: u32_field(last, "reasoning_output_tokens"),
                 context_window: window,
@@ -2158,7 +2159,7 @@ mod tests {
             "type": "token_count",
             "info": {
                 "total_token_usage": {"input_tokens": 999_999, "output_tokens": 1},
-                "last_token_usage": {"input_tokens": 17_268, "output_tokens": 234,
+                "last_token_usage": {"input_tokens": 17_268, "cached_input_tokens": 12_000, "output_tokens": 234,
                                      "reasoning_output_tokens": 46},
                 "model_context_window": 258_400
             }
@@ -2173,12 +2174,33 @@ mod tests {
                     "cumulative totals must not leak in"
                 );
                 assert_eq!(u.output, Some(234));
+                assert_eq!(u.input, Some(5_268));
+                assert_eq!(u.cache_read, Some(12_000));
                 assert_eq!(u.reasoning, Some(46));
                 assert_eq!(u.context_window, Some(258_400));
             }
             other => panic!("expected a token report, got {other:?}"),
         }
         assert_eq!(meta.context_window, Some(258_400));
+    }
+
+    #[test]
+    fn missing_or_inconsistent_cached_input_does_not_invent_a_cache_split() {
+        for cached in [Value::Null, json!(200)] {
+            let payload = json!({"info": {"last_token_usage": {
+                "input_tokens": 100, "cached_input_tokens": cached
+            }}});
+            let kind = translate_event_msg(
+                &payload,
+                Some("token_count"),
+                &mut SessionMetadata::default(),
+            );
+            let EventKind::TokenReport(usage) = kind else {
+                panic!("missing usage")
+            };
+            assert_eq!(usage.prompt_tokens(), Some(100));
+            assert_eq!(usage.cache_read, None);
+        }
     }
 
     #[test]

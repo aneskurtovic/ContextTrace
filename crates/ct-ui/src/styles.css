@@ -2006,6 +2006,7 @@ h2 {
 .sandbox-badge, .pricing-chip { padding: 4px 7px; border: 1px solid #334666; border-radius: 5px; color: #93b5f3; font-family: "Cascadia Mono", Consolas, monospace; font-size: 9px; }
 .sandbox-intro { margin-top: 12px; color: var(--muted); font-size: 10px; }
 .sandbox-metrics, .spend-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 15px; }
+.cache-usage-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .sandbox-metrics > div, .spend-hero > div { display: flex; flex-direction: column; padding: 12px; border: 1px solid #26344a; border-radius: 7px; background: #0d141f; }
 .sandbox-metrics span, .spend-hero span { color: var(--dim); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 .sandbox-metrics strong, .spend-hero strong { margin-top: 6px; color: #e2ebf8; font-family: "Cascadia Mono", Consolas, monospace; font-size: 17px; font-weight: 500; }

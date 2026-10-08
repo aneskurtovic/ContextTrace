@@ -1042,7 +1042,15 @@ function asCost(value: unknown): CostReport {
     typeof value.total !== "number" ||
     !Array.isArray(value.turns) ||
     !Array.isArray(value.unpriced) ||
-    !(value.forecast === null || isRecord(value.forecast))
+    !(value.forecast === null || isRecord(value.forecast)) ||
+    !isRecord(value.cacheUsage) ||
+    !isNumberOrNull(value.cacheUsage.freshInputTokens) ||
+    !isNumberOrNull(value.cacheUsage.cacheReadTokens) ||
+    !isNumberOrNull(value.cacheUsage.cacheWriteTokens) ||
+    !isNumberOrNull(value.cacheUsage.cacheReadShare) ||
+    typeof value.cacheUsage.completeTurns !== "number" ||
+    typeof value.cacheUsage.totalTurns !== "number" ||
+    typeof value.cacheUsage.multiCallTurns !== "number"
   ) {
     throw malformed("cost report");
   }

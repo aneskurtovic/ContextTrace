@@ -89,10 +89,7 @@ pub fn reconstruct(
     promote_current_prompt(&mut live);
 
     let observed_total = turn_data.prompt_tokens().map(TokenCount::observed);
-    let context_window = turn_data
-        .usage
-        .context_window
-        .or(session.metadata().context_window);
+    let context_window = session.context_window_at(turn);
 
     Ok(ReconstructedContext {
         items: live,

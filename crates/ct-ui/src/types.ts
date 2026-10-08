@@ -367,6 +367,15 @@ export interface CostReport {
   turns: CostTurn[];
   unpriced: UnpricedTurn[];
   forecast: CostForecast | null;
+  cacheUsage: {
+    freshInputTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+    cacheReadShare: number | null;
+    completeTurns: number;
+    totalTurns: number;
+    multiCallTurns: number;
+  };
 }
 
 export interface GhostItem {

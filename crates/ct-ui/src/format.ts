@@ -20,6 +20,11 @@ export function formatPercent(value: number | null | undefined): string {
   return `${Math.round(value * 100)}%`;
 }
 
+export function formatContextUsage(used: number | null, window: number | null): string {
+  const usedText = used == null ? "Usage not recorded" : `${used.toLocaleString()} tokens used`;
+  return `${usedText} / ${window != null && window > 0 ? `${window.toLocaleString()} total` : "window not reported"}`;
+}
+
 export function formatActivity(value: string | null): string {
   if (!value) return "Unknown";
   const date = new Date(value);
