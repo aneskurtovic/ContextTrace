@@ -2,6 +2,25 @@
 
 Updated: **2026-10-08**. The maintainer confirmed all seven original parser-audit follow-ups plus release work as eight tasks.
 
+## v0.1.12 patch release
+
+Local file targets in Context composition now open with their full recorded
+paths, with Explorer/copy actions and missing-file states. Notification findings
+navigate to Conversation from every tab; new Windows toasts restore or launch
+the installed app through the installer-registered protocol.
+Commit `303b502` passed all configured checks in
+[push pipeline 100](https://ci.aneskurtovic.com/repos/5/pipeline/100).
+[Tag pipeline 101](https://ci.aneskurtovic.com/repos/5/pipeline/101) packaged,
+published and verified all six assets and the latest stable pointer for
+[v0.1.12](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.12).
+The v0.1.11 candidate failed before publication; v0.1.12 also fixes
+PowerShell 5.1 release-note serialization with a Windows CI regression check.
+Validation includes 488 passing Rust tests (one ignored) and 167 passing
+frontend tests.
+Actual Windows toast clicks, file associations and separate clean-host
+installer/updater acceptance remain unverified. See
+[release notes](docs/releases/v0.1.12.md) for upgrade behavior and limits.
+
 ## v0.1.10 patch release
 
 Claude `away_summary` and `bridge_status` now parse as presentation-only
@@ -44,7 +63,7 @@ unreadable files and one malformed line. The away_summary/bridge_status
 warnings are resolved. Doctor correctly exits 1 for malformed input; do not
 suppress that warning to manufacture a green sweep.
 
-The latest stable release is v0.1.10 at `78d345ae4a8b3ffe93269e8d9afe60cb2047e613`.
+The latest stable release is v0.1.12 at `303b502383c8f02b2a860b657af3ffb11627ff6f`.
 GitHub latest-release metadata was checked on 2026-10-08 (Sarajevo): all six
 expected assets are uploaded, and the release is neither draft nor prerelease.
 The remaining work requires external evidence: feature-matched real Codex

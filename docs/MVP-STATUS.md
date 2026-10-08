@@ -11,16 +11,19 @@ optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
 
-The latest public stable release is **v0.1.10**, published 2026-10-08 at
-07:09:40 UTC (09:09:40 in Sarajevo). Release commit
-`78d345ae4a8b3ffe93269e8d9afe60cb2047e613` passed all frontend, Linux Rust
-(including MSRV), Windows desktop/CLI and smoke checks in
-[Woodpecker push pipeline 93](https://ci.aneskurtovic.com/repos/5/pipeline/93).
-[Tag pipeline 94](https://ci.aneskurtovic.com/repos/5/pipeline/94) passed the
-exact-commit gate, packaged and published the release, verified all six
-uploaded-asset digests, and confirmed the latest stable release pointer.
-GitHub release metadata independently confirms that tag and source commit,
-all six uploaded assets, and neither draft nor prerelease status.
+The latest public stable release is **v0.1.12**, published 2026-10-08 at
+08:44:29 UTC. Release commit `303b502383c8f02b2a860b657af3ffb11627ff6f` passed all
+frontend, Linux Rust (including MSRV), Windows desktop/CLI and smoke checks in
+[Woodpecker push pipeline 100](https://ci.aneskurtovic.com/repos/5/pipeline/100).
+[Tag pipeline 101](https://ci.aneskurtovic.com/repos/5/pipeline/101) passed the exact-commit gate, packaged and published
+the release, verified all six uploaded-asset digests, and confirmed the latest
+stable release pointer. GitHub metadata independently confirms the tag, source
+commit, all six assets and neither draft nor prerelease status.
+
+This patch adds [local file actions](local-files.md) in Context composition and
+fixes [notification navigation and Windows toast activation](notifications.md).
+Actual installed Windows toast and file-association behavior remains a separate
+acceptance check.
 
 The release includes the [original parser audit](FORMAT-AUDIT-2026-10-07.md)
 and [eight-task follow-up](FORMAT-FOLLOWUP-2026-10-08.md), plus support for
@@ -93,16 +96,17 @@ upgrade flow remains to be tested with 0.1.5.
 
 | Gate | State |
 |---|---|
-| Core CLI and desktop workflows | Implemented; release commit passed all Woodpecker push checks in pipeline 93 |
+| Core CLI and desktop workflows | Implemented; release commit passed all Woodpecker push checks in pipeline 100 |
 | Persisted Codex/Claude compatibility | 17 fixtures across five surfaces, current-version captures and semantic tests; rare Codex shapes lack feature-matched real captures |
 | Explicit stdout/app-server import | Dedicated CLI timeline contracts; complete request-history reconstruction unavailable for these surfaces |
-| Public source documentation | Updated for v0.1.10 and explicit stream imports |
-| Windows production build | Successful in Woodpecker push pipeline 93 and tag packaging pipeline 94 |
-| Updater package and feed | v0.1.10 signature asset and metadata produced; all six uploaded digests and latest stable pointer verified in pipeline 94 |
-| Installed/portable, upgrade and uninstall/archive preservation acceptance | Separate clean host unavailable; no version-matched 0.1.10 acceptance |
-| Signed in-app upgrade | Separate clean host unavailable; no version-matched 0.1.10 acceptance |
+| Public source documentation | Updated for v0.1.12, local file actions and notification activation |
+| Windows production build | Successful in Woodpecker push pipeline 100 and tag packaging pipeline 101 |
+| Updater package and feed | v0.1.12 signature asset and metadata produced; all six uploaded digests and latest stable pointer verified in pipeline 101 |
+| Installed/portable, upgrade and uninstall/archive preservation acceptance | Separate clean host unavailable; no version-matched 0.1.12 acceptance |
+| Windows toast clicks and local file associations | Automated routing/path checks passed; installed Windows behavior remains unverified |
+| Signed in-app upgrade | Separate clean host unavailable; no version-matched 0.1.12 acceptance |
 | CLI user acceptance | Not requested; automated Windows validation is separate from user acceptance |
-| Public stable release | [ContextTrace v0.1.10](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.10), checked 2026-10-08 |
+| Public stable release | [ContextTrace v0.1.12](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.12), checked 2026-10-08 |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
 `%LOCALAPPDATA%\ContextTrace-archive` data directory, which may contain the

@@ -28,11 +28,22 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 npm ci --prefix crates/ct-ui
 npm test --prefix crates/ct-ui
 npm run build --prefix crates/ct-ui
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/test-release-notes.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/check-fixture-manifest.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/test-fixture-manifest.ps1
 ```
 
-Latest patch release (2026-10-08): v0.1.10 adds Claude `away_summary` and
+Latest patch release (2026-10-08): v0.1.12 adds clickable local file targets
+and fixes notification navigation and Windows toast activation. Commit
+`303b502` passed all configured Woodpecker push checks in pipeline 100:
+488 Rust tests passed (one ignored), 167 frontend tests passed, and Windows
+desktop/CLI builds, smoke checks and Linux MSRV validation passed. Tag pipeline
+101 packaged, published and verified all six assets and the latest stable pointer.
+Separate clean-host installer/updater acceptance and actual Windows toast and
+file-association behavior remain unverified. See
+[release notes](docs/releases/v0.1.12.md) and [release procedure](docs/RELEASING.md).
+
+Previous patch release (2026-10-08): v0.1.10 adds Claude `away_summary` and
 `bridge_status` presentation notices without adding model-context weight.
 Commit `78d345a` passed all configured checks in Woodpecker push pipeline 93:
 481 Rust tests passed (one ignored), all 17 fixtures passed validation, and the
