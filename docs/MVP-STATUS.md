@@ -11,6 +11,28 @@ optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
 
+## v0.1.14 automatic model pricing
+
+Spend & Forecast now loads LiteLLM's public prices automatically, using recorded
+catalog revisions for historical usage and current rates for forecasts. Prices
+and revision indices are cached locally. Missing models or required rates stay
+explicitly unpriced; no conversation data or model names are uploaded. See
+[release notes](releases/v0.1.14.md) for pricing scope and historical-date limits.
+
+Release commit `9018caf7637e86fdec944c1236bbbe930bca2955` passed all
+configured frontend, Rust/MSRV and Windows desktop/CLI checks in
+[Woodpecker push pipeline 107](https://ci.aneskurtovic.com/repos/5/pipeline/107).
+CI recorded 502 Rust tests passed (one ignored) and 178 frontend tests passed.
+[Tag pipeline 108](https://ci.aneskurtovic.com/repos/5/pipeline/108) packaged and
+published [v0.1.14](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.14),
+verified all six uploaded asset digests and confirmed the latest stable pointer.
+Independent public checks on 2026-10-08 confirmed stable publication, all six
+asset digests against the downloaded checksum manifest, and the public updater
+feed's version, pinned installer URL and matching signature metadata.
+Separate clean-host installer/updater acceptance and native desktop visual QA
+remain unverified. Metadata checks do not verify an in-app update or Windows
+Authenticode signature; see [release procedure](RELEASING.md).
+
 ## v0.1.13 project organization and native resume
 
 Temporary workspaces are grouped in the project dropdown, with reversible
