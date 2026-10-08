@@ -942,10 +942,10 @@ export function demoCost(id: string, forecastTurns: number): CostReport {
     sessionId: id,
     pricingVersion: "demo",
     pricingSource: "synthetic demo table",
-    warning: "Demo data; no local pricing file was read.",
+    warning: "Synthetic demo prices; no public pricing request was made.",
     categories: [category],
     total: category.cost,
-    turns: [],
+    turns: [{ turn: 1, model: "demo-model", priced: true, categories: [category], total: category.cost }],
     unpriced: [],
     forecast: forecastTurns > 0
       ? {

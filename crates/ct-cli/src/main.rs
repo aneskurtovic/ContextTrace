@@ -56,7 +56,7 @@ enum Command {
         json: bool,
     },
 
-    /// Estimate request cost from a bundled local pricing table.
+    /// Estimate request cost using automatic current and historical LiteLLM prices.
     Cost {
         /// Session id, or an unambiguous prefix
         id: String,
@@ -151,7 +151,7 @@ enum Command {
     /// Parses the whole corpus in one pass -- totals, per-project and per-day
     /// activity, context-pressure bands, the tools returning the most text,
     /// and the sessions that ran closest to their window. Cost is summed from
-    /// the turns a local rate could price, and the rest are reported as
+    /// the turns a published rate could price, and the rest are reported as
     /// unpriced rather than dropped.
     Stats {
         #[arg(long)]
@@ -634,17 +634,9 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 && scenario.cap_input_tokens.is_none()
                 && scenario.cap_output_tokens.is_none()
             {
-                render::cost(
-                    &ct_application::project_cost_scenario(&session, &scenario),
-                    &resolved,
-                    json,
-                );
+                render::cost(&app.project_cost(&session, &scenario), &resolved, json);
             } else {
-                render::cost_comparison(
-                    &ct_application::compare_cost(&session, &scenario),
-                    &resolved,
-                    json,
-                );
+                render::cost_comparison(&app.compare_cost(&session, &scenario), &resolved, json);
             }
         }
 

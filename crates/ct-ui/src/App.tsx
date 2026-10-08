@@ -1603,15 +1603,24 @@ function SecurityDashboard({ doctor, loading, onScan }: { doctor: DoctorReport |
   );
 }
 
-function SpendDashboard({ cost, loading, onRun }: { cost: CostReport | null; loading: boolean; onRun: (pricing: string | null, turns: number | null) => void }) {
-  const [pricingPath, setPricingPath] = useState("");
+function SpendDashboard({ cost, loading, enabled, onRun }: { cost: CostReport | null; loading: boolean; enabled: boolean; onRun: (pricing: string | null, turns: number | null) => void }) {
   const [forecastTurns, setForecastTurns] = useState("10");
-  const burn = cost?.forecast?.averageTokensPerTurn.reduce((sum, category) => sum + category.cost, 0) ?? cost?.total ?? 0;
+  useEffect(() => { if (enabled && !cost) onRun(null, 10); }, [enabled, cost, onRun]);
+  const burn = cost?.forecast?.averageTokensPerTurn.reduce((sum, category) => sum + category.cost, 0);
   return (
     <section className="panel spend-dashboard" id="spend" aria-labelledby="spend-heading">
-      <div className="panel-heading"><div><span className="eyebrow">Cost forecast</span><h2 id="spend-heading">Spend dashboard</h2></div><span className="pricing-chip">{cost?.pricingVersion ?? "pricing not loaded"}</span></div>
-      <div className="spend-controls"><input value={pricingPath} onChange={(event) => setPricingPath(event.target.value)} placeholder="Optional pricing.json path" aria-label="Pricing file path" /><input value={forecastTurns} onChange={(event) => setForecastTurns(event.target.value)} inputMode="numeric" aria-label="Forecast turns" /><button type="button" onClick={() => onRun(pricingPath.trim() || null, Number(forecastTurns) || null)} disabled={loading}>{loading ? "Forecasting…" : "Refresh forecast"}</button></div>
-      {cost ? <><div className="spend-hero"><div><span>Burn rate</span><strong>${(burn / 1_000_000).toFixed(4)}</strong><small>per modeled turn</small></div><div><span>Projected session</span><strong>${((cost.forecast?.projectedTotal ?? cost.total) / 1_000_000).toFixed(4)}</strong><small>{cost.forecast ? `${cost.forecast.additionalTurns} additional turns` : "current evidence"}</small></div><div><span>Observed spend</span><strong>${(cost.total / 1_000_000).toFixed(4)}</strong><small>{cost.pricingSource}</small></div></div><div className="spend-bars" aria-label="Spend by context category">{cost.categories.map((category) => <div className="spend-bar-row" key={category.name}><span>{category.name}</span><div><i style={{ width: `${Math.max(3, Math.min(100, category.cost / Math.max(1, burn) * 100))}%` }} /></div><strong>${(category.cost / 1_000_000).toFixed(4)}</strong></div>)}</div>{cost.warning && <p className="spend-note">{cost.warning}</p>}</> : <div className="spend-empty"><strong>Cost telemetry is ready when you are.</strong><p>Load built-in rates or point ContextTrace at a local pricing JSON to model the burn before the next turn.</p></div>}
+      <div className="panel-heading"><div><span className="eyebrow">Cost forecast</span><h2 id="spend-heading">Spend dashboard</h2></div><span className="pricing-chip">{cost?.pricingVersion ?? "Loading automatic prices"}</span></div>
+      <div className="spend-controls"><span>Automatic prices from LiteLLM</span><input value={forecastTurns} onChange={(event) => setForecastTurns(event.target.value)} inputMode="numeric" aria-label="Forecast turns" /><button type="button" onClick={() => onRun(null, Number(forecastTurns) || null)} disabled={loading}>{loading ? "Forecasting…" : "Refresh forecast"}</button></div>
+      {cost ? <>
+        <div className="spend-hero">
+          <div><span>Burn rate</span><strong>{burn === undefined ? "Unavailable" : "$" + (burn / 1_000_000).toFixed(4)}</strong><small>per modeled turn at current rates</small></div>
+          <div><span>Projected session</span><strong>{cost.forecast ? "$" + (cost.forecast.projectedTotal / 1_000_000).toFixed(4) : "Unavailable"}</strong><small>{cost.forecast ? cost.forecast.additionalTurns + " additional turns" : "Forecast needs complete pricing"}</small></div>
+          <div><span>{cost.unpriced.length ? "Partial spend estimate" : "Estimated spend"}</span><strong>{cost.turns.length ? "$" + (cost.total / 1_000_000).toFixed(4) : "Unavailable"}</strong><small>{cost.pricingSource}</small></div>
+        </div>
+        <div className="spend-bars" aria-label="Spend by context category">{cost.categories.map((category) => <div className="spend-bar-row" key={category.name}><span>{category.name}</span><div><i style={{ width: Math.max(0, Math.min(100, category.cost / Math.max(1, cost.total) * 100)) + "%" }} /></div><strong>{"$" + (category.cost / 1_000_000).toFixed(4)}</strong></div>)}</div>
+        {cost.unpriced.length > 0 && <div className="spend-note" role="status"><strong>{cost.unpriced.length} unpriced turn(s)</strong><ul>{cost.unpriced.map((turn) => <li key={turn.turn}>Turn {turn.turn} · {turn.model ?? "Unknown model"}: {turn.reason}</li>)}</ul></div>}
+        {cost.warning && <p className="spend-note">{cost.warning}</p>}
+      </> : <div className="spend-empty"><strong>{loading ? "Loading current and historical rates…" : "Automatic pricing is available."}</strong><p>Model rates come from LiteLLM and are cached locally. No price entry or API key is needed.</p></div>}
     </section>
   );
 }
@@ -2875,7 +2884,7 @@ function CorpusPanel({
           <strong>${(report.costMicros / 1_000_000).toFixed(2)}</strong>
           <small>
             {report.unpricedTurns
-              ? `A floor · ${report.unpricedTurns.toLocaleString()} turns had no local rate`
+              ? `A floor · ${report.unpricedTurns.toLocaleString()} turns had no published rate`
               : "Every turn priced"}
           </small>
         </div>
@@ -3860,7 +3869,7 @@ function SessionWorkspace({
             budgetShare={budgetShare}
             onBudgetShare={setBudgetShare}
           />
-          <SpendDashboard cost={cost} loading={costLoading} onRun={onRunCost} />
+          <SpendDashboard cost={cost} loading={costLoading} enabled={activeView === "turns"} onRun={onRunCost} />
         </>
       ) : (
         <p className="empty-inline">This session has no reconstructable prompt turn.</p>
@@ -4197,7 +4206,7 @@ function NotificationOnboarding({
         <ul>
           <li>Existing sessions are baselined silently.</li>
           <li>Notification text never includes prompts, tool output, secrets, or full paths.</li>
-          <li>No network service is used.</li>
+          <li>Cost alerts download public model prices; session contents stay local.</li>
         </ul>
         <div>
           <button type='button' className='primary' data-modal-initial-focus onClick={() => onDecision(true)}>Enable monitoring</button>
@@ -5813,7 +5822,7 @@ export default function App() {
               <small>
                 {demoData
                   ? "Fabricated fixtures. No local logs are being read."
-                  : "Reads local logs. No network."}
+                  : "Local logs. Public pricing downloads."}
               </small>
             </span>
             <span>{showRoots ? "⌃" : "⌄"}</span>

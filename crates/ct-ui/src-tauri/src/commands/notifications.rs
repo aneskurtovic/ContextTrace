@@ -367,7 +367,7 @@ fn poll_session(
         .enabled()
         .then(|| ct_application::instruction_drift(&cached.session));
     let cost = if settings.cost_budget.delivery.enabled() && settings.cost_budget_micros.is_some() {
-        let report = ct_application::project_cost_scenario(
+        let report = state.app.project_cost(
             &cached.session,
             &ct_application::CostScenario {
                 forecast_turns: Some(10),

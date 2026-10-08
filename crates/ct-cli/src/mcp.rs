@@ -107,7 +107,7 @@ fn tool_definitions() -> Vec<Value> {
         json!({"name":"fidelity","description":"Show parse fidelity per turn and unassigned events.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
         json!({"name":"instructions","description":"Show observed instruction signatures and changes without returning instruction bodies.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
         json!({"name":"instruction_files","description":"Compare recorded repository instruction bodies with current files on disk. Refusals preserve missing/unavailable evidence.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
-        json!({"name":"cost","description":"Estimate observed request cost, optionally using a local pricing override and an explicit future-turn forecast.","inputSchema":object(json!({"id":{"type":"string"},"pricing":{"type":"string"},"forecast_turns":{"type":"integer","minimum":1},"model":{"type":"string"},"cap_input":{"type":"integer","minimum":0},"cap_output":{"type":"integer","minimum":0}}), &["id"])}),
+        json!({"name":"cost","description":"Estimate request cost with automatic current and historical LiteLLM rates, optionally using a contract override and an explicit future-turn forecast.","inputSchema":object(json!({"id":{"type":"string"},"pricing":{"type":"string"},"forecast_turns":{"type":"integer","minimum":1},"model":{"type":"string"},"cap_input":{"type":"integer","minimum":0},"cap_output":{"type":"integer","minimum":0}}), &["id"])}),
         json!({"name":"ghost","description":"Show context items gained, retained, and removed between two turns; refuses incomparable token instruments.","inputSchema":object(json!({"id":{"type":"string"},"left_turn":{"type":"integer","minimum":1},"right_turn":{"type":"integer","minimum":1}}), &["id","left_turn","right_turn"])}),
         json!({"name":"diff","description":"Compare two turns or sessions.","inputSchema":object(json!({"left":{"type":"string"},"right":{"type":"string"}}), &["left"])}),
         json!({"name":"secrets","description":"Find credential-shaped values without returning their values.","inputSchema":object(json!({"id":{"type":"string"}}), &["id"])}),
@@ -308,9 +308,9 @@ fn call_tool(
                 && scenario.cap_input_tokens.is_none()
                 && scenario.cap_output_tokens.is_none()
             {
-                serde_json::to_value(ct_application::project_cost_scenario(&session, &scenario))?
+                serde_json::to_value(app.project_cost(&session, &scenario))?
             } else {
-                serde_json::to_value(ct_application::compare_cost(&session, &scenario))?
+                serde_json::to_value(app.compare_cost(&session, &scenario))?
             };
             Ok(with_source(value, Some(&resolved.source), false))
         }

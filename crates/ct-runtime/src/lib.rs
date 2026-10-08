@@ -44,7 +44,10 @@ pub fn build() -> Runtime {
             Box::new(HeuristicEstimator::for_code()),
         ),
         AgentBinding::new(Box::new(CodexAdapter::new()), codex_estimator),
-    ]);
+    ])
+    .with_pricing(Box::new(ct_adapters::pricing::LiteLlmPricing::new(
+        Path::new(&archive_store().root()).join("pricing"),
+    )));
 
     Runtime { app, warnings }
 }
@@ -119,7 +122,7 @@ pub fn notification_store() -> FileNotificationStore {
 pub fn corpus_cache_path() -> PathBuf {
     Path::new(&archive_store().root())
         .join("corpus")
-        .join("report.json")
+        .join("report-v2-auto-pricing.json")
 }
 
 /// Where an exported session is written, given the archive root.

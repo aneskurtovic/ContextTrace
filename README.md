@@ -263,7 +263,7 @@ Run `ct <command> --help` for the full option surface.
 Updater-enabled Windows releases are available. See the [install
 instructions](#install) and [release downloads](https://github.com/aneskurtovic/ContextTrace/releases/latest).
 
-Configurable local pricing/forecasting, instruction-file comparisons and
+Automatic third-party pricing/forecasting, instruction-file comparisons and
 temporal ghost views are available in the CLI, MCP surface and desktop app.
 
 Deliberately deferred: a persistent SQLite index, until measured
@@ -272,10 +272,34 @@ certificate until the production-release decision.
 
 No dates or promises. See the [public roadmap](docs/ROADMAP.md).
 
-### Local pricing overrides
+### Automatic model pricing
+
+The desktop, CLI, MCP, corpus totals and cost-budget notifications use
+[LiteLLM's public price catalog](https://docs.litellm.ai/docs/completion/token_usage)
+automatically. No price entry, account or API key is needed. Rates are matched
+by exact model ID; request timestamps select the catalog revision recorded at
+or before that request through the public GitHub commits API. Untimed requests
+use current rates with an explicit warning. Forecasts reprice average recorded
+usage at current rates.
+
+Catalog revisions and date indices are cached under the archive root in
+`pricing/`; mutable indices refresh hourly. Cached revisions remain available
+offline. Missing history, unknown model IDs, missing cache rates and failed
+lookups stay unpriced, with partial totals and no forecast. GitHub public API
+limits can delay uncached lookups; failed requests back off for one minute.
+Only public catalog data and date queries are downloaded; session content,
+paths, IDs and model names are never uploaded.
+
+These are standard text-token list-price estimates, not subscription bills.
+Git timestamps record when LiteLLM observed a rate, not guaranteed vendor
+effective dates. Media/tool charges, negotiated discounts, service tiers and
+non-default cache durations are outside the estimate. Per-turn results retain
+the immutable revision URL and version for auditability.
+
+### Advanced contract overrides
 
 `ct cost <id> --pricing pricing.json --forecast-turns 20` reads a local JSON
-override without changing the bundled table. Rates are integer microdollars per
+contract override; unmatched models still use automatic rates. Rates are integer microdollars per
 million tokens so the file remains exact and reviewable:
 
 ```json
@@ -296,7 +320,7 @@ million tokens so the file remains exact and reviewable:
 }
 ```
 
-The forecast uses the average priced turn as an estimate for the explicit
+The forecast uses average recorded token usage at current rates for the explicit
 additional-turn horizon; future model choice, cache state and agent behaviour
 are not observed.
 

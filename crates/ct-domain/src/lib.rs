@@ -25,6 +25,7 @@
 
 pub mod model;
 pub mod ports;
+pub mod pricing;
 pub mod services;
 
 pub use model::analysis::ContentMeasurement;

@@ -278,6 +278,28 @@ describe("desktop accessibility and state handling", () => {
     ).toBe("false");
   });
 
+  it("loads third-party prices automatically without a pricing file field", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    expect(await screen.findByText("Automatic prices from LiteLLM")).not.toBeNull();
+    expect(screen.queryByLabelText("Pricing file path")).toBeNull();
+    await waitFor(() => expect(mockedApi.getCost).toHaveBeenCalledWith(demoSessions[0].agent, demoSessions[0].id, null, 10));
+  });
+
+  it("shows unavailable pricing and the reason instead of a complete zero estimate", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getCost.mockResolvedValue({ ...demoCost(demoSessions[0].id, 0), total: 0, turns: [],
+      unpriced: [{ turn: 1, model: "unknown-model", reason: "No historical price is available" }], forecast: null });
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    expect(await screen.findByText("Partial spend estimate")).not.toBeNull();
+    expect(screen.getByText(/unknown-model: No historical price is available/)).not.toBeNull();
+    expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
+  });
+
   it("reports an API failure in an alert that can be dismissed", async () => {
     mockedApi.searchSessions.mockRejectedValueOnce(new Error("invalid response from session list"));
 
@@ -988,7 +1010,7 @@ describe("corpus overview", () => {
     // A cost total without its unpriced count reads as complete when it is a
     // floor, and a corpus with no measured compaction is not a corpus where
     // compaction freed nothing. Both caveats have to be on screen.
-    expect(screen.getByText(/2,046 turns had no local rate/)).not.toBeNull();
+    expect(screen.getByText(/2,046 turns had no published rate/)).not.toBeNull();
     expect(screen.getByText(/no before\/after sizes recorded/i)).not.toBeNull();
     expect(
       screen.getByText(/53 of 134 sessions never recorded both a prompt size/),

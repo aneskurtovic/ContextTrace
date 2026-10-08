@@ -142,7 +142,7 @@ export interface CorpusReport {
   toolCalls: number;
   toolErrors: number;
   costMicros: number;
-  /** Turns no local rate could price, which makes every cost above a floor. */
+  /** Turns no published rate could price, which makes every cost above a floor. */
   unpricedTurns: number;
   pressure: PressureBands;
   byAgent: AgentTotals[];
@@ -333,6 +333,8 @@ export interface CostForecast {
 }
 
 export interface CostTurn {
+  pricingVersion?: string;
+  pricingSource?: string;
   turn: number;
   model: string | null;
   priced: boolean;

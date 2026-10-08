@@ -44,8 +44,7 @@ pub use corpus::{
 pub use cost::{
     compare as compare_cost, project as project_cost, project_scenario as project_cost_scenario,
     project_with as project_cost_with, CostCategory, CostComparison, CostForecast, CostReport,
-    CostScenario, CostTurn, MoneyMicros, PricingCatalog, PricingOverrideRate, PricingOverrides,
-    UnpricedTurn,
+    CostScenario, CostTurn, MoneyMicros, PricingOverrideRate, PricingOverrides, UnpricedTurn,
 };
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
@@ -170,11 +169,28 @@ pub struct ResolvedSession {
 /// The application service. One instance wires every supported agent.
 pub struct ContextTrace {
     bindings: Vec<AgentBinding>,
+    pricing: Box<dyn ct_domain::pricing::PricingProvider>,
 }
 
 impl ContextTrace {
     pub fn new(bindings: Vec<AgentBinding>) -> Self {
-        Self { bindings }
+        Self {
+            bindings,
+            pricing: Box::new(ct_domain::pricing::UnavailablePricing),
+        }
+    }
+
+    pub fn with_pricing(mut self, pricing: Box<dyn ct_domain::pricing::PricingProvider>) -> Self {
+        self.pricing = pricing;
+        self
+    }
+
+    pub fn project_cost(&self, session: &AgentSession, scenario: &CostScenario) -> CostReport {
+        cost::project_scenario_with_provider(session, scenario, self.pricing.as_ref())
+    }
+
+    pub fn compare_cost(&self, session: &AgentSession, scenario: &CostScenario) -> CostComparison {
+        cost::compare_with_provider(session, scenario, self.pricing.as_ref())
     }
 
     /// Every local directory that will be read.
@@ -673,10 +689,15 @@ impl ContextTrace {
         let mut collected = corpus::Corpus::new();
         for binding in &self.bindings {
             let before = done;
-            corpus::sweep_adapter(binding.adapter.as_ref(), &mut collected, |completed| {
-                done = before + completed;
-                progress(done, total);
-            });
+            corpus::sweep_adapter_with_pricing(
+                binding.adapter.as_ref(),
+                &mut collected,
+                self.pricing.as_ref(),
+                |completed| {
+                    done = before + completed;
+                    progress(done, total);
+                },
+            );
         }
         collected.finish()
     }

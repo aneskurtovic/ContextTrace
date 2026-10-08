@@ -151,6 +151,7 @@ pub struct AppState {
         Option<(
             Vec<ct_domain::SessionFingerprint>,
             ct_application::CorpusReport,
+            std::time::Instant,
         )>,
     >,
 }
@@ -912,7 +913,11 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .as_ref()
-                .filter(|(seen, _)| *seen == fingerprint)
+                .filter(|(seen, report, when)| {
+                    *seen == fingerprint
+                        && when.elapsed().as_secs()
+                            < if report.unpriced_turns > 0 { 60 } else { 3600 }
+                })
             {
                 return Ok(CorpusSummary::from_cached(&cached.1, true));
             }
@@ -924,7 +929,8 @@ impl AppState {
                 *self
                     .corpus
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    Some((fingerprint, report, std::time::Instant::now()));
                 return Ok(summary);
             }
         }
@@ -940,7 +946,8 @@ impl AppState {
         *self
             .corpus
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((fingerprint, report, std::time::Instant::now()));
         Ok(summary)
     }
 
@@ -952,7 +959,7 @@ impl AppState {
     /// real sweep reconcile behind them. It is offered as last time's answer
     /// -- `cached` is true -- and never as a claim about now.
     fn corpus_remembered(&self) -> Option<CorpusSummary> {
-        if let Some((_, report)) = self
+        if let Some((_, report, _)) = self
             .corpus
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1144,16 +1151,14 @@ impl AppState {
         let pricing = pricing_path
             .map(ct_application::PricingOverrides::from_path)
             .transpose()?;
-        Ok(CostReportSummary::from(
-            ct_application::project_cost_scenario(
-                &cached.session,
-                &ct_application::CostScenario {
-                    forecast_turns,
-                    pricing,
-                    ..Default::default()
-                },
-            ),
-        ))
+        Ok(CostReportSummary::from(self.app.project_cost(
+            &cached.session,
+            &ct_application::CostScenario {
+                forecast_turns,
+                pricing,
+                ..Default::default()
+            },
+        )))
     }
 
     fn temporal_ghost(
@@ -2842,6 +2847,8 @@ impl From<CostCategory> for CostCategorySummary {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CostTurnSummary {
+    pricing_version: String,
+    pricing_source: String,
     turn: u32,
     model: Option<String>,
     priced: bool,
@@ -2852,6 +2859,8 @@ pub struct CostTurnSummary {
 impl From<CostTurn> for CostTurnSummary {
     fn from(value: CostTurn) -> Self {
         Self {
+            pricing_version: value.pricing_version,
+            pricing_source: value.pricing_source,
             turn: value.turn,
             model: value.model,
             priced: value.priced,
@@ -3167,7 +3176,19 @@ fn read_corpus_cache(
     fingerprint: &[ct_domain::SessionFingerprint],
 ) -> Option<ct_application::CorpusReport> {
     let cached = read_corpus_cache_file()?;
-    (cached.fingerprint == fingerprint).then_some(cached.report)
+    let age = fs::metadata(ct_runtime::corpus_cache_path())
+        .ok()?
+        .modified()
+        .ok()?
+        .elapsed()
+        .ok()?
+        .as_secs();
+    let ttl = if cached.report.unpriced_turns > 0 {
+        60
+    } else {
+        3600
+    };
+    (cached.fingerprint == fingerprint && age < ttl).then_some(cached.report)
 }
 
 /// Remember this sweep for the next launch. Best effort, by design.
