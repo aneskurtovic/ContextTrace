@@ -630,6 +630,7 @@ mod tests {
                     call_id: None,
                     char_len: 20,
                     target: Some("src/main.rs".into()),
+                    file_target: None,
                 },
             ),
             event(

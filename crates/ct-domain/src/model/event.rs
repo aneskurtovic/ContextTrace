@@ -118,6 +118,9 @@ pub enum EventKind {
         /// 14,805 tokens but not which *file*, which is one question short of
         /// the one being asked.
         target: Option<String>,
+        /// Exact filesystem target, separate from the shortened display label.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_target: Option<FileTarget>,
     },
     ToolResult {
         tool: Option<String>,
@@ -166,6 +169,14 @@ pub enum EventKind {
     /// it in full, and the corpus smoke test reports these as a histogram --
     /// which is how we discover that an agent changed its format.
     Unrecognised,
+}
+
+/// A path explicitly supplied as a tool argument. Relative paths need the
+/// call's own working directory; the viewer's current directory is irrelevant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileTarget {
+    pub path: String,
+    pub working_directory: Option<String>,
 }
 
 /// What an agent told us about a compaction.

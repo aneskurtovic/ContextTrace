@@ -610,7 +610,20 @@ export interface ContributorSummary {
  * from: three tool outputs do not account for 100% of the context, and the
  * rest of it is exactly what someone expanding the row needs to keep in view.
  */
+export interface FileTarget {
+  path: string;
+  resolvedPath: string | null;
+  status: "file" | "directory" | "missing" | "unresolved" | "unreadable";
+  canOpen: boolean;
+}
+
+export interface NotificationActivation {
+  notification: NotificationRecord | null;
+  unavailable: boolean;
+}
+
 export interface ContextItemSummary {
+  fileTarget?: FileTarget | null;
   id: string;
   label: string;
   category: string;

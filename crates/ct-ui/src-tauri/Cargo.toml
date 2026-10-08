@@ -35,19 +35,19 @@ chrono.workspace = true
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
+# Pin versions that retain the workspace Rust 1.88 minimum.
+tauri-plugin-opener = "=2.5.3"
+tauri-plugin-deep-link = "=2.4.7"
 # A second instance polls the same logs and writes the same notification store
 # as the first, with no cross-process locking between them. There is no use for
 # two, so there is one.
 tauri-plugin-single-instance = "2"
 
-# The toast API `tauri-plugin-notification` already builds on, named directly
-# because the plugin's own `show()` spawns the send and discards its `Result`.
-# That made every recorded delivery an assumption; calling this synchronously is
-# what lets the desktop report what Windows actually said. Already in the
-# compiled graph beneath the plugin, so this adds an edge, not a crate. Target
-# scoped because it is the Windows delivery path and nothing else.
+# WinRT is already in the notification dependency graph. Direct XML enables
+# protocol activation for clicks after process exit while retaining synchronous
+# delivery errors. Keep it Windows-only.
 [target.'cfg(windows)'.dependencies]
-tauri-winrt-notification = "0.7.3"
+windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications"] }
 
 [dev-dependencies]
 ct-adapters.workspace = true

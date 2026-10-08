@@ -24,17 +24,20 @@ pub fn run() {
         // whether this process should keep running at all, so every other
         // plugin's setup would otherwise happen in a process we are about to
         // hand off to and exit.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            use tauri::Manager;
-            if let Some(window) = app.webview_windows().values().next() {
-                let _ = window.set_focus();
-            }
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            commands::notifications::activation::focus(app);
+            commands::notifications::activation::receive(app, argv);
         }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(commands::notifications::activation::ActivationState::default())
         .manage(commands::AppState::new())
         .manage(commands::notifications::NotificationState::new())
         .setup(|app| {
+            // Startup arguments are queued until the webview has subscribed.
+            commands::notifications::activation::receive(app.handle(), std::env::args());
             commands::notifications::start_monitor(app.handle().clone());
             Ok(())
         })
@@ -46,6 +49,8 @@ pub fn run() {
             commands::search_memory,
             commands::inspect_session,
             commands::get_context,
+            commands::local_files::open_context_file,
+            commands::notifications::activation::take_notification_activations,
             commands::get_corpus,
             commands::get_corpus_cached,
             commands::get_transcript,

@@ -11,11 +11,9 @@
 //! over inference, a delivery status that cannot come back false is the defect,
 //! not a cosmetic one.
 //!
-//! So this module calls the same underlying toast API the plugin does --
-//! `tauri_winrt_notification`, already in the dependency graph beneath it --
-//! synchronously, and reports what Windows actually said. The plugin is still
-//! what the app initialises and what answers `permission_state`; only the send
-//! moved here.
+//! This module calls WinRT synchronously and reports Windows errors. The toast
+//! XML includes a registered protocol destination so clicking also launches a
+//! closed app. The notification plugin still provides the permission query.
 //!
 //! # Why an `Ok` from Windows is still not enough
 //!
@@ -110,6 +108,7 @@ pub fn deliver(
     deliverability: &Deliverability,
     title: &str,
     body: &str,
+    launch: &str,
 ) -> ct_domain::OsDeliveryStatus {
     let Deliverability::Ready { app_id } = deliverability else {
         return ct_domain::OsDeliveryStatus::Failed {
@@ -118,16 +117,24 @@ pub fn deliver(
                 .unwrap_or_else(|| "undeliverable".into()),
         };
     };
-    show(app_id, title, body)
+    show(app_id, title, body, launch)
 }
 
+// The wrapper previously used here has no launch/activationType support.
+// WinRT is already in the dependency graph; protocol activation also survives
+// process exit, unlike an in-process Activated callback.
 #[cfg(windows)]
-fn show(app_id: &str, title: &str, body: &str) -> ct_domain::OsDeliveryStatus {
-    match tauri_winrt_notification::Toast::new(app_id)
-        .title(title)
-        .text1(body)
-        .show()
-    {
+fn show(app_id: &str, title: &str, body: &str, launch: &str) -> ct_domain::OsDeliveryStatus {
+    use windows::core::HSTRING;
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+    let send = || -> windows::core::Result<()> {
+        let xml = XmlDocument::new()?;
+        xml.LoadXml(&HSTRING::from(toast_xml(title, body, launch)))?;
+        let toast = ToastNotification::CreateToastNotification(&xml)?;
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))?.Show(&toast)
+    };
+    match send() {
         Ok(()) => ct_domain::OsDeliveryStatus::Delivered,
         Err(error) => ct_domain::OsDeliveryStatus::Failed {
             reason: error.to_string(),
@@ -136,10 +143,27 @@ fn show(app_id: &str, title: &str, body: &str) -> ct_domain::OsDeliveryStatus {
 }
 
 #[cfg(not(windows))]
-fn show(_app_id: &str, _title: &str, _body: &str) -> ct_domain::OsDeliveryStatus {
+fn show(_app_id: &str, _title: &str, _body: &str, _launch: &str) -> ct_domain::OsDeliveryStatus {
     ct_domain::OsDeliveryStatus::Failed {
         reason: "OS notifications are supported on Windows only.".into(),
     }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn toast_xml(title: &str, body: &str, launch: &str) -> String {
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\"', "&quot;")
+            .replace('\'', "&apos;")
+    };
+    format!(
+        r#"<toast activationType="protocol" launch="{}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        escape(launch),
+        escape(title),
+        escape(body)
+    )
 }
 
 /// Work out, from this machine, whether toasts can be delivered.
@@ -262,6 +286,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn toast_body_and_launch_are_xml_escaped_and_use_protocol_activation() {
+        let xml = toast_xml(
+            "Title < & >",
+            "body \" ' &",
+            "contexttrace://notification/42",
+        );
+        assert!(xml.contains("activationType=\"protocol\""));
+        assert!(xml.contains("launch=\"contexttrace://notification/42\""));
+        assert!(xml.contains("Title &lt; &amp; &gt;"));
+        assert!(xml.contains("body &quot; &apos; &amp;"));
+    }
+
+    #[test]
     fn a_ready_build_has_nothing_to_explain() {
         let ready = Deliverability::Ready {
             app_id: "dev.contexttrace.desktop".into(),
@@ -306,6 +343,7 @@ mod tests {
             },
             "Context compacted",
             "Compaction reclaimed prompt space.",
+            "contexttrace://notifications",
         );
         let ct_domain::OsDeliveryStatus::Failed { reason } = status else {
             panic!("an unregistered app id cannot deliver");

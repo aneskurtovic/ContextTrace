@@ -1009,6 +1009,13 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
                 }),
                 call_id: str_field(payload, "call_id"),
                 char_len,
+                file_target: payload
+                    .get("arguments")
+                    .or_else(|| payload.get("input"))
+                    .and_then(|input| match input {
+                        Value::String(encoded) => crate::tool_target::file_target_encoded(encoded),
+                        _ => crate::tool_target::file_target(input, None),
+                    }),
                 // Codex encodes the arguments object as a string, so unlike
                 // Claude Code this needs decoding before it can be read.
                 target: str_field(payload, "arguments")
@@ -1028,6 +1035,7 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
         }
         Some("local_shell_call") => EventKind::ToolCall {
             tool: "local_shell".into(),
+            file_target: None,
             call_id: str_field(payload, "call_id").or_else(|| str_field(payload, "id")),
             char_len,
             target: payload
@@ -1074,6 +1082,7 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
         // context and they land in the unattributed remainder; saying more than
         // that would be guessing at how the harness replays them.
         Some("web_search_call") => EventKind::ToolCall {
+            file_target: None,
             tool: "web_search".into(),
             call_id: str_field(payload, "id"),
             char_len,
@@ -2018,6 +2027,7 @@ mod tests {
                 call_id,
                 target,
                 char_len,
+                ..
             } => {
                 assert_eq!(tool, "web_search");
                 assert_eq!(call_id.as_deref(), Some("ws_1"));

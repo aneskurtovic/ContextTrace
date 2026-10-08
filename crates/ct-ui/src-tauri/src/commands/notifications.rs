@@ -1,5 +1,6 @@
 //! Notification persistence, IPC presentation and live-session monitoring.
 
+pub mod activation;
 mod delivery;
 
 use super::AppState;
@@ -523,7 +524,8 @@ pub fn send_test_notification(
     let outcome = delivery::deliver(
         &deliverability,
         "ContextTrace test notification",
-        "If you can see this, OS notifications are reaching you.",
+        "Click to open ContextTrace notifications.",
+        "contexttrace://notifications",
     );
     TestNotificationDto {
         delivered: matches!(outcome, OsDeliveryStatus::Delivered),
@@ -911,6 +913,7 @@ fn deliver_os(
             state.deliverability(app),
             &record.candidate.title,
             &record.candidate.body,
+            &format!("contexttrace://notification/{}", record.id),
         ),
         Ok(permission) => OsDeliveryStatus::Failed {
             reason: format!("OS notification permission is {permission:?}"),

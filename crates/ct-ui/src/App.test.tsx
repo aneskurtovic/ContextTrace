@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import * as api from "./api";
@@ -65,6 +66,9 @@ vi.mock("./api", () => ({
   dismissNotification: vi.fn(),
   clearNotificationHistory: vi.fn(),
   listenForNotificationUpdates: vi.fn(),
+  listenForNotificationActivations: vi.fn(),
+  takeNotificationActivations: vi.fn(),
+  openContextFile: vi.fn(),
   listenForSessionUpdates: vi.fn(),
   searchMemory: vi.fn(),
 }));
@@ -168,6 +172,9 @@ beforeEach(() => {
   mockedApi.dismissNotification.mockResolvedValue(undefined);
   mockedApi.clearNotificationHistory.mockResolvedValue(undefined);
   mockedApi.listenForNotificationUpdates.mockResolvedValue(() => undefined);
+  mockedApi.listenForNotificationActivations.mockResolvedValue(() => undefined);
+  mockedApi.takeNotificationActivations.mockResolvedValue([]);
+  mockedApi.openContextFile.mockResolvedValue(undefined);
   mockedApi.listenForSessionUpdates.mockResolvedValue(() => undefined);
 });
 
@@ -1180,6 +1187,88 @@ describe("conversation", () => {
 });
 
 describe('notifications', () => {
+  it.each(['Overview', 'Context', 'Compare', 'Save & export'] as const)(
+    'opens a finding at its conversation line from %s', async (view) => {
+      mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+      const entry = { index: 0, line: 191, text: 'linked notification record', kind: 'toolResult' as const,
+        turn: 25, label: null, truncated: false, chars: 26, sidechain: false, error: false, collapsed: true };
+      mockedApi.getTranscript.mockResolvedValue({ entries: [entry], total: 1, offset: 0, hasMore: false });
+      // Compaction used to bypass Conversation even when it named a record.
+      mockedApi.listNotifications.mockResolvedValue({ ...demoNotificationPage, notifications: [{
+        ...demoNotificationPage.notifications[1], location: { ...demoNotificationPage.notifications[1].location, sourceLine: 191 },
+      }] });
+      render(<App />);
+      await openView(view);
+      fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+      const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+      fireEvent.click(drawer.querySelector('.notification-card')!);
+      await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+      await waitFor(() => {
+        const row = screen.getByText('linked notification record').closest<HTMLElement>('.transcript-entry')!;
+        expect(row?.classList.contains('highlighted')).toBe(true);
+        expect(within(row).getByRole('button', { name: 'Collapse' })).toBeTruthy();
+      });
+    },
+  );
+
+  it('queues startup toast navigation until the selected session loads', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const detail = deferred<SessionDetail>();
+    mockedApi.inspectSession.mockReturnValue(detail.promise);
+    const entry = { index: 0, line: 191, text: 'cold start linked record', kind: 'toolResult' as const,
+      turn: 25, label: null, truncated: false, chars: 24, sidechain: false, error: false, collapsed: true };
+    mockedApi.getTranscript.mockResolvedValue({ entries: [entry], total: 1, offset: 0, hasMore: false });
+    mockedApi.takeNotificationActivations.mockResolvedValueOnce([{ unavailable: false, notification: {
+      ...demoNotificationPage.notifications[1], location: { ...demoNotificationPage.notifications[1].location, sourceLine: 191 },
+    } }]);
+    render(<StrictMode><App /></StrictMode>);
+    await waitFor(() => expect(mockedApi.inspectSession).toHaveBeenCalled());
+    expect(mockedApi.getTranscript).not.toHaveBeenCalled();
+    detail.resolve(demoDetail(demoSessions[0].id));
+    await waitFor(() => {
+      expect(screen.getByText('cold start linked record').closest('.transcript-entry')?.classList.contains('highlighted')).toBe(true);
+    });
+    expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('handles a live toast activation while another tab is active', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    let activate!: () => void;
+    mockedApi.listenForNotificationActivations.mockImplementation(async (callback) => { activate = callback; return () => undefined; });
+    render(<App />);
+    await openView('Overview');
+    await waitFor(() => expect(mockedApi.takeNotificationActivations).toHaveBeenCalled());
+    mockedApi.takeNotificationActivations.mockResolvedValueOnce([{ unavailable: false, notification: {
+      ...demoNotificationPage.notifications[1], location: { ...demoNotificationPage.notifications[1].location, sourceLine: 191 },
+    } }]);
+    activate();
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+  });
+
+  it('explains an expired toast and opens the feed instead of silently doing nothing', async () => {
+    mockedApi.takeNotificationActivations.mockResolvedValueOnce([{ notification: null, unavailable: true }]);
+    render(<App />);
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(within(drawer).getByRole('alert').textContent).toContain('no longer in local history');
+  });
+
+  it('opens Conversation and pages to findings that name a turn without a source line', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const turn = demoNotificationPage.notifications[0].location.turn!;
+    const entry = (index: number, turn: number, text: string) => ({ index, line: 100 + index, turn, text,
+      kind: 'toolResult' as const, label: null, truncated: false, chars: text.length, sidechain: false, error: false, collapsed: true });
+    mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset = 0) => offset === 0
+      ? { entries: [entry(0, 1, 'earlier turn')], total: 2, offset: 0, hasMore: true }
+      : { entries: [entry(1, turn, 'turn-linked notification record')], total: 2, offset: 1, hasMore: false });
+    render(<App />);
+    await openView('Compare');
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click((await screen.findByRole('dialog', { name: 'Notifications' })).querySelector('.notification-card')!);
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+    await waitFor(() => expect(screen.getByText('turn-linked notification record').closest('.transcript-entry')?.classList.contains('highlighted')).toBe(true));
+    expect(mockedApi.getTranscript).toHaveBeenCalledWith('codex', demoSessions[0].id, 1);
+  });
+
   it('contains keyboard focus in the drawer and restores it to the opener', async () => {
     render(<App />);
     const bell = await screen.findByRole('button', { name: /^Notifications/ });
@@ -1200,7 +1289,7 @@ describe('notifications', () => {
     expect(document.activeElement).toBe(bell);
   });
 
-  it('opens the feed, marks a finding read, and navigates to its session turn', async () => {
+  it('opens the feed, marks a finding read, and switches to its conversation record', async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
 
@@ -1211,7 +1300,8 @@ describe('notifications', () => {
 
     fireEvent.click(drawer.querySelectorAll('.notification-card')[1]);
     await waitFor(() => expect(mockedApi.markNotificationsRead).toHaveBeenCalledWith(['demo-notification-compaction']));
-    await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith('codex', demoSessions[0].id, 18));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+    await waitFor(() => expect(mockedApi.getTranscript).toHaveBeenCalledWith('codex', demoSessions[0].id, 0));
     expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
   });
 
@@ -1704,6 +1794,34 @@ describe("comparing turns across two sessions", () => {
 });
 
 describe("composition items and drill-down", () => {
+  it('opens exact file targets by item identity and leaves other labels as text', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const context = demoContext();
+    const base = context.items.find((item) => item.category === 'tool-outputs')!;
+    const path = `C:/work/${'long folder/'.repeat(20)}image  one.png`;
+    context.items = [
+      { ...base, id: 'local-image', label: 'Read C:/work/long folder/…', fileTarget: { path, resolvedPath: path, status: 'file', canOpen: true } },
+      { ...base, id: 'removed-image', label: 'Read C:/temp/gone.png', fileTarget: { path: 'C:/temp/gone.png', resolvedPath: 'C:/temp/gone.png', status: 'missing', canOpen: false } },
+      { ...base, id: 'query', label: 'Search C:/work/image.png' },
+    ];
+    mockedApi.getContext.mockResolvedValue(context);
+    mockedApi.openContextFile.mockRejectedValueOnce(new Error('File no longer available.'));
+    render(<App />);
+    await openView('Context');
+    fireEvent.click(await screen.findByTitle('Show the items behind Tool outputs'));
+    const items = within(document.querySelector('.composition-items')! as HTMLElement);
+    const link = items.getByRole('button', { name: 'Read C:/work/long folder/…' });
+    expect(link.title).toBe(path);
+    fireEvent.click(link);
+    await waitFor(() => expect(mockedApi.openContextFile).toHaveBeenCalledWith('codex', demoSessions[0].id, context.turn, 'local-image', 'open'));
+    expect((await items.findByRole('alert')).textContent).toContain('File no longer available');
+    fireEvent.click(items.getByRole('button', { name: 'Show in Explorer' }));
+    await waitFor(() => expect(mockedApi.openContextFile).toHaveBeenLastCalledWith('codex', demoSessions[0].id, context.turn, 'local-image', 'reveal'));
+    expect(items.queryByRole('button', { name: 'Read C:/temp/gone.png' })).toBeNull();
+    expect(items.queryByRole('button', { name: 'Search C:/work/image.png' })).toBeNull();
+    expect(items.getByText('File no longer available')).toBeTruthy();
+  });
+
   it("expands and collapses category rows, showing items on expand and hiding on collapse", async () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 

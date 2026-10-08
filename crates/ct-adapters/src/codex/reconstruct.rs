@@ -381,6 +381,7 @@ mod tests {
                     tool: "shell".into(),
                     call_id: Some("call-1".into()),
                     target: Some("cargo test".into()),
+                    file_target: None,
                     char_len: 20,
                 },
                 Some(TurnNumber::FIRST),

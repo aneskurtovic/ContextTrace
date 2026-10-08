@@ -475,6 +475,9 @@ fn assistant_kind(v: &Value) -> EventKind {
                 call_id: str_field(tool, "id"),
                 char_len,
                 target: tool.get("input").and_then(crate::tool_target::describe),
+                file_target: tool.get("input").and_then(|input| {
+                    crate::tool_target::file_target(input, v.get("cwd").and_then(Value::as_str))
+                }),
             };
         }
         let has_thinking = blocks.iter().any(|b| block_type(b) == Some("thinking"));
@@ -967,6 +970,12 @@ pub(crate) fn transcript_blocks(line: &str) -> Vec<ct_domain::ports::TranscriptB
                     call_id: str_field(block, "id"),
                     char_len,
                     target: block.get("input").and_then(crate::tool_target::describe),
+                    file_target: block.get("input").and_then(|input| {
+                        crate::tool_target::file_target(
+                            input,
+                            value.get("cwd").and_then(Value::as_str),
+                        )
+                    }),
                 },
                 Some("tool_result") => EventKind::ToolResult {
                     tool: None,

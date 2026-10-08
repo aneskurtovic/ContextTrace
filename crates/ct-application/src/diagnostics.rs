@@ -480,6 +480,7 @@ mod tests {
                     call_id: Some("toolu_017".into()),
                     char_len: 40,
                     target: None,
+                    file_target: None,
                 },
             ),
             event(

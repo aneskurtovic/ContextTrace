@@ -21,6 +21,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter};
 
+pub mod local_files;
 pub mod notifications;
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
@@ -635,6 +636,7 @@ impl AppState {
             .iter()
             .map(|item| (&item.id, item))
             .collect();
+        let file_targets = local_files::TargetIndex::new(&cached.session, snapshot.items());
         let items = snapshot
             .largest_contributors(usize::MAX)
             .into_iter()
@@ -650,6 +652,7 @@ impl AppState {
                     confidence: item.confidence,
                     first_seen_turn: body.and_then(|body| body.first_seen_turn).map(|t| t.get()),
                     preview: body.and_then(|body| body.preview.clone()),
+                    file_target: body.and_then(|body| file_targets.target(body)),
                 }
             })
             .collect();
@@ -2234,6 +2237,7 @@ pub struct ContributorSummary {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextItemSummary {
+    file_target: Option<local_files::FileTargetDto>,
     id: String,
     label: String,
     category: String,
@@ -3501,6 +3505,67 @@ mod tests {
             )
             .expect("list committed synthetic fixtures")
             .sessions
+    }
+
+    #[test]
+    fn composition_keeps_exact_file_targets_on_calls_and_results_and_rechecks_missing_files() {
+        let homes = FixtureHomes::new();
+        let directory = homes
+            .root
+            .join(format!("{}end", "long directory ".repeat(7)));
+        fs::create_dir_all(&directory).unwrap();
+        let image = directory.join("image  one.png");
+        fs::write(&image, b"fixture image bytes").unwrap();
+        let exact_path = image.display().to_string();
+        assert!(exact_path.chars().count() > 180);
+        let session_path = homes
+            .claude_home
+            .join("projects/C--repos-demo/fixture-claude.jsonl");
+        let body = fs::read_to_string(&session_path).unwrap();
+        let lines: Vec<_> = body
+            .lines()
+            .map(|line| {
+                let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                if value["uuid"] == "m2" {
+                    value["message"]["content"][0]["input"]["file_path"] =
+                        exact_path.clone().into();
+                }
+                value.to_string()
+            })
+            .collect();
+        let abandoned = serde_json::json!({
+            "type": "assistant", "uuid": "other-branch", "parentUuid": "u2", "requestId": "other-request",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1",
+                "name": "Read", "input": {"file_path": "C:/wrong-branch.png"}}]}
+        });
+        fs::write(
+            &session_path,
+            format!("{}\n{abandoned}\n", lines.join("\n")),
+        )
+        .unwrap();
+        let state = homes.state();
+        let id = session_id(&all_sessions(&state), "claude-code");
+        let context = state.context(AgentKind::ClaudeCode, &id, Some(2)).unwrap();
+        for id in ["claude:5", "claude:6"] {
+            let item = context.items.iter().find(|item| item.id == id).unwrap();
+            assert!(item.label.ends_with('…'), "{id}: {}", item.label);
+            let target = item.file_target.as_ref().unwrap();
+            assert_eq!(target.path, exact_path);
+            assert_eq!(target.status, "file");
+            assert!(target.can_open);
+        }
+        fs::remove_file(&image).unwrap();
+        let context = state.context(AgentKind::ClaudeCode, &id, Some(2)).unwrap();
+        let target = context
+            .items
+            .iter()
+            .find(|item| item.id == "claude:6")
+            .unwrap()
+            .file_target
+            .as_ref()
+            .unwrap();
+        assert_eq!(target.status, "missing");
+        assert!(!target.can_open);
     }
 
     /// An estimator that leaves `chars_per_token` at the port's default

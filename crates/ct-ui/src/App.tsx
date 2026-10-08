@@ -1125,12 +1125,47 @@ const COMPOSITION_ITEM_PREVIEW_LIMIT = 8;
  * reported total precisely because it is *not* attributable to logged items,
  * so "no items found" would state the opposite of what the row measures.
  */
+function CompositionFile({ item, session, turn }: { item: ContextItemSummary; session: SessionSummary; turn: number }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const target = item.fileTarget;
+  if (!target) return <strong className="composition-item-label" title={item.label}>{item.label}</strong>;
+  const available = target.status === "file" || target.status === "directory";
+  const act = async (action: "open" | "reveal") => {
+    setError(null); setBusy(true);
+    try { await api.openContextFile(session.agent, session.id, turn, item.id, action); }
+    catch (problem) { setError(errorMessage(problem)); }
+    finally { setBusy(false); }
+  };
+  return <div className="composition-file">
+    {target.canOpen ? <button type="button" className="composition-item-label file-link" title={target.resolvedPath ?? target.path}
+      disabled={busy} onClick={() => void act("open")}>{item.label}</button>
+      : <strong className="composition-item-label" title={target.path}>{item.label}</strong>}
+    <div className="composition-file-actions">
+      {available && <button type="button" disabled={busy} onClick={() => void act("reveal")}>Show in Explorer</button>}
+      <button type="button" onClick={() => {
+        setError(null);
+        Promise.resolve().then(() => {
+          if (!navigator.clipboard) throw new Error("Clipboard is unavailable. Copy the path from the tooltip.");
+          return navigator.clipboard.writeText(target.resolvedPath ?? target.path);
+        }).catch((problem) => setError(errorMessage(problem)));
+      }}>Copy path</button>
+      {!available && <span>{target.status === "missing" ? "File no longer available" : target.status === "unresolved" ? "Path unavailable locally" : "File could not be accessed"}</span>}
+    </div>
+    {error && <p className="composition-file-error" role="alert">{error}</p>}
+  </div>;
+}
+
 function CompositionItems({
   category,
   items,
+  session,
+  turn,
 }: {
   category: CategorySummary;
   items: ContextItemSummary[];
+  session: SessionSummary;
+  turn: number;
 }) {
   const shown = items.slice(0, COMPOSITION_ITEM_PREVIEW_LIMIT);
   const remaining = items.length - shown.length;
@@ -1140,9 +1175,7 @@ function CompositionItems({
         <>
           {shown.map((item) => (
             <div className="composition-item" key={item.id}>
-              <strong className="composition-item-label" title={item.label}>
-                {item.label}
-              </strong>
+              <CompositionFile item={item} session={session} turn={turn} />
               <span className="composition-item-number">
                 {formatTokens(item.tokens)} · {formatPercent(item.share)}
               </span>
@@ -1169,7 +1202,7 @@ function CompositionItems({
   );
 }
 
-function ContextComposition({ context }: { context: ContextDetail }) {
+function ContextComposition({ context, session }: { context: ContextDetail; session: SessionSummary }) {
   const categories = Array.isArray(context.categories) ? context.categories : [];
   const items = Array.isArray(context.items) ? context.items : [];
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -1218,6 +1251,8 @@ function ContextComposition({ context }: { context: ContextDetail }) {
                 {open && (
                   <CompositionItems
                     category={category}
+                    session={session}
+                    turn={context.turn}
                     items={items.filter((item) => item.category === category.category)}
                   />
                 )}
@@ -3102,6 +3137,7 @@ function TranscriptPanel({
   enabled,
   onTurn,
   highlightLine,
+  highlightTurn,
   highlightRequest,
 }: {
   session: SessionSummary;
@@ -3110,6 +3146,7 @@ function TranscriptPanel({
   enabled: boolean;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
+  highlightTurn: number | null;
   highlightRequest: number;
 }) {
   const [page, setPage] = useState<TranscriptPage | null>(null);
@@ -3176,14 +3213,17 @@ function TranscriptPanel({
   // fetched cannot be scrolled to. Keep pulling pages until the line arrives
   // or the transcript runs out; landing the reader at the top of a long
   // conversation with nothing highlighted is the failure this avoids.
+  const targetLine = highlightLine ?? (highlightTurn == null ? null : entries.find((entry) => entry.turn === highlightTurn)?.line ?? null);
+  const highlightRequested = highlightLine != null || highlightTurn != null;
+  const targetDescription = highlightLine != null ? `Log line ${highlightLine}` : `Turn ${highlightTurn}`;
   const highlightLoaded =
-    highlightLine != null && entries.some((entry) => entry.line === highlightLine);
+    targetLine != null && entries.some((entry) => entry.line === targetLine);
   useEffect(() => {
-    if (!enabled || highlightLine == null || highlightLoaded || loading || error || !page?.hasMore) return;
+    if (!enabled || !highlightRequested || highlightLoaded || loading || error || !page?.hasMore) return;
     loadMore();
     // loadMore is redefined on every render; depending on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, error, highlightLine, highlightLoaded, loading, page?.hasMore]);
+  }, [enabled, error, highlightRequested, highlightTurn, targetLine, highlightLoaded, loading, page?.hasMore]);
 
   const needle = searchText.trim().toLocaleLowerCase();
   const matchesTranscriptFilters = (entry: TranscriptEntry) =>
@@ -3192,13 +3232,13 @@ function TranscriptPanel({
   const rows = entries.flatMap<{ entry: TranscriptEntry; partIndex: number | undefined }>((entry) => entry.parts?.length
     ? entry.parts.map((part, partIndex) => ({ entry: { ...entry, ...part }, partIndex }))
     : [{ entry, partIndex: undefined }]);
-  const highlightedEntryHiddenByFilters = highlightLine != null && rows.some(
-    ({ entry }) => entry.line === highlightLine && !matchesTranscriptFilters(entry),
+  const highlightedEntryHiddenByFilters = targetLine != null && rows.some(
+    ({ entry }) => entry.line === targetLine && !matchesTranscriptFilters(entry),
   );
   const visibleEntries = rows.filter(({ entry }) =>
-    matchesTranscriptFilters(entry) || entry.line === highlightLine,
+    matchesTranscriptFilters(entry) || entry.line === targetLine,
   );
-  const firstHighlightedRow = visibleEntries.findIndex(({ entry }) => entry.line === highlightLine);
+  const firstHighlightedRow = visibleEntries.findIndex(({ entry }) => entry.line === targetLine);
 
   if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
   if (error && !entries.length) {
@@ -3250,11 +3290,11 @@ function TranscriptPanel({
           <button type="button" onClick={retryTranscript}>Retry</button>
         </p>
       )}
-      {highlightLine != null && !highlightLoaded && (
+      {highlightRequested && !highlightLoaded && (
         <p className="callout" role="status">
           {page?.hasMore
-            ? `Loading the linked record at log line ${highlightLine}…`
-            : `Log line ${highlightLine} is not available in this conversation. The session may have changed, or the finding may refer to session metadata.`}
+            ? `Loading the linked record for ${targetDescription.toLowerCase()}…`
+            : `${targetDescription} is not available in this conversation. The session may have changed, or the finding may refer to session metadata.`}
         </p>
       )}
       {visibleEntries.length ? <ol className="transcript-list">
@@ -3264,7 +3304,7 @@ function TranscriptPanel({
             entry={entry}
             session={session}
             onTurn={onTurn}
-            highlighted={enabled && highlightLine != null && entry.line === highlightLine}
+            highlighted={enabled && targetLine != null && entry.line === targetLine}
             scrollTarget={position === firstHighlightedRow}
             highlightRequest={highlightRequest}
             partIndex={partIndex}
@@ -3290,6 +3330,7 @@ function TranscriptCache({
   enabled,
   onTurn,
   highlightLine,
+  highlightTurn,
   highlightRequest,
 }: {
   session: SessionSummary | null;
@@ -3298,6 +3339,7 @@ function TranscriptCache({
   enabled: boolean;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
+  highlightTurn: number | null;
   highlightRequest: number;
 }) {
   const [visits, setVisits] = useState<TranscriptVisit[]>([]);
@@ -3325,6 +3367,7 @@ function TranscriptCache({
               enabled={enabled && isCurrent}
               onTurn={onTurn}
               highlightLine={isCurrent ? highlightLine : null}
+              highlightTurn={isCurrent ? highlightTurn : null}
               highlightRequest={highlightRequest}
             />
           </div>
@@ -3698,7 +3741,7 @@ function SessionWorkspace({
             <button type="button" className="quiet-action" onClick={onReturnToChat}>Return to conversation{transcriptHighlightLine != null ? ` · line ${transcriptHighlightLine}` : ""}</button>
           </section>
           <div className={contextLoading ? "context-grid refreshing" : "context-grid"}>
-            <ContextComposition context={context} />
+            <ContextComposition context={context} session={detail.session} />
             <Contributors
               context={context}
               selectedItem={lifecycleItem}
@@ -4236,13 +4279,12 @@ export default function App() {
   const [notificationPage, setNotificationPage] = useState<NotificationPage | null>(null);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
-  const [pendingNotificationTurn, setPendingNotificationTurn] = useState<number | null>(null);
   // The line is meaningless without the session it was found in: line 191 of
   // another conversation is a different record, and a highlight left pointing
   // at it would send the transcript paging through a session nobody asked
   // about. Keeping the two together lets the render gate on identity.
   const [notificationHighlight, setNotificationHighlight] = useState<
-    { agent: Agent; id: string; line: number; request: number } | null
+    { agent: Agent; id: string; line: number | null; turn?: number | null; request: number } | null
   >(null);
   const recordNavigationRequest = useRef(0);
   const sessionRequest = useRef(0);
@@ -4885,7 +4927,6 @@ export default function App() {
       setSidebarCollapsed(true);
       pendingSessionFocus.current = `${destination.agent}:${destination.id}`;
     }
-    setPendingNotificationTurn(null);
     setNotificationHighlight({ ...destination, line: hit.line, request: ++recordNavigationRequest.current });
     setActiveView("chat");
     setSelected((current) => (sameSession(current, destination) ? current : destination));
@@ -4906,37 +4947,47 @@ export default function App() {
     const destination = { agent: notification.location.agent, id: notification.location.sessionId };
     setCorpusOpen(false);
     setSelected((current) => sameSession(current, destination) ? current : destination);
-    setPendingNotificationTurn(null);
-    // A compaction also names a line, but it already has a destination: the
-    // turn view opens its replacement-history inspector on that line. Only the
-    // rules that point at the *content* of one record -- a secret, a run of
-    // failing tools -- have nowhere better to land than the conversation.
-    const recordRoute =
-      notification.location.sourceLine != null &&
-      (notification.ruleId === 'secretExposure' || notification.ruleId === 'toolErrorStreak');
+    // Any finding naming a record lands in Conversation, from every tab.
+    const recordRoute = notification.location.sourceLine != null || notification.location.turn != null;
     setNotificationHighlight(
       recordRoute
-        ? { ...destination, line: notification.location.sourceLine!, request: ++recordNavigationRequest.current }
+        ? { ...destination, line: notification.location.sourceLine, turn: notification.location.turn, request: ++recordNavigationRequest.current }
         : null,
     );
     if (recordRoute) {
       setActiveView('chat');
-    } else if (notification.location.turn != null) {
-      setActiveView('turns');
-      setPendingNotificationTurn(notification.location.turn);
+    } else {
+      setActiveView('overview');
     }
   }, []);
 
   useEffect(() => {
-    if (
-      pendingNotificationTurn == null ||
-      !selected ||
-      !sameSession(detailFor, selected)
-    ) return;
-    const turn = pendingNotificationTurn;
-    setPendingNotificationTurn(null);
-    void selectTurn(turn);
-  }, [detailFor, pendingNotificationTurn, selectTurn, selected]);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let pending = Promise.resolve();
+    const drain = () => {
+      pending = pending.then(async () => {
+        if (disposed) return;
+        const requests = await api.takeNotificationActivations();
+        if (disposed) return;
+        for (const request of requests) {
+          if (request.notification) openFeedNotification(request.notification);
+          else {
+            setNotificationDrawerOpen(true);
+            setNotificationSettingsOpen(false);
+            if (request.unavailable) setNotificationError("This notification is no longer in local history.");
+          }
+        }
+      }).catch((problem) => { if (!disposed) setNotificationError(errorMessage(problem)); });
+    };
+    // Subscribe before draining: activations arriving during startup stay queued.
+    api.listenForNotificationActivations(drain).then((stop) => {
+      if (disposed) { stop(); return; }
+      unlisten = stop;
+      drain();
+    }).catch((problem) => { if (!disposed) setNotificationError(errorMessage(problem)); });
+    return () => { disposed = true; unlisten?.(); };
+  }, [openFeedNotification]);
 
   const runDoctor = useCallback(async () => {
     if (!selected || !context) return;
@@ -5984,6 +6035,7 @@ export default function App() {
           enabled={!corpusOpen && activeView === "chat" && visibleDetail != null}
           onTurn={selectTranscriptTurn}
           highlightLine={visibleDetail && sameSession(notificationHighlight, visibleDetail.session) ? notificationHighlight!.line : null}
+          highlightTurn={visibleDetail && sameSession(notificationHighlight, visibleDetail.session) ? notificationHighlight?.turn ?? null : null}
           highlightRequest={notificationHighlight?.request ?? 0}
         />
       </div>

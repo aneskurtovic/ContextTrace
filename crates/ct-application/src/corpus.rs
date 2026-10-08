@@ -542,6 +542,7 @@ mod tests {
                             call_id: Some("c1".into()),
                             char_len: 20,
                             target: None,
+                            file_target: None,
                         },
                     ),
                     // No tool name on the result: it must still be attributed

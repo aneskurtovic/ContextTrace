@@ -38,6 +38,8 @@ tags, because the tag workflow also receives the updater signing key.
 1. Confirm all source checks pass and the release version is consistent in
    `Cargo.toml`, `crates/ct-ui/package.json` and
    `crates/ct-ui/src-tauri/tauri.conf.json` (plus their lockfiles).
+   Add user-facing notes in `docs/releases/v<version>.md`; the Woodpecker
+   publisher uses that file as the release description when present.
 2. Confirm the fixture manifest and compatibility regression validator pass.
 3. Confirm the updater signing key is configured as a protected tag-only
    release secret. Never commit it or expose it to build/test steps.
@@ -87,6 +89,14 @@ portable desktop startup. On a separate clean Windows host:
    requires Microsoft Edge WebView2 Runtime;
 6. verify the signed updater offer and user-confirmed update flow, then record
    any crash, stale-data or format-drift evidence.
+7. create a new notification and click its Windows toast with the app open on
+   another tab, minimized, and closed; confirm that it restores or launches the
+   app and highlights the linked Conversation record. Test the notification
+   menu from every tab, a turn-only finding, and an expired notification. Old
+   toasts do not gain activation when the application is upgraded.
+8. open a local image from Context composition, reveal it in Explorer, and copy
+   its full path. Repeat with a long path and spaces, a deleted temporary file,
+   and a non-file tool label; record actual Windows file-association behavior.
 
 The Woodpecker tag pipeline publishes automatically after its validation,
 packaging and uploaded-asset checks pass. The separate-host checks remain the

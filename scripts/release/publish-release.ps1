@@ -14,6 +14,11 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 }
 
 $version = $Tag.Substring(1)
+$releaseNotesPath = Join-Path $PSScriptRoot "../../docs/releases/$Tag.md"
+$releaseNotes = 'Windows x64 release. Woodpecker validation, packaging and asset integrity checks passed.'
+if (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf) {
+    $releaseNotes = Get-Content -LiteralPath $releaseNotesPath -Raw -Encoding UTF8
+}
 $assetPrefix = "ContextTrace-$version-windows-x64"
 $installerName = "$assetPrefix-setup.exe"
 $assetNames = @(
@@ -125,7 +130,7 @@ if ($existingRelease.Count -gt 0) {
         tag_name = $Tag
         target_commitish = $targetCommit
         name = "ContextTrace $Tag"
-        body = "Windows x64 release. Woodpecker validation, packaging and asset integrity checks passed."
+        body = $releaseNotes
         draft = $false
         prerelease = $true
         generate_release_notes = $false

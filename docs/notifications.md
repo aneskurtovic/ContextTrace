@@ -68,11 +68,11 @@ to `feed`.
 
 ## Following a finding
 
-Selecting a finding opens the session it came from. Rules that name a specific
-record -- a secret, a run of failing tools -- open the conversation, load
-pages until that record is reached, expand it and ring it. Compactions instead
-open the turn view, which has a purpose-built inspector for their replacement
-history.
+Selecting a finding opens Conversation in its session, regardless of the
+currently selected tab. Findings that name a log line load pages until that
+record is reached, expand it and highlight it. Findings that name only a turn
+load and highlight the first conversation record for that turn. A finding
+without either destination opens the session overview.
 
 The record header stays in view after expansion and full-text loading. If a
 named log line is absent from the conversation, the view says so rather than
@@ -82,6 +82,17 @@ reopens and scrolls to its record.
 The ring sits on the whole record rather than on the matched text. Secret
 findings deliberately carry no offsets and no matched value, so the record is
 the smallest unit the interface is allowed to point at.
+
+New Windows toasts carry a `contexttrace://notification/<id>` destination.
+Clicking restores the running window or launches the installed app, then follows
+the same navigation as the in-app feed. Startup activations wait until the
+frontend is ready. If the notification has expired from local history, the app
+opens the feed with an explanation. The test notification opens the feed.
+
+The protocol is registered by the updated Windows installer; an existing
+installation must be upgraded to receive that registration. Portable and
+development builds do not register a protocol at runtime. Toasts created by
+older builds retain their original behavior.
 
 ## Where the feed lives
 
@@ -94,10 +105,6 @@ confusing one if you expect the list to re-evaluate itself. `ct secrets <id>`
 is the live check; the drawer is the log.
 
 ## Known limits
-
-**Clicking a Windows toast does nothing.** The toast is sent without an
-activation handler registered, so the click has no action to invoke and never
-reaches the app. Open the drawer inside the app instead.
 
 **Nothing is sent while the app is closed.** The rules run in the desktop
 process. A session that crosses a threshold overnight is found on next start,

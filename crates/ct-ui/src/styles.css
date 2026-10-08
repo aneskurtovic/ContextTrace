@@ -3483,3 +3483,11 @@ kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; backg
   .transcript-tools > small { grid-column: auto; }
   .selected-turn-summary { align-items: flex-start; flex-direction: column; }
 }
+
+.composition-file { min-width: 0; }
+.file-link { background: none; border: 0; padding: 0; color: var(--accent, #49c4d6); text-align: left; cursor: pointer; font-family: inherit; font-weight: 600; overflow-wrap: anywhere; }
+.file-link:hover { text-decoration: underline; }
+.file-link:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.composition-file-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 5px; font-size: 11px; color: var(--muted, #8997a9); }
+.composition-file-actions button { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; }
+.composition-file-error { color: var(--danger, #ff8c8c); font-size: 12px; }

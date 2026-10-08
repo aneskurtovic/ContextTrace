@@ -567,6 +567,7 @@ mod tests {
                     call_id: Some("toolu_01".into()),
                     char_len: 50,
                     target: Some("npm test".into()),
+                    file_target: None,
                 },
             ),
             ev(
@@ -617,6 +618,7 @@ mod tests {
                     call_id: Some("toolu_09".into()),
                     char_len: 50,
                     target: None,
+                    file_target: None,
                 },
             ),
             ev(

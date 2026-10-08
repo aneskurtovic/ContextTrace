@@ -371,6 +371,9 @@ fn claude_message(v: &Value, role: &str) -> Vec<EventKind> {
                     .map(|v| v.to_string().chars().count().min(u32::MAX as usize) as u32)
                     .unwrap_or(0),
                 target: block.get("input").and_then(crate::tool_target::describe),
+                file_target: block
+                    .get("input")
+                    .and_then(|input| crate::tool_target::file_target(input, None)),
             },
             Some("tool_result") => EventKind::ToolResult {
                 tool: None,

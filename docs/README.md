@@ -12,6 +12,7 @@ supporting detail.
   fixtures and the update process.
 - [Methodology](methodology.md): what the measurements mean and their limits.
 - [Notifications](notifications.md): desktop notification rules and settings.
+- [Local files](local-files.md): opening recorded file targets from context composition.
 - [Updater](UPDATER.md): update behavior and release feed.
 
 ## Project and maintenance

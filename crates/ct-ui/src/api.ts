@@ -12,6 +12,8 @@ import type {
   CompactionDiffUnavailableReason,
   CompactionItemDisposition,
   ContextDetail,
+  FileTarget,
+  NotificationActivation,
   CorpusProgress,
   CorpusReport,
   CostReport,
@@ -422,6 +424,12 @@ function asDetail(value: unknown): SessionDetail {
   return value as unknown as SessionDetail;
 }
 
+function isFileTarget(value: unknown): value is FileTarget {
+  return isRecord(value) && typeof value.path === "string" && isStringOrNull(value.resolvedPath)
+    && typeof value.status === "string" && ["file", "directory", "missing", "unresolved", "unreadable"].includes(value.status)
+    && typeof value.canOpen === "boolean";
+}
+
 function asContext(value: unknown): ContextDetail {
   if (
     !isRecord(value) ||
@@ -471,7 +479,7 @@ function asContext(value: unknown): ContextDetail {
         typeof item.confidence === "string" &&
         confidenceLevels.has(item.confidence) &&
         isNumberOrNull(item.firstSeenTurn) &&
-        isStringOrNull(item.preview),
+        isStringOrNull(item.preview) && (item.fileTarget == null || isFileTarget(item.fileTarget)),
     )
   ) {
     throw malformed("context reconstruction");
@@ -1552,4 +1560,26 @@ export function listenForSessionUpdates(
   return listen<unknown>('contexttrace://session-updated', (event) => {
     callback(asSessionUpdated(event.payload));
   });
+}
+
+/** File paths are resolved by session/item identity in the native command. */
+export function openContextFile(agent: Agent, id: string, turn: number, itemId: string, action: "open" | "reveal"): Promise<void> {
+  if (!inTauri()) return Promise.reject(new Error("Local files can only be opened in the desktop app."));
+  return invoke<void>("open_context_file", { agent, id, turn, itemId, action });
+}
+
+export function takeNotificationActivations(): Promise<NotificationActivation[]> {
+  if (!inTauri()) return Promise.resolve([]);
+  return invoke<unknown>("take_notification_activations").then((value) => {
+    if (!Array.isArray(value)) throw malformed("notification activation");
+    return value.map((item) => {
+      if (!isRecord(item) || typeof item.unavailable !== "boolean" || item.notification === undefined) throw malformed("notification activation");
+      return { notification: item.notification === null ? null : asNotificationRecord(item.notification), unavailable: item.unavailable };
+    });
+  });
+}
+
+export function listenForNotificationActivations(callback: () => void): Promise<UnlistenFn> {
+  if (!inTauri()) return Promise.resolve(() => undefined);
+  return listen("contexttrace://notification-activation", callback);
 }

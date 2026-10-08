@@ -23,6 +23,9 @@ import {
   getTurnDiff,
   inspectSession,
   listNotifications,
+  openContextFile,
+  takeNotificationActivations,
+  listenForNotificationActivations,
   listenForNotificationUpdates,
   listenForSessionUpdates,
   listProjects,
@@ -55,6 +58,34 @@ afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   invoke.mockReset();
   listen.mockReset();
+});
+
+describe('file and toast activation IPC contracts', () => {
+  it('sends file identity rather than an arbitrary path and refuses browser mode', async () => {
+    await expect(openContextFile('codex', 'session', 1, 'item', 'open')).rejects.toThrow('desktop app');
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValueOnce(undefined);
+    await openContextFile('codex', 'session', 1, 'item', 'reveal');
+    expect(invoke).toHaveBeenCalledWith('open_context_file', { agent: 'codex', id: 'session', turn: 1, itemId: 'item', action: 'reveal' });
+  });
+
+  it('validates exact file metadata and activation records', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const context = demoContext(24);
+    const fileTarget = { path: 'C:/image  one.png', resolvedPath: 'C:/image  one.png', status: 'file', canOpen: true };
+    invoke.mockResolvedValueOnce({ ...context, items: [{ ...context.items[0], fileTarget }] });
+    await expect(getContext('codex', 'session')).resolves.toMatchObject({ items: [{ fileTarget }] });
+    invoke.mockResolvedValueOnce({ ...context, items: [{ ...context.items[0], fileTarget: { ...fileTarget, status: 'invented' } }] });
+    await expect(getContext('codex', 'session')).rejects.toThrow('invalid response');
+    invoke.mockResolvedValueOnce([{ notification: demoNotificationPage.notifications[0], unavailable: false }, { notification: null, unavailable: true }]);
+    await expect(takeNotificationActivations()).resolves.toHaveLength(2);
+    invoke.mockResolvedValueOnce([{ notification: { id: '42' }, unavailable: false }]);
+    await expect(takeNotificationActivations()).rejects.toThrow('invalid response');
+    listen.mockResolvedValueOnce(() => undefined);
+    const callback = vi.fn();
+    await listenForNotificationActivations(callback);
+    expect(listen).toHaveBeenCalledWith('contexttrace://notification-activation', callback);
+  });
 });
 
 describe('transcript block IPC contracts', () => {
