@@ -32,7 +32,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/check-fixture-man
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/test-fixture-manifest.ps1
 ```
 
-Latest follow-up verification (2026-10-08): 480 Rust tests passed (one ignored),
+Latest patch release (2026-10-08): v0.1.10 adds Claude `away_summary` and
+`bridge_status` presentation notices without adding model-context weight.
+Commit `78d345a` passed all configured checks in Woodpecker push pipeline 93:
+481 Rust tests passed (one ignored), all 17 fixtures passed validation, and the
+frontend tests/build and Windows desktop/CLI smoke checks passed. Tag pipeline
+94 packaged, published and verified all six release assets. The local Claude
+scan found one malformed line and no remaining warnings for the two supported
+types. Local frontend tests passed with one worker and a 15-second timeout
+after two default-timeout failures; configured Woodpecker frontend checks
+passed normally. Separate clean-host installer/updater acceptance remains
+unverified. See [compatibility](docs/FORMAT-COMPATIBILITY.md) and
+[MVP status](docs/MVP-STATUS.md).
+
+Historical follow-up verification (2026-10-08): 480 Rust tests passed (one ignored),
 formatting and strict workspace Clippy passed, all 16 fixtures and validator
 regressions passed, and 156 frontend tests plus the production build passed.
 Separate stdout import contracts and current-version captures were added; see

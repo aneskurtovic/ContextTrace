@@ -2,6 +2,20 @@
 
 Updated: **2026-10-08**. The maintainer confirmed all seven original parser-audit follow-ups plus release work as eight tasks.
 
+## v0.1.10 patch release
+
+Claude `away_summary` and `bridge_status` now parse as presentation-only
+session events, with a reviewed redacted capture and replay regression.
+Commit `78d345a` passed all configured checks in
+[push pipeline 93](https://ci.aneskurtovic.com/repos/5/pipeline/93).
+[Tag pipeline 94](https://ci.aneskurtovic.com/repos/5/pipeline/94) packaged,
+published and verified all six assets for
+[v0.1.10](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.10),
+confirmed as latest stable on 2026-10-08. The original eight-task evidence below
+describes the v0.1.9 milestone; its remaining capture and clean-host gaps persist.
+
+## Original v0.1.9 milestone
+
 | Task | Current evidence and remaining gate |
 |---|---|
 | 1. Exact-commit Woodpecker validation | Release commit `193150f` passed frontend, Rust (including MSRV), Windows desktop/CLI and smoke checks in [pipeline 90](https://ci.aneskurtovic.com/repos/5/pipeline/90). |
@@ -25,11 +39,12 @@ Follow [CLAUDE](CLAUDE.md), [CI](docs/CI.md) and [RELEASING](docs/RELEASING.md).
 Never substitute workstation packaging for the Woodpecker Windows tag pipeline.
 Local verification is development evidence; clean-host acceptance is separate.
 
-The latest local corpus sweep found no unreadable files, one malformed Claude
-line, and newly exposed away_summary/bridge_status records. Doctor correctly
-exits 1. Do not suppress these records to manufacture a green sweep.
+The latest local Claude sweep read 43 sessions / 21,574 events, with no
+unreadable files and one malformed line. The away_summary/bridge_status
+warnings are resolved. Doctor correctly exits 1 for malformed input; do not
+suppress that warning to manufacture a green sweep.
 
-The latest stable release is v0.1.9 at `193150f0dc1da52a0ba604b152341c1b0e6946f6`.
+The latest stable release is v0.1.10 at `78d345ae4a8b3ffe93269e8d9afe60cb2047e613`.
 GitHub latest-release metadata was checked on 2026-10-08 (Sarajevo): all six
 expected assets are uploaded, and the release is neither draft nor prerelease.
 The remaining work requires external evidence: feature-matched real Codex

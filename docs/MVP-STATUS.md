@@ -11,30 +11,35 @@ optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
 
-The latest public stable release is **v0.1.9**, published 2026-10-08 in
-Sarajevo (2026-10-07 22:25:26 UTC). Release commit
-`193150f0dc1da52a0ba604b152341c1b0e6946f6` passed all frontend, Linux Rust
+The latest public stable release is **v0.1.10**, published 2026-10-08 at
+07:09:40 UTC (09:09:40 in Sarajevo). Release commit
+`78d345ae4a8b3ffe93269e8d9afe60cb2047e613` passed all frontend, Linux Rust
 (including MSRV), Windows desktop/CLI and smoke checks in
-[Woodpecker push pipeline 90](https://ci.aneskurtovic.com/repos/5/pipeline/90).
-[Tag pipeline 91](https://ci.aneskurtovic.com/repos/5/pipeline/91) passed the
+[Woodpecker push pipeline 93](https://ci.aneskurtovic.com/repos/5/pipeline/93).
+[Tag pipeline 94](https://ci.aneskurtovic.com/repos/5/pipeline/94) passed the
 exact-commit gate, packaged and published the release, verified all six
 uploaded-asset digests, and confirmed the latest stable release pointer.
 GitHub release metadata independently confirms that tag and source commit,
 all six uploaded assets, and neither draft nor prerelease status.
 
 The release includes the [original parser audit](FORMAT-AUDIT-2026-10-07.md)
-and [eight-task follow-up](FORMAT-FOLLOWUP-2026-10-08.md). Explicit saved-stream
+and [eight-task follow-up](FORMAT-FOLLOWUP-2026-10-08.md), plus support for
+Claude away_summary recaps and bridge_status remote-control notices. These
+remain presentation-only session events with no model-context weight.
+Explicit saved-stream
 imports provide timeline evidence separately from persisted context replay.
 See [HANDOFF](../HANDOFF.md) for the remaining evidence gaps.
 
 ## Latest local development verification (2026-10-08)
 
-- Rust workspace: 480 tests passed, one ignored; formatting and strict Clippy passed.
-- Frontend: 156 tests passed with the normal command; production build passed.
-- All 16 fixture catalog entries and validator regression checks passed.
-- The final corpus sweep read 237 sessions / 104,495 events with no unreadable
-  files. It flagged 34 Claude away_summary records, one bridge_status record
-  and one malformed line; `doctor` correctly exited 1.
+- Rust workspace: 481 tests passed, one ignored; formatting and strict Clippy passed.
+- Frontend: 156 tests passed on a single-worker/15-second-timeout local retry
+  after two default-timeout failures; production build passed. The configured
+  Woodpecker frontend test command passed normally on the release commit.
+- All 17 fixture catalog entries and validator regression checks passed.
+- The updated Claude corpus sweep read 43 sessions / 21,574 events with no
+  unreadable files. Only the existing malformed JSON line remains unrecognised;
+  `doctor` correctly exits 1. Both presentation-notice warnings are resolved.
 - Fresh redacted Codex 0.161.0 and Claude 2.1.293 persisted/stdout captures
   have dedicated semantic contracts. The app-server fixture and rare newly
   covered Codex shapes retain explicitly synthetic evidence.
@@ -88,16 +93,16 @@ upgrade flow remains to be tested with 0.1.5.
 
 | Gate | State |
 |---|---|
-| Core CLI and desktop workflows | Implemented; release commit passed all Woodpecker push checks in pipeline 90 |
-| Persisted Codex/Claude compatibility | 16 fixtures across five surfaces, current-version captures and semantic tests; rare Codex shapes lack feature-matched real captures |
+| Core CLI and desktop workflows | Implemented; release commit passed all Woodpecker push checks in pipeline 93 |
+| Persisted Codex/Claude compatibility | 17 fixtures across five surfaces, current-version captures and semantic tests; rare Codex shapes lack feature-matched real captures |
 | Explicit stdout/app-server import | Dedicated CLI timeline contracts; complete request-history reconstruction unavailable for these surfaces |
-| Public source documentation | Updated for v0.1.9 and explicit stream imports |
-| Windows production build | Successful in Woodpecker push pipeline 90 and tag packaging pipeline 91 |
-| Updater package and feed | v0.1.9 signature asset and metadata produced; all six uploaded digests and latest stable pointer verified in pipeline 91 |
-| Installed/portable, upgrade and uninstall/archive preservation acceptance | Separate clean host unavailable; no version-matched 0.1.9 acceptance |
-| Signed in-app upgrade | Separate clean host unavailable; no version-matched 0.1.9 acceptance |
+| Public source documentation | Updated for v0.1.10 and explicit stream imports |
+| Windows production build | Successful in Woodpecker push pipeline 93 and tag packaging pipeline 94 |
+| Updater package and feed | v0.1.10 signature asset and metadata produced; all six uploaded digests and latest stable pointer verified in pipeline 94 |
+| Installed/portable, upgrade and uninstall/archive preservation acceptance | Separate clean host unavailable; no version-matched 0.1.10 acceptance |
+| Signed in-app upgrade | Separate clean host unavailable; no version-matched 0.1.10 acceptance |
 | CLI user acceptance | Not requested; automated Windows validation is separate from user acceptance |
-| Public stable release | [ContextTrace v0.1.9](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.9), checked 2026-10-08 |
+| Public stable release | [ContextTrace v0.1.10](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.10), checked 2026-10-08 |
 
 The NSIS installer is per-user. Uninstall must preserve the separate
 `%LOCALAPPDATA%\ContextTrace-archive` data directory, which may contain the
