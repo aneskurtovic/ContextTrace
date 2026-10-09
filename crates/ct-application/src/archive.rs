@@ -582,6 +582,7 @@ mod tests {
                 source_digest: "src".into(),
                 archived_bytes: 10,
                 archived_digest: "arc".into(),
+                versioned_copy: false,
                 redacted_records: 0,
                 redacted_values: 0,
             }
@@ -635,6 +636,7 @@ mod tests {
                 source_digest: "src-digest".into(),
                 archived_bytes,
                 archived_digest: "archived-digest".into(),
+                versioned_copy: false,
                 redacted_records,
                 redacted_values,
             };

@@ -19,6 +19,7 @@ supporting detail.
 
 ## Project and maintenance
 
+- [Archive storage and recovery](archive-storage.md): revision layout, legacy copies and interrupted-write recovery.
 - [Architecture](architecture.md): crate boundaries, invariants and tests.
 - [CI](CI.md): automated checks, local equivalents and coverage limits.
 - [Release procedure](RELEASING.md): Windows packaging and acceptance gates.
