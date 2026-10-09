@@ -1138,7 +1138,11 @@ impl AppState {
         let cached = self.cached_session(agent, id, true)?;
         let hasher = ct_runtime::content_hasher();
         Ok(InstructionFileReportSummary::from(
-            ct_application::compare_instruction_files(&cached.session, &hasher),
+            ct_application::compare_instruction_files(
+                &cached.session,
+                &hasher,
+                &ct_runtime::instruction_file_reader(),
+            ),
         ))
     }
 

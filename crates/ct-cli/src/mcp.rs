@@ -272,7 +272,11 @@ fn call_tool(
             let (session, resolved) = app.load_with_content_analysis_and_archive(id, archive)?;
             let hasher = ct_runtime::content_hasher();
             Ok(with_source(
-                serde_json::to_value(ct_application::compare_instruction_files(&session, &hasher))?,
+                serde_json::to_value(ct_application::compare_instruction_files(
+                    &session,
+                    &hasher,
+                    &ct_runtime::instruction_file_reader(),
+                ))?,
                 Some(&resolved.source),
                 false,
             ))

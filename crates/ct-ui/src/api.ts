@@ -1005,7 +1005,7 @@ function isInstructionFileComparison(value: unknown): value is InstructionFileCo
     isNumberOrNull(value.turn) &&
     typeof value.line === "number" &&
     typeof value.status === "string" &&
-    ["matching", "changed", "missing", "unreadable", "recordedBodyUnavailable"].includes(
+    ["matching", "changed", "missing", "unreadable", "recordedBodyUnavailable", "unsafePath", "tooLarge", "notRegular"].includes(
       value.status,
     ) &&
     isStringOrNull(value.recordedDigest) &&

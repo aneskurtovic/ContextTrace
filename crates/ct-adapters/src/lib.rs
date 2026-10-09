@@ -33,6 +33,7 @@ pub mod archive;
 pub mod claude_code;
 pub mod codex;
 mod fingerprint;
+pub mod instruction_files;
 pub mod jsonl;
 pub mod notifications;
 pub mod pricing;

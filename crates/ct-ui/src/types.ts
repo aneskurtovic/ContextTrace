@@ -295,7 +295,10 @@ export type InstructionFileStatus =
   | "changed"
   | "missing"
   | "unreadable"
-  | "recordedBodyUnavailable";
+  | "recordedBodyUnavailable"
+  | "unsafePath"
+  | "tooLarge"
+  | "notRegular";
 
 export interface InstructionFileComparison {
   path: string;

@@ -91,6 +91,11 @@ pub fn content_hasher() -> impl ct_domain::ports::ContentHasher {
     Sha256ContentHasher
 }
 
+/// Bounded local instruction reader shared by desktop, CLI and MCP.
+pub fn instruction_file_reader() -> impl ct_domain::ports::InstructionFileReader {
+    ct_adapters::instruction_files::LocalInstructionFileReader
+}
+
 /// The one store ContextTrace writes session copies to.
 ///
 /// Here rather than at each call site because "where does this tool write"

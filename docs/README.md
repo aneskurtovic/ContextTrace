@@ -35,3 +35,5 @@ are not part of the public documentation.
 
 - [Parser audit follow-up](FORMAT-FOLLOWUP-2026-10-08.md): capture receipts, replay semantics, bounded input and acceptance limits.
 - [Saved stream imports](STREAM-IMPORTS.md): explicit stdout/app-server timeline import contracts.
+
+- [Instruction-file comparison](instruction-file-comparison.md) — local reader limits and refusal states.

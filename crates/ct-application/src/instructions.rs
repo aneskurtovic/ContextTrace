@@ -6,11 +6,10 @@
 //! never loaded. That makes a change useful for triage while keeping the
 //! report safe to expose to an agent.
 
-use ct_domain::ports::ContentHasher;
+use ct_domain::ports::{ContentHasher, InstructionFileReader, InstructionReadError};
 use ct_domain::{AgentSession, EventKind};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InstructionObservation {
@@ -52,6 +51,9 @@ pub enum InstructionFileStatus {
     Missing,
     Unreadable,
     RecordedBodyUnavailable,
+    UnsafePath,
+    TooLarge,
+    NotRegular,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -80,13 +82,16 @@ pub struct InstructionFileReport {
 /// instruction attachment with the current file. The session must have been
 /// loaded with content analysis; ordinary parsing deliberately discards bodies
 /// and therefore receives an explicit refusal instead of a size-only guess.
-pub fn compare_files(session: &AgentSession, hasher: &dyn ContentHasher) -> InstructionFileReport {
+pub fn compare_files(
+    session: &AgentSession,
+    hasher: &dyn ContentHasher,
+    reader: &dyn InstructionFileReader,
+) -> InstructionFileReport {
     let project_root = session
         .metadata()
         .working_directory
         .clone()
         .or_else(|| session.metadata().project.clone());
-    let root = project_root.as_deref().map(Path::new);
     let mut comparisons = Vec::new();
 
     for event in session.events() {
@@ -102,7 +107,7 @@ pub fn compare_files(session: &AgentSession, hasher: &dyn ContentHasher) -> Inst
             continue;
         }
 
-        let path = resolve_instruction_path(label, root);
+        let path = ct_domain::local_paths::resolve_local(label, project_root.as_deref());
         let recorded = event.content_measurement;
         let (status, current_digest, current_chars, detail) = match recorded {
             None => (
@@ -114,7 +119,9 @@ pub fn compare_files(session: &AgentSession, hasher: &dyn ContentHasher) -> Inst
                         .into(),
                 ),
             ),
-            Some(recorded) => match std::fs::read(&path) {
+            Some(recorded) => match path.as_ref()
+                .ok_or(InstructionReadError::UnsafePath)
+                .and_then(|path| reader.read(path)) {
                 Ok(bytes) => {
                     let current = hasher.measure(&bytes);
                     let matching = current.fingerprint == recorded.fingerprint;
@@ -140,7 +147,19 @@ pub fn compare_files(session: &AgentSession, hasher: &dyn ContentHasher) -> Inst
                         }),
                     )
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (
+                Err(InstructionReadError::UnsafePath) => (
+                    InstructionFileStatus::UnsafePath, None, None,
+                    Some("only ordinary local paths on local drives may be compared".into()),
+                ),
+                Err(InstructionReadError::TooLarge) => (
+                    InstructionFileStatus::TooLarge, None, None,
+                    Some("instruction file exceeds the reader byte limit".into()),
+                ),
+                Err(InstructionReadError::NotRegular) => (
+                    InstructionFileStatus::NotRegular, None, None,
+                    Some("instruction target is not a regular file".into()),
+                ),
+                Err(InstructionReadError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => (
                     InstructionFileStatus::Missing,
                     None,
                     None,
@@ -156,7 +175,9 @@ pub fn compare_files(session: &AgentSession, hasher: &dyn ContentHasher) -> Inst
         };
 
         comparisons.push(InstructionFileComparison {
-            path: path.display().to_string(),
+            path: path
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| label.clone()),
             turn: event.turn.map(|turn| turn.get()),
             line: event.source.line_no,
             status,
@@ -180,17 +201,6 @@ pub fn compare_files(session: &AgentSession, hasher: &dyn ContentHasher) -> Inst
         project_root,
         comparisons,
         refusal_count,
-    }
-}
-
-fn resolve_instruction_path(label: &str, root: Option<&Path>) -> PathBuf {
-    let candidate = Path::new(label);
-    let looks_windows_absolute = label.as_bytes().get(1) == Some(&b':');
-    if candidate.is_absolute() || looks_windows_absolute {
-        candidate.to_path_buf()
-    } else {
-        root.map(|root| root.join(candidate))
-            .unwrap_or_else(|| candidate.to_path_buf())
     }
 }
 
@@ -350,10 +360,88 @@ mod tests {
                 vec![],
             ),
             &FixedHasher,
+            &NeverReader,
         );
         assert_eq!(
             report.comparisons[0].status,
             InstructionFileStatus::RecordedBodyUnavailable
         );
+    }
+    struct NeverReader;
+    impl InstructionFileReader for NeverReader {
+        fn read(&self, _: &std::path::Path) -> Result<Vec<u8>, InstructionReadError> {
+            panic!("refused evidence must not reach filesystem reader")
+        }
+    }
+
+    fn measured_session(label: &str) -> AgentSession {
+        let mut event = injection(label, 12);
+        if let EventKind::ContextInjection { mechanism, .. } = &mut event.kind {
+            *mechanism = "nested_memory".into();
+        }
+        event.content_measurement = Some(FixedHasher.measure(b"recorded"));
+        AgentSession::new(
+            SessionId::new("s").unwrap(),
+            AgentKind::ClaudeCode,
+            SessionMetadata {
+                working_directory: Some(if cfg!(windows) { "C:/repo" } else { "/repo" }.into()),
+                ..Default::default()
+            },
+            vec![event],
+            vec![],
+            vec![],
+        )
+    }
+
+    #[test]
+    fn malicious_attachment_paths_never_reach_reader() {
+        for label in [
+            r"\\server\share\AGENTS.md",
+            "//server/share/AGENTS.md",
+            r"\\?\C:\AGENTS.md",
+            r"\\.\pipe\input",
+            "C:AGENTS.md",
+            "C:/file:stream",
+            "NUL",
+        ] {
+            let report = compare_files(&measured_session(label), &FixedHasher, &NeverReader);
+            assert_eq!(
+                report.comparisons[0].status,
+                InstructionFileStatus::UnsafePath,
+                "{label}"
+            );
+            assert_eq!(report.refusal_count, 1);
+            assert!(report.comparisons[0].current_digest.is_none());
+        }
+    }
+
+    #[test]
+    fn injected_reader_preserves_typed_refusals_and_local_comparison() {
+        struct Reader(u8);
+        impl InstructionFileReader for Reader {
+            fn read(&self, path: &std::path::Path) -> Result<Vec<u8>, InstructionReadError> {
+                assert!(ct_domain::local_paths::local_absolute(
+                    &path.to_string_lossy()
+                ));
+                match self.0 {
+                    0 => Ok(b"current".to_vec()),
+                    1 => Err(InstructionReadError::TooLarge),
+                    2 => Err(InstructionReadError::NotRegular),
+                    3 => Err(InstructionReadError::UnsafePath),
+                    _ => Err(std::io::Error::from(std::io::ErrorKind::NotFound).into()),
+                }
+            }
+        }
+        for (mode, expected) in [
+            (0, InstructionFileStatus::Matching),
+            (1, InstructionFileStatus::TooLarge),
+            (2, InstructionFileStatus::NotRegular),
+            (3, InstructionFileStatus::UnsafePath),
+            (4, InstructionFileStatus::Missing),
+        ] {
+            let report = compare_files(&measured_session("AGENTS.md"), &FixedHasher, &Reader(mode));
+            assert_eq!(report.comparisons[0].status, expected);
+            assert_eq!(report.refusal_count, usize::from(mode != 0));
+        }
     }
 }

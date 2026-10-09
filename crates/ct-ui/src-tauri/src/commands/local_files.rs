@@ -76,41 +76,10 @@ impl<'a> TargetIndex<'a> {
     }
 }
 
-pub(super) fn local_absolute(path: &str) -> bool {
-    if path.chars().any(char::is_control) || path.contains("://") {
-        return false;
-    }
-    #[cfg(windows)]
-    {
-        // Exclude UNC/device paths, drive-relative names and alternate streams.
-        let bytes = path.as_bytes();
-        bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && matches!(bytes[2], b'/' | b'\\')
-            && !path[2..].contains(':')
-    }
-    #[cfg(not(windows))]
-    {
-        path.starts_with('/') && !path.starts_with("//")
-    }
-}
+pub(super) use ct_domain::local_paths::local_absolute;
 
 fn resolve(target: &FileTarget) -> Option<PathBuf> {
-    if local_absolute(&target.path) {
-        return Some(PathBuf::from(&target.path));
-    }
-    let path = Path::new(&target.path);
-    if path.is_absolute()
-        || target.path.contains(':')
-        || target.path.starts_with(['/', '\\'])
-        || target.path.chars().any(char::is_control)
-        || target.path.is_empty()
-    {
-        return None;
-    }
-    let cwd = target.working_directory.as_deref()?;
-    local_absolute(cwd).then(|| Path::new(cwd).join(path))
+    ct_domain::local_paths::resolve_local(&target.path, target.working_directory.as_deref())
 }
 
 /// Only familiar passive data formats get an Open action. Active and unknown
@@ -151,7 +120,7 @@ fn inspect(target: &FileTarget) -> FileTargetDto {
                 dto.status = "unreadable";
                 return dto;
             };
-            let canonical = dunce_path(&canonical);
+            let canonical = ct_domain::local_paths::canonical_local_path(&canonical);
             if !local_absolute(&canonical.display().to_string()) {
                 return dto;
             }
@@ -175,17 +144,6 @@ fn inspect(target: &FileTarget) -> FileTargetDto {
         }
     }
     dto
-}
-
-fn dunce_path(path: &Path) -> PathBuf {
-    // Windows canonicalize adds the extended-length prefix to local drives.
-    let text = path.to_string_lossy();
-    if let Some(local) = text.strip_prefix(r"\\?\") {
-        if local.as_bytes().get(1) == Some(&b':') {
-            return PathBuf::from(local);
-        }
-    }
-    path.to_path_buf()
 }
 
 #[derive(Deserialize)]

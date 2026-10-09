@@ -658,7 +658,11 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             let (session, _) = app.load_with_content_analysis_and_archive(&id, &archive_store)?;
             let hasher = ct_runtime::content_hasher();
             render::instruction_files(
-                &ct_application::compare_instruction_files(&session, &hasher),
+                &ct_application::compare_instruction_files(
+                    &session,
+                    &hasher,
+                    &ct_runtime::instruction_file_reader(),
+                ),
                 json,
             );
         }

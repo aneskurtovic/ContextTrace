@@ -1316,6 +1316,25 @@ describe("desktop IPC response validation", () => {
       );
     });
 
+    it.each(["unsafePath", "tooLarge", "notRegular"] as const)("accepts typed instruction refusal %s", async (status) => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const expected = demoInstructionFiles("s1");
+      expected.comparisons[0] = {
+        ...expected.comparisons[0], status, currentDigest: null, currentChars: null,
+        detail: "comparison refused by local reader",
+      };
+      expected.refusalCount = 1;
+      invoke.mockResolvedValue(expected);
+      await expect(getInstructionFiles("codex", "s1")).resolves.toEqual(expected);
+    });
+
+    it("rejects unknown instruction statuses", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const expected = demoInstructionFiles("s1");
+      invoke.mockResolvedValue({ ...expected, comparisons: [{ ...expected.comparisons[0], status: "invented" }] });
+      await expect(getInstructionFiles("codex", "s1")).rejects.toThrow("invalid response");
+    });
+
     it("accepts instruction files with camelCase refusalCount", async () => {
       (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
       const expected = demoInstructionFiles("s1");
