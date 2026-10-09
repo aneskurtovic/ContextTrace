@@ -17,6 +17,12 @@ native saved context and a new conversation from a summary.
 
 ## Reading the conversation
 
+Session metadata and conversation load independently of context metrics. Logs
+without prompt usage can still be read, archived and accessed through the
+Save & export controls. The Context tab explains why analysis is unavailable;
+it does not replace missing usage with zero. Follow live also refreshes session
+details when context analysis is unavailable.
+
 The desktop Conversation tab shows recorded content blocks in log order.
 Instructions injected through the user role are labelled Injected when their
 recorded prefix identifies them. Mixed records keep separate user text,

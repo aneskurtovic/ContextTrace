@@ -3472,6 +3472,7 @@ function SessionWorkspace({
   detail,
   context,
   contextLoading,
+  contextError,
   doctor,
   doctorLoading,
   lifecycle,
@@ -3542,6 +3543,7 @@ function SessionWorkspace({
   detail: SessionDetail;
   context: ContextDetail | null;
   contextLoading: boolean;
+  contextError: string | null;
   doctor: DoctorReport | null;
   doctorLoading: boolean;
   lifecycle: LifecycleReport | null;
@@ -3878,7 +3880,7 @@ function SessionWorkspace({
           <SpendDashboard cost={cost} loading={costLoading} enabled={activeView === "turns"} onRun={onRunCost} />
         </>
       ) : (
-        <p className="empty-inline">This session has no reconstructable prompt turn.</p>
+        <p className="empty-inline">Context unavailable: {contextError ?? "This session has no reconstructable prompt turn."}</p>
       )}
       </div>
 
@@ -4309,6 +4311,7 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [loadingDoctor, setLoadingDoctor] = useState(false);
   const [lifecycle, setLifecycle] = useState<LifecycleReport | null>(null);
@@ -4793,6 +4796,7 @@ export default function App() {
       setDetail(null);
       setDetailFor(null);
       setContext(null);
+      setContextError(null);
       setFocusComposition(false);
       setDoctor(null);
       setLifecycle(null);
@@ -4836,6 +4840,7 @@ export default function App() {
     setDetail(null);
     setDetailFor(null);
     setContext(null);
+    setContextError(null);
     setFocusComposition(false);
     setDoctor(null);
     setLifecycle(null);
@@ -4871,21 +4876,34 @@ export default function App() {
     setExportError(null);
     setExporting(false);
     setError(null);
-    Promise.all([
-      api.inspectSession(selected.agent, selected.id),
-      api.getContext(selected.agent, selected.id),
-    ])
-      .then(([nextDetail, nextContext]) => {
+    // Browsing is available as soon as inspection succeeds; context is optional.
+    const contextRequest = turnRequest.current;
+    setLoadingContext(true);
+    api.inspectSession(selected.agent, selected.id)
+      .then((nextDetail) => {
         if (request !== sessionRequest.current) return;
         setDetail(nextDetail);
         setDetailFor(selected);
-        setContext(nextContext);
       })
       .catch((loadError) => {
         if (request === sessionRequest.current) setError(errorMessage(loadError));
       })
       .finally(() => {
         if (request === sessionRequest.current) setLoadingDetail(false);
+      });
+    api.getContext(selected.agent, selected.id)
+      .then((nextContext) => {
+        if (request !== sessionRequest.current || contextRequest !== turnRequest.current) return;
+        setContext(nextContext);
+        setContextError(null);
+      })
+      .catch((loadError) => {
+        if (request === sessionRequest.current && contextRequest === turnRequest.current) {
+          setContextError(errorMessage(loadError));
+        }
+      })
+      .finally(() => {
+        if (request === sessionRequest.current && contextRequest === turnRequest.current) setLoadingContext(false);
       });
   }, [selected]);
 
@@ -4894,20 +4912,34 @@ export default function App() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     const session = selected;
-    const follow = async () => {
-      try {
-        const [nextDetail, nextContext] = await Promise.all([
-          api.inspectSession(session.agent, session.id),
-          api.getContext(session.agent, session.id),
-        ]);
-        if (!cancelled) {
+    let refreshRequest = 0;
+    const follow = () => {
+      const request = ++refreshRequest;
+      const contextRequest = ++turnRequest.current;
+      setLoadingContext(true);
+      const current = () => !cancelled && request === refreshRequest;
+      void api.inspectSession(session.agent, session.id)
+        .then((nextDetail) => {
+          if (!current()) return;
           setDetail(nextDetail);
           setDetailFor(session);
+        })
+        .catch((loadError) => { if (current()) setError(errorMessage(loadError)); });
+      void api.getContext(session.agent, session.id)
+        .then((nextContext) => {
+          if (!current() || contextRequest !== turnRequest.current) return;
           setContext(nextContext);
-        }
-      } catch (loadError) {
-        if (!cancelled) setError(errorMessage(loadError));
-      }
+          setContextError(null);
+        })
+        .catch((loadError) => {
+          if (current() && contextRequest === turnRequest.current) {
+            setContext(null);
+            setContextError(errorMessage(loadError));
+          }
+        })
+        .finally(() => {
+          if (current() && contextRequest === turnRequest.current) setLoadingContext(false);
+        });
     };
     if (typeof api.listenForSessionUpdates === 'function') {
       api.listenForSessionUpdates((event) => {
@@ -4958,6 +4990,7 @@ export default function App() {
       setGhostLoading(false);
       const session = selected;
       setContext(null);
+      setContextError(null);
       setDoctor(null);
       setLifecycle(null);
       setLifecycleItem(null);
@@ -6026,6 +6059,7 @@ export default function App() {
             detail={visibleDetail}
             context={context}
             contextLoading={loadingContext}
+            contextError={contextError}
             doctor={doctor}
             doctorLoading={loadingDoctor}
             lifecycle={lifecycle}

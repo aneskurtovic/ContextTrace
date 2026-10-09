@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import * as api from "./api";
 import {
@@ -98,10 +98,12 @@ function sessionPage(
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 /** Open the first session from the all-sessions landing page. */
@@ -311,6 +313,51 @@ describe("desktop accessibility and state handling", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("keeps conversation and save controls available before and after an optional context failure", async () => {
+    const session = demoSessions[0];
+    const pending = deferred<ContextDetail>();
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    mockedApi.inspectSession.mockResolvedValue({ ...demoDetail(session.id), turnCount: 0, peakTurn: null, peakPromptTokens: null, contextWindow: null, growth: [] });
+    mockedApi.getContext.mockReturnValue(pending.promise);
+    render(<App />);
+    await openView("Conversation");
+    await waitFor(() => expect(mockedApi.getTranscript).toHaveBeenCalledWith(session.agent, session.id, 0));
+    // Inspection renders independently even while context is still pending.
+    await openView("Save & export");
+    expect(await screen.findByRole("button", { name: /to the archive$/ })).not.toBeNull();
+    pending.reject(new Error("this session has no turn with prompt usage"));
+    await openView("Context");
+    expect(await screen.findByText(/Context unavailable: this session has no turn with prompt usage/)).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await openView("Conversation");
+    expect(screen.getByRole("tab", { name: "Conversation" }).hasAttribute("disabled")).toBe(false);
+    await openView("Save & export");
+    fireEvent.click(await screen.findByRole("button", { name: /Add .* to the archive/ }));
+    await waitFor(() => expect(mockedApi.archiveSession).toHaveBeenCalledWith(session.agent, session.id, false));
+  });
+
+  it("refreshes a followed conversation even when context becomes unavailable", async () => {
+    let update: ((event: SessionUpdatedEvent) => void) | undefined;
+    mockedApi.listenForSessionUpdates.mockImplementation(async callback => { update = callback; return () => undefined; });
+    const session = demoSessions[0];
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    const initialContext = deferred<ContextDetail>();
+    mockedApi.getContext.mockReturnValueOnce(initialContext.promise);
+    render(<App />);
+    await openView("Overview");
+    fireEvent.click(await screen.findByRole("button", { name: "Follow live" }));
+    await waitFor(() => expect(update).toBeDefined());
+    mockedApi.inspectSession.mockResolvedValue({ ...demoDetail(session.id), eventCount: 987 });
+    mockedApi.getContext.mockRejectedValue(new Error("this session has no turn with prompt usage"));
+    update!({ agent: session.agent, sessionId: session.id });
+    expect(await screen.findByText("987 events")).not.toBeNull();
+    await openView("Context");
+    expect(await screen.findByText(/Context unavailable: this session has no turn with prompt usage/)).not.toBeNull();
+    await act(async () => { initialContext.resolve(demoContext()); await initialContext.promise; });
+    expect(screen.getByText(/Context unavailable: this session has no turn with prompt usage/)).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("labels an empty but valid context response instead of leaving blank panels", async () => {

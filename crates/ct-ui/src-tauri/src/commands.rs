@@ -4087,6 +4087,58 @@ mod tests {
     }
 
     #[test]
+    fn unmeasured_fixture_sessions_keep_metadata_and_readable_transcripts() {
+        let homes = FixtureHomes::new();
+        let claude_path = homes
+            .claude_home
+            .join("projects/C--repos-demo/fixture-claude.jsonl");
+        for path in [&homes.codex_session, &claude_path] {
+            let input = fs::read_to_string(path).unwrap();
+            let lines: Vec<String> = input
+                .lines()
+                .filter_map(|line| {
+                    let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    if value
+                        .get("payload")
+                        .and_then(|payload| payload.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("token_count")
+                    {
+                        return None;
+                    }
+                    if let Some(message) = value
+                        .get_mut("message")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        message.remove("usage");
+                    }
+                    Some(serde_json::to_string(&value).unwrap())
+                })
+                .collect();
+            fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+        }
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        assert_eq!(sessions.len(), 2);
+        for (agent, name) in [
+            (AgentKind::Codex, "codex"),
+            (AgentKind::ClaudeCode, "claude-code"),
+        ] {
+            let id = session_id(&sessions, name);
+            let detail = state.inspect_session(agent, &id).unwrap();
+            assert_eq!(detail.peak_prompt_tokens, None);
+            assert_eq!(detail.peak_turn, None);
+            assert!(detail.event_count > 0);
+            assert_eq!(
+                state.context(agent, &id, None).err().unwrap(),
+                "this session has no turn with prompt usage"
+            );
+            let transcript = state.transcript(agent, &id, None, None).unwrap();
+            assert!(!transcript.entries.is_empty());
+        }
+    }
+
+    #[test]
     fn fixture_backed_list_inspect_and_context_contract_covers_both_agents() {
         let homes = FixtureHomes::new();
         let state = homes.state();
