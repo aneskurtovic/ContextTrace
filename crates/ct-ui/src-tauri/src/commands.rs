@@ -23,6 +23,7 @@ use tauri::{AppHandle, Emitter};
 
 pub mod local_files;
 pub mod notifications;
+mod observation;
 mod projects;
 pub mod resume;
 
@@ -233,7 +234,7 @@ impl AppState {
 
     /// Invalidate only the session whose source file changed.
     ///
-    /// The notification monitor watches every live descriptor. Clearing the
+    /// The independent session observer watches every live descriptor. Clearing the
     /// whole cache on each 2.5-second poll would make an unrelated session the
     /// user is inspecting cold whenever any agent log grows. The agent-qualified
     /// key is the same identity used by both caches, so the parsed session and

@@ -205,6 +205,20 @@ impl ContextTrace {
             .collect()
     }
 
+    /// Live observation needs per-agent failures preserved: an unreadable
+    /// source is not evidence that its previous sessions were deleted.
+    pub fn discover_live_sessions(
+        &self,
+    ) -> Vec<(
+        AgentKind,
+        ct_domain::ports::PortResult<Vec<SessionDescriptor>>,
+    )> {
+        self.bindings
+            .iter()
+            .map(|binding| (binding.adapter.agent(), binding.adapter.discover()))
+            .collect()
+    }
+
     /// List sessions across all agents, newest first.
     ///
     /// A failing adapter is skipped rather than fatal: one agent's directory
@@ -1538,5 +1552,47 @@ mod tests {
             Box::new(CharProbe),
         )]);
         assert!(!empty.sweep_drift(None).matched_nothing());
+    }
+    #[test]
+    fn live_discovery_keeps_failed_and_successful_agent_results_separate() {
+        struct Unavailable;
+        impl AgentAdapter for Unavailable {
+            fn agent(&self) -> AgentKind {
+                AgentKind::ClaudeCode
+            }
+            fn roots(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn discover(&self) -> ct_domain::ports::PortResult<Vec<SessionDescriptor>> {
+                Err(PortError::Io("fixture source unavailable".into()))
+            }
+            fn load(&self, _: &SessionDescriptor) -> ct_domain::ports::PortResult<AgentSession> {
+                panic!("observation must not parse bodies")
+            }
+            fn reconstruct(
+                &self,
+                _: &AgentSession,
+                _: TurnNumber,
+                _: &dyn TokenEstimator,
+            ) -> ct_domain::ports::PortResult<ct_domain::ports::ReconstructedContext> {
+                panic!("observation must not calibrate")
+            }
+        }
+        let app = ContextTrace::new(vec![
+            AgentBinding::new(Box::new(Unavailable), Box::new(CharProbe)),
+            AgentBinding::new(
+                Box::new(FakeAdapter {
+                    agent: AgentKind::Codex,
+                    sessions: vec![(descriptor("live", AgentKind::Codex, "p", 1), Err(()))],
+                }),
+                Box::new(CharProbe),
+            ),
+        ]);
+        let batches = app.discover_live_sessions();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].0, AgentKind::ClaudeCode);
+        assert!(matches!(batches[0].1, Err(PortError::Io(_))));
+        assert_eq!(batches[1].0, AgentKind::Codex);
+        assert_eq!(batches[1].1.as_ref().unwrap()[0].id.as_str(), "live");
     }
 }

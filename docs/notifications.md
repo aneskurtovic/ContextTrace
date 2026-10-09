@@ -117,3 +117,11 @@ is the live check; the drawer is the log.
 **Nothing is sent while the app is closed.** The rules run in the desktop
 process. A session that crosses a threshold overnight is found on next start,
 and arrives marked as catch-up rather than as something that just happened.
+
+Live session observation runs every 2.5 seconds independently of notification
+preferences. Turning off notifications leaves Follow live and cache invalidation
+active, without parsing sessions for notification rules. The observer tracks
+agent-qualified descriptor fingerprints, coalesces changes, and detects
+rotation/deletion on successful discovery. A failed agent discovery preserves
+its previous inventory; other agents still refresh. Failed UI emissions retry.
+Notification baselining and catch-up use separate persisted checkpoints.

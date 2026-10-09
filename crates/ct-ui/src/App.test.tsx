@@ -1698,7 +1698,13 @@ describe('notifications', () => {
     expect(drawer.querySelectorAll('.notification-rule')).toHaveLength(11);
   });
 
-  it('refreshes a followed session only after its matching backend event', async () => {
+  it.each([true, false])('refreshes a followed session with notifications enabled=%s', async (enabled) => {
+    mockedApi.getNotificationSettings.mockResolvedValue({
+      ...demoNotificationSettings, enabled, onboardingComplete: true,
+      rules: enabled ? demoNotificationSettings.rules : Object.fromEntries(
+        Object.entries(demoNotificationSettings.rules).map(([key, rule]) => [key, { ...rule, delivery: 'off' }]),
+      ) as typeof demoNotificationSettings.rules,
+    });
     let update: ((event: SessionUpdatedEvent) => void) | undefined;
     mockedApi.listenForSessionUpdates.mockImplementation(async (callback) => {
       update = callback;

@@ -3,7 +3,7 @@
 pub mod activation;
 mod delivery;
 
-use super::AppState;
+use super::{observation::SessionObserver, AppState};
 use chrono::{DateTime, Utc};
 use ct_domain::ports::NotificationStore;
 use ct_domain::{
@@ -183,29 +183,64 @@ impl NotificationState {
 }
 
 pub fn start_monitor(app: AppHandle) {
-    std::thread::spawn(move || loop {
-        let result = poll(&app);
-        let notifications = app.state::<NotificationState>();
-        let enabled = notifications
-            .store
-            .settings()
-            .map(|settings| settings.enabled)
-            .unwrap_or(false);
-        let mut status = notifications.status();
-        status.running = enabled;
-        match result {
-            Ok(()) => {
-                status.last_successful_poll = Some(DateTime::<Utc>::from(SystemTime::now()));
-                status.error = None;
+    std::thread::spawn(move || {
+        let mut observer = SessionObserver::default();
+        loop {
+            let result = poll(&app, &mut observer);
+            let notifications = app.state::<NotificationState>();
+            let enabled = notifications
+                .store
+                .settings()
+                .map(|settings| settings.enabled)
+                .unwrap_or(false);
+            let mut status = notifications.status();
+            status.running = enabled;
+            match result {
+                Ok(()) => {
+                    status.last_successful_poll = Some(DateTime::<Utc>::from(SystemTime::now()));
+                    status.error = None;
+                }
+                Err(error) => status.error = Some(error),
             }
-            Err(error) => status.error = Some(error),
+            drop(status);
+            std::thread::sleep(POLL_INTERVAL);
         }
-        drop(status);
-        std::thread::sleep(POLL_INTERVAL);
     });
 }
 
-fn poll(app: &AppHandle) -> Result<(), String> {
+fn poll(app: &AppHandle, observer: &mut SessionObserver) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let batches = state.app.discover_live_sessions();
+    let mut descriptors = Vec::new();
+    let mut discovery_errors = Vec::new();
+    for (agent, result) in batches {
+        match result {
+            Ok(found) => {
+                observer.refresh_agent(agent, &found);
+                descriptors.extend(found);
+            }
+            Err(error) => discovery_errors.push(format!("{agent}: {error}")),
+        }
+    }
+    // Observation runs before notification settings or persisted checkpoints.
+    // No parsing, calibration, secret scanning or rule evaluation is needed.
+    observer.deliver_pending(|agent, id| {
+        state.invalidate_session(agent, id);
+        app.emit(
+            "contexttrace://session-updated",
+            SessionUpdatedEvent {
+                agent: agent.to_string(),
+                session_id: id.to_string(),
+            },
+        )
+        .map_err(|error| error.to_string())
+    })?;
+    let discovery_result = if discovery_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(discovery_errors.join("; "))
+    };
+
     let notifications = app.state::<NotificationState>();
     let settings = notifications
         .store
@@ -213,7 +248,7 @@ fn poll(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     if !settings.enabled {
         notifications.seen_this_run().clear();
-        return Ok(());
+        return discovery_result;
     }
     let mut preferences = notifications
         .store
@@ -221,13 +256,6 @@ fn poll(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let baseline_mode = !preferences.baseline_complete;
 
-    let state = app.state::<AppState>();
-    let descriptors = state.app.list_sessions(&ct_application::SessionFilter {
-        agent: None,
-        project: None,
-        since: None,
-        limit: None,
-    });
     for descriptor in descriptors {
         poll_session(
             app,
@@ -238,14 +266,14 @@ fn poll(app: &AppHandle) -> Result<(), String> {
             baseline_mode,
         )?;
     }
-    if baseline_mode {
+    if baseline_mode && discovery_result.is_ok() {
         preferences.baseline_complete = true;
         notifications
             .store
             .save_ui_preferences(preferences)
             .map_err(|error| error.to_string())?;
     }
-    Ok(())
+    discovery_result
 }
 
 fn poll_session(
@@ -281,7 +309,6 @@ fn poll_session(
             previous.path != fingerprint.path || fingerprint.size_bytes < previous.size_bytes
         });
 
-    state.invalidate_session(descriptor.agent, descriptor.id.as_str());
     let cached = state.cached_session(
         descriptor.agent,
         descriptor.id.as_str(),
@@ -300,16 +327,6 @@ fn poll_session(
             .store
             .save_checkpoint(&baseline)
             .map_err(|error| error.to_string())?;
-        if !baseline_mode {
-            app.emit(
-                "contexttrace://session-updated",
-                SessionUpdatedEvent {
-                    agent: descriptor.agent.to_string(),
-                    session_id: descriptor.id.to_string(),
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        }
         return Ok(());
     }
     let prior = prior.unwrap_or_else(|| {
@@ -430,14 +447,6 @@ fn poll_session(
         .store
         .save_checkpoint(&evaluation.checkpoint)
         .map_err(|error| error.to_string())?;
-    app.emit(
-        "contexttrace://session-updated",
-        SessionUpdatedEvent {
-            agent: descriptor.agent.to_string(),
-            session_id: descriptor.id.to_string(),
-        },
-    )
-    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
