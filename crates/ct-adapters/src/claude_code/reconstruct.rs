@@ -385,6 +385,7 @@ mod tests {
                 logical_parent_uuid: None,
                 is_sidechain: false,
             },
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }

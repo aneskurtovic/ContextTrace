@@ -363,7 +363,8 @@ fn evaluate_events(
     let tools: HashMap<&str, (&str, Option<&str>)> = session
         .events()
         .iter()
-        .filter_map(|event| match &event.kind {
+        .flat_map(|event| event.tool_operations())
+        .filter_map(|kind| match kind {
             EventKind::ToolCall {
                 tool,
                 call_id: Some(id),
@@ -379,13 +380,14 @@ fn evaluate_events(
         .iter()
         .filter(|event| prior.last_sequence.is_none_or(|last| event.sequence > last))
     {
-        match &event.kind {
-            EventKind::ToolResult {
+        for (operation_index, kind) in event.tool_operations().enumerate() {
+            if let EventKind::ToolResult {
                 tool,
                 call_id,
                 is_error,
                 ..
-            } => {
+            } = kind
+            {
                 let call = call_id.as_deref().and_then(|id| tools.get(id).copied());
                 let display_tool = tool.as_deref().or_else(|| call.map(|(tool, _)| tool));
                 let failure_key = display_tool
@@ -393,14 +395,17 @@ fn evaluate_events(
                 evaluate_tool_result(
                     session,
                     event,
+                    operation_index,
                     display_tool,
                     failure_key.as_deref(),
                     *is_error,
                     settings,
                     checkpoint,
                     out,
-                )
+                );
             }
+        }
+        match &event.kind {
             EventKind::Compacted(facts) => push_compaction(session, event, facts, settings, out),
             EventKind::Unrecognised => *unknown.entry(event.raw_type.as_str()).or_default() += 1,
             _ => {}
@@ -417,6 +422,7 @@ fn evaluate_events(
 fn evaluate_tool_result(
     session: &AgentSession,
     event: &ct_domain::Event,
+    operation_index: usize,
     tool: Option<&str>,
     failure_key: Option<&str>,
     failed: bool,
@@ -446,7 +452,11 @@ fn evaluate_tool_result(
         };
         out.push(candidate(
             session,
-            format!("tool-errors:{}:{}", session.id(), event.sequence),
+            format!(
+                "tool-errors:{}:{}:{operation_index}",
+                session.id(),
+                event.sequence
+            ),
             NotificationRuleId::ToolErrorStreak,
             NotificationSeverity::Warning,
             rule.delivery,

@@ -339,6 +339,7 @@ mod tests {
             raw_type: raw_type.into(),
             turn: None,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }

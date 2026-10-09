@@ -49,6 +49,11 @@ pub struct Event {
     /// without retaining their potentially huge content.
     #[serde(skip)]
     pub content_measurement: Option<ContentMeasurement>,
+    /// Per-block tool accounting, independent of the one-line display kind.
+    /// Only ToolCall and ToolResult kinds belong here; sizes cover each block.
+    /// Empty for legacy/single-operation adapters, which use `kind` instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_operations: Vec<EventKind>,
 }
 
 /// Graph edges between events.
@@ -200,6 +205,22 @@ pub struct CompactionFacts {
 }
 
 impl Event {
+    /// Tool operations in recorded block order, with legacy single-kind fallback.
+    /// These facts do not create extra events, graph nodes or usage records.
+    pub fn tool_operations(&self) -> impl Iterator<Item = &EventKind> {
+        let kinds = if self.tool_operations.is_empty() {
+            std::slice::from_ref(&self.kind)
+        } else {
+            &self.tool_operations
+        };
+        kinds.iter().filter(|kind| {
+            matches!(
+                kind,
+                EventKind::ToolCall { .. } | EventKind::ToolResult { .. }
+            )
+        })
+    }
+
     /// Character length of this event's content, where known.
     ///
     /// The basis for heuristic token estimation. Recorded at parse time so the
@@ -250,8 +271,21 @@ mod tests {
             raw_type: "test".into(),
             turn: None,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
+    }
+
+    #[test]
+    fn event_without_block_facts_keeps_single_tool_accounting() {
+        let event = ev(EventKind::ToolResult {
+            tool: None,
+            call_id: Some("one".into()),
+            char_len: 20,
+            is_error: true,
+        });
+        assert_eq!(event.tool_operations().count(), 1);
+        assert_eq!(event.char_len(), Some(20));
     }
 
     #[test]

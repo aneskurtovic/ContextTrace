@@ -368,6 +368,7 @@ fn translate(
         raw_type,
         turn: None,
         links,
+        tool_operations: value.map(tool_operations).unwrap_or_default(),
         content_measurement,
     };
 
@@ -456,6 +457,42 @@ fn value_has_content(value: &Value) -> bool {
         Value::Object(o) => !o.is_empty(),
         Value::Bool(_) | Value::Number(_) => true,
     }
+}
+
+/// Preserve operations without splitting a line's identity or usage record.
+fn tool_operations(value: &Value) -> Vec<EventKind> {
+    let Some(blocks) = value
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let role = value.get("type").and_then(Value::as_str);
+    blocks
+        .iter()
+        .filter_map(|block| match (role, block_type(block)) {
+            (Some("assistant"), Some("tool_use")) => Some(EventKind::ToolCall {
+                tool: str_field(block, "name").unwrap_or_else(|| "unknown".into()),
+                call_id: str_field(block, "id"),
+                char_len: content_chars(std::slice::from_ref(block)),
+                target: block.get("input").and_then(crate::tool_target::describe),
+                file_target: block.get("input").and_then(|input| {
+                    crate::tool_target::file_target(input, value.get("cwd").and_then(Value::as_str))
+                }),
+            }),
+            (Some("user"), Some("tool_result")) => Some(EventKind::ToolResult {
+                tool: None,
+                call_id: str_field(block, "tool_use_id"),
+                char_len: content_chars(std::slice::from_ref(block)),
+                is_error: block
+                    .get("is_error")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Classify an `assistant` line.

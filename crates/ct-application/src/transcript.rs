@@ -440,6 +440,7 @@ mod tests {
             raw_type: "test".into(),
             turn: Some(TurnNumber::FIRST),
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }

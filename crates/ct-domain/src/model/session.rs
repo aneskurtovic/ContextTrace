@@ -456,6 +456,7 @@ mod tests {
                 raw_type: "x".into(),
                 turn: None,
                 links: Default::default(),
+                tool_operations: Vec::new(),
                 content_measurement: None,
             })
             .collect();

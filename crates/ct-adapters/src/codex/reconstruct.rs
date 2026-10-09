@@ -313,6 +313,7 @@ mod tests {
             raw_type: "response_item".into(),
             turn,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }

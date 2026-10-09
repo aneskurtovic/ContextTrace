@@ -1298,6 +1298,7 @@ eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYnVuZGxlLmpzIiwic291cmNlcyI6W119Cg==";
             raw_type: "user".into(),
             turn: Some(TurnNumber::new(2).unwrap()),
             links: Default::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         };
         let session = AgentSession::new(

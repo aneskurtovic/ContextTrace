@@ -97,6 +97,7 @@ mod tests {
             raw_type: "test".into(),
             turn: turn.and_then(|turn| TurnNumber::new(turn).ok()),
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }

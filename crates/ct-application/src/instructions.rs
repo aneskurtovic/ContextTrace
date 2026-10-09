@@ -284,6 +284,7 @@ mod tests {
             raw_type: "context_injection".into(),
             turn: None,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }

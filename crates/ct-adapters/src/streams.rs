@@ -272,6 +272,7 @@ impl StreamAdapter {
                 raw_type,
                 turn: None,
                 links: Default::default(),
+                tool_operations: Vec::new(),
                 content_measurement: None,
             });
             for (index, kind) in extra_kinds.into_iter().enumerate() {
@@ -288,6 +289,7 @@ impl StreamAdapter {
                     raw_type,
                     turn: None,
                     links: Default::default(),
+                    tool_operations: Vec::new(),
                     content_measurement: None,
                 });
             }

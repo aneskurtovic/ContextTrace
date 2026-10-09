@@ -462,6 +462,7 @@ fn translate(
             raw_type,
             turn: None,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         };
     }
@@ -543,6 +544,7 @@ fn translate(
         raw_type,
         turn: None,
         links: EventLinks::default(),
+        tool_operations: Vec::new(),
         content_measurement,
     }
 }
