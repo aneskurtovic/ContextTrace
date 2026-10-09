@@ -7,11 +7,11 @@
 //! name a type that says so.
 //!
 //! Both operate on the exact raw JSONL line an [`ArchiveStore`] streams in
-//! ([`RecordTransform::apply`]'s only argument), which is also what
-//! [`crate::secrets::scan_secrets`] scans -- the two are looking at identical
-//! bytes, so a value invisible to one is invisible to the other.
+//! ([`RecordTransform::apply`]'s only argument). Archives decode JSON strings
+//! for detection and preserve key/value context, sharing the inspection
+//! scanner's patterns while keeping unrelated encoded bytes intact.
 
-use crate::secrets::redact_text;
+use crate::secrets::{find_secrets, redact_text, secret_member, SecretKind, SecretMatch};
 use crate::{AppError, ContextTrace, ResolvedSession};
 use ct_domain::model::archive::{ArchiveEntry, ArchiveIntegrity, RedactionMode};
 use ct_domain::ports::{ArchiveStore, RecordTransform};
@@ -21,9 +21,9 @@ use std::borrow::Cow;
 /// Replace recognised credential shapes on the way into the archive. The
 /// default -- see [`default_transform`].
 ///
-/// Uses the same scanner [`crate::secrets::scan_secrets`] runs, so a value
-/// invisible to one is invisible to the other. It applies it **inside each JSON
-/// string of the record** rather than to the record as one blob, for the reason
+/// Shares the scanner patterns used by [`crate::secrets::scan_secrets`],
+/// applying them to decoded strings and their JSON member context rather than
+/// treating the record as one blob, for the reason
 /// [`redact_json_record`] gives -- the two callers of [`redact_text`] do not
 /// mean the same thing by "record", and running it over a whole JSONL line can
 /// eat the line's own punctuation.
@@ -58,8 +58,9 @@ impl RecordTransform for RedactingTransform {
 /// scanner is not wrong; the two callers simply mean different things by
 /// "record", and the archive is the one that has punctuation to protect.
 ///
-/// So each string's contents are redacted separately. Everything outside a
-/// string -- key order, whitespace, escapes, structure -- is copied byte for
+/// Each decoded string is scanned with its member key, if present. Matched
+/// ranges map back to the original encoding. Everything outside those ranges
+/// -- key order, whitespace, escapes, structure -- is copied byte for
 /// byte, which is what keeps an archive of a session holding no credentials
 /// byte-identical to its log. An unterminated key block now claims the rest of
 /// *its own string* and stops at the closing quote, which is the same rule doing
@@ -82,16 +83,44 @@ fn redact_json_record(record: &str) -> (Cow<'_, str>, u32) {
     let mut out: Option<String> = None;
     let mut cursor = 0usize;
     let mut total = 0u32;
-    for (start, end) in spans {
-        let (redacted, count) = redact_text(&record[start..end]);
-        if count == 0 {
-            continue;
+    for (index, &(start, end)) in spans.iter().enumerate() {
+        let Some(decoded) = decode_json_string(record, start, end) else {
+            let (text, count) = redact_text(record);
+            return (text, count as u32);
+        };
+        let mut matches = find_secrets(&decoded);
+        // A key and its value are separate string tokens. Preserve their
+        // binding while scanning the decoded value; never redact punctuation.
+        if let Some(&(key_start, key_end)) = index.checked_sub(1).and_then(|i| spans.get(i)) {
+            if record[key_end + 1..start - 1].trim() == ":" {
+                if let Some(key) = decode_json_string(record, key_start, key_end) {
+                    if secret_member(&key, &decoded) {
+                        let kind = matches
+                            .first()
+                            .filter(|found| found.start == 0 && found.end == decoded.len())
+                            .map(|found| found.kind)
+                            .unwrap_or(SecretKind::EnvironmentSecret);
+                        matches = vec![SecretMatch {
+                            kind,
+                            start: 0,
+                            end: decoded.len(),
+                        }];
+                    }
+                }
+            }
         }
-        let buffer = out.get_or_insert_with(|| String::with_capacity(record.len()));
-        buffer.push_str(&record[cursor..start]);
-        buffer.push_str(&redacted);
-        cursor = end;
-        total += count as u32;
+        let positions = encoded_match_positions(record, start, &decoded, &matches);
+        for (index, found) in matches.into_iter().enumerate() {
+            let from = positions[index * 2];
+            let to = positions[index * 2 + 1];
+            let buffer = out.get_or_insert_with(|| String::with_capacity(record.len()));
+            buffer.push_str(&record[cursor..from]);
+            buffer.push_str("[REDACTED:");
+            buffer.push_str(found.kind.marker());
+            buffer.push(']');
+            cursor = to;
+            total += 1;
+        }
     }
 
     match out {
@@ -103,6 +132,53 @@ fn redact_json_record(record: &str) -> (Cow<'_, str>, u32) {
             (Cow::Owned(buffer), total)
         }
     }
+}
+
+/// Decode one string for detection without reserializing the record.
+fn decode_json_string(record: &str, start: usize, end: usize) -> Option<String> {
+    serde_json::from_str(&record[start - 1..end + 1]).ok()
+}
+
+/// Map only matched boundaries back to original bytes. Memory is proportional
+/// to matches, not the potentially megabytes-long image/tool-output string.
+fn encoded_match_positions(
+    record: &str,
+    start: usize,
+    decoded: &str,
+    matches: &[SecretMatch],
+) -> Vec<usize> {
+    let mut positions = Vec::with_capacity(matches.len() * 2);
+    let mut boundaries = matches
+        .iter()
+        .flat_map(|found| [found.start, found.end])
+        .peekable();
+    let raw = &record.as_bytes()[start..];
+    let mut encoded_offset = 0usize;
+    let mut decoded_offset = 0usize;
+    for ch in decoded.chars().chain(std::iter::once('\0')) {
+        while boundaries.peek() == Some(&decoded_offset) {
+            positions.push(start + encoded_offset);
+            boundaries.next();
+        }
+        if boundaries.peek().is_none() {
+            break;
+        }
+        encoded_offset += if raw[encoded_offset] == b'\\' {
+            if raw[encoded_offset + 1] == b'u' {
+                if ch as u32 > 0xffff {
+                    12
+                } else {
+                    6
+                }
+            } else {
+                2
+            }
+        } else {
+            ch.len_utf8()
+        };
+        decoded_offset += ch.len_utf8();
+    }
+    positions
 }
 
 /// Byte ranges of each JSON string's *contents* in a raw record.
@@ -746,6 +822,82 @@ mod tests {
             }),
             Box::new(CharProbe),
         )])
+    }
+
+    #[test]
+    fn generic_json_credentials_keep_their_member_context_and_punctuation() {
+        let record = r#"{ "outer" : {"password": "syntheticCredential123!", "apiKey":"otherSyntheticValue456"}, "note" : "syntheticCredential123!", "max_tokens":4096 }"#;
+        assert!(crate::secrets::redact_preview(record, usize::MAX).contains("[REDACTED:"));
+        let (text, count) = RedactingTransform.apply(record);
+        assert_eq!(count, 2);
+        assert_eq!(
+            text,
+            r#"{ "outer" : {"password": "[REDACTED:environment-secret]", "apiKey":"[REDACTED:environment-secret]"}, "note" : "syntheticCredential123!", "max_tokens":4096 }"#
+        );
+        assert_still_valid_json("generic members", &text);
+    }
+
+    #[test]
+    fn escaped_generic_keys_and_values_redact_the_entire_decoded_value() {
+        let record = r#"{"outer":{"pass\u0077ord":"synthetic\u0043redential\\with\"quotes123"},"note":"keep \u00e9"}"#;
+        let (text, count) = RedactingTransform.apply(record);
+        assert_eq!(count, 1);
+        assert_eq!(
+            text,
+            r#"{"outer":{"pass\u0077ord":"[REDACTED:environment-secret]"},"note":"keep \u00e9"}"#
+        );
+        assert_still_valid_json("escaped generic credential", &text);
+    }
+
+    #[test]
+    fn escaped_prefixed_credentials_preserve_unmatched_unicode_and_surrogate_escapes() {
+        let body = "a".repeat(36);
+        let record = format!(
+            r#"{{ "content":"\u00e9 \ud83d\ude42 \u0067hp_{body} \u00E9", "note": "\u006e" }}"#
+        );
+        let (text, count) = RedactingTransform.apply(&record);
+        assert_eq!(count, 1);
+        assert_eq!(
+            text,
+            r#"{ "content":"\u00e9 \ud83d\ude42 [REDACTED:github-token] \u00E9", "note": "\u006e" }"#
+        );
+        assert_still_valid_json("escaped prefixed token", &text);
+    }
+
+    #[test]
+    fn encoded_placeholders_code_and_ordinary_values_remain_byte_identical() {
+        let record = r#"{ "password":"your\u005fpassword_here", "apiKey":"Crypto.Encrypt(value)", "ordinary":"syntheticCredential123!", "max_tokens":4096 }"#;
+        let (text, count) = RedactingTransform.apply(record);
+        assert_eq!(count, 0);
+        assert!(matches!(text, Cow::Borrowed(_)));
+        assert_eq!(text, record);
+    }
+
+    #[test]
+    fn long_encoded_values_redact_late_matches_without_rewriting_the_prefix() {
+        let prefix = "x".repeat(2 * 1024 * 1024);
+        let body = "a".repeat(36);
+        let record = format!(r#"{{"content":"{prefix} \u0067hp_{body} \u00e9"}}"#);
+        let (text, count) = RedactingTransform.apply(&record);
+        assert_eq!(count, 1);
+        assert_eq!(
+            text,
+            format!(r#"{{"content":"{prefix} [REDACTED:github-token] \u00e9"}}"#)
+        );
+        assert_still_valid_json("large encoded value", &text);
+    }
+
+    #[test]
+    fn default_archive_ingestion_counts_contextual_json_credential_redactions() {
+        let app = app_with(vec![descriptor("genericsecret", AgentKind::Codex)]);
+        let line = r#"{"outer":{"password":"syntheticCredential123!"}}"#;
+        let store = FakeArchiveStore::with_source("genericsecret", vec![line]);
+        let entry = app
+            .archive_session("genericsecret", &store, RedactionMode::Redacted)
+            .unwrap();
+        assert_eq!(entry.redacted_records, 1);
+        assert_eq!(entry.redacted_values, 1);
+        assert!(entry.differs_from_source());
     }
 
     // ---- archive_session -------------------------------------------------

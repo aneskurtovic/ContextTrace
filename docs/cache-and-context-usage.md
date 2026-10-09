@@ -30,5 +30,10 @@ cache rates from the recorded LiteLLM revision. They are not subscription bills
 and do not establish nondefault cache durations, tool/media charges or negotiated
 rates. Forecasts require complete supported usage and pricing.
 
+Spend requires recorded input and output plus all applicable cache buckets,
+including when a count is zero. An absent count stays unknown. Incomplete
+turns are unpriced and disable forecasts; scenario caps do not fill missing
+counts. Absent Codex cache writes remain inapplicable in the supported contract.
+
 Provider references: [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
 and [Claude prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).

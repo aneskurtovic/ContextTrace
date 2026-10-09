@@ -119,10 +119,10 @@ pub struct ExportReport {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct SecretMatch {
-    kind: SecretKind,
-    start: usize,
-    end: usize,
+pub(crate) struct SecretMatch {
+    pub(crate) kind: SecretKind,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 /// Redact every recognised value while preserving all surrounding text.
@@ -374,7 +374,7 @@ fn source_key(source: SourceRef) -> (u32, u64, u32, u32) {
     )
 }
 
-fn find_secrets(text: &str) -> Vec<SecretMatch> {
+pub(crate) fn find_secrets(text: &str) -> Vec<SecretMatch> {
     let mut found = Vec::new();
 
     find_prefixed(
@@ -698,7 +698,7 @@ fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
             end += 1;
         }
         let value = &text[value_start..end];
-        if value.len() >= 12 && !looks_like_placeholder(value) && !looks_like_code(value) {
+        if secret_member(name, value) {
             found.push(SecretMatch {
                 kind: SecretKind::EnvironmentSecret,
                 start: value_start,
@@ -707,6 +707,14 @@ fn find_secret_assignments(text: &str, found: &mut Vec<SecretMatch>) {
         }
         cursor = end.max(cursor);
     }
+}
+
+/// Shared contextual rule for plain assignments and decoded JSON members.
+pub(crate) fn secret_member(name: &str, value: &str) -> bool {
+    secretish_name(name)
+        && value.len() >= 12
+        && !looks_like_placeholder(value)
+        && !looks_like_code(value)
 }
 
 /// Decide whether a name promises a credential, whatever its spelling.

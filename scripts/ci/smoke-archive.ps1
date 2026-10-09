@@ -30,6 +30,12 @@ $codexDay = New-CleanDirectory (Join-Path $homes.Codex 'sessions/2026/07/25')
 $fixture = Join-Path $repoRoot 'tests/fixtures/secrets/codex/rollout.jsonl'
 Copy-Item $fixture (Join-Path $codexDay 'rollout.jsonl')
 
+# Generic and escaped member values require JSON key/value context, not a
+# provider-specific credential prefix. These are synthetic positive controls.
+$genericValues = @('ctSyntheticCredential2026!', 'synthetic\u0043redential123!')
+$genericRecord = '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"generic credential fixture"}],"credentials":{"password":"ctSyntheticCredential2026!","api\u004bey":"synthetic\u0043redential123!"}}}'
+[System.IO.File]::AppendAllText((Join-Path $codexDay 'rollout.jsonl'), "`n$genericRecord`n", [System.Text.UTF8Encoding]::new($false))
+
 # Positive control. The archive is a redacted copy of this file, so "none of
 # these strings is in the archive" is only evidence if they are all in the
 # input. Unlike the export path, every fixture credential is reachable here --
@@ -59,6 +65,9 @@ if ($archived.redacted_values -le 0) {
 $storedText = (Get-ChildItem -Path $archiveRoot -Recurse -File | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
 if ([string]::IsNullOrEmpty($storedText)) { throw 'The archive wrote nothing.' }
 Assert-NoFixtureSecretIn -Text $storedText -Because 'A credential survived into the archive, including its manifest.'
+foreach ($value in $genericValues + @('syntheticCredential123!')) {
+    if ($storedText.Contains($value)) { throw 'A synthetic generic JSON credential survived archive redaction.' }
+}
 
 # Every archived record must still be a parseable JSON line, or the copy is
 # worse than useless -- redaction substitutes inside raw JSONL.
