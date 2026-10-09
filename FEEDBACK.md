@@ -6,18 +6,18 @@
 - Branch: main
 - Commit SHA: 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c
 - Audit started: 2026-10-08T19:22:19.385Z
-- Last updated: 2026-10-09T00:06:12.280Z
+- Last updated: 2026-10-09T00:14:34.847Z
 - Audit status: In Progress — broad source review and local validation completed; exhaustive source coverage and desktop/release acceptance remain
 - Reviewed environment: Windows; installed Rust/Cargo and Node/npm; offline cached dependencies; approved shell execution; no application launch or real user corpus access
 - Reviewer: Astra
 
 ## Executive Summary
 
-This revision has a strong layered Rust core, explicit provenance/confidence modeling, bounded JSONL reads, fixture-based compatibility checks, a shared CLI/desktop composition root, and substantial local test coverage. Passing tests nevertheless coexist with important semantic defects. **33 findings are confirmed: 0 Critical, 3 High, 21 Medium and 9 Low.** Confirmation includes traceable source contradictions; selected findings also have synthetic runtime reproductions. It does not imply native reproduction of every issue.
+This revision has a strong layered Rust core, explicit provenance/confidence modeling, bounded JSONL reads, fixture-based compatibility checks, a shared CLI/desktop composition root, and substantial local test coverage. Passing tests nevertheless coexist with important semantic defects. **34 findings are confirmed: 0 Critical, 3 High, 21 Medium and 10 Low.** Confirmation includes traceable source contradictions; selected findings also have synthetic runtime reproductions. It does not imply native reproduction of every issue.
 
 The highest priorities are incorrect request-input membership (CT-101), archive recovery after an interrupted manifest append (CT-104), and heavy synchronous Windows desktop commands (CT-109). Additional practical problems affect incomplete cost accounting, live refresh, browsing unmeasured sessions, default archive redaction and notification fidelity. Archive copies can remain recoverable even when metadata/listing fails; permanent loss of all bytes has not been demonstrated.
 
-Security has useful defenses: evidence-derived file actions, narrowly shaped resume arguments, escaped toast content, restricted webview capabilities and signed updates. Confirmed gaps require explicit interaction with attacker-influenced local evidence or affect the advertised redaction contract; no automatic remote compromise is demonstrated. The npm advisory inventory was refreshed: five flagged development packages require maintenance triage; shipped-app exploitability was not established. Rust advisory inventory remains outstanding.
+Security has useful defenses: evidence-derived file actions, narrowly shaped resume arguments, escaped toast content, restricted webview capabilities and signed updates. Confirmed gaps require explicit interaction with attacker-influenced local evidence or affect the advertised redaction contract; no automatic remote compromise is demonstrated. The npm advisory inventory was refreshed: five flagged development packages require maintenance triage; shipped-app exploitability was not established. Rust advisory inventory matched one platform-specific unsoundness and six unmaintained packages; Windows exposure is triaged in Security Findings.
 
 Workspace tests, strict Clippy, formatting, 180 frontend tests, frontend production build, fixture catalog checks and release-helper unit tests passed locally. Several existing tests encode current behavior rather than independently asserting request-input semantics. Native interaction, assistive technology, real agent restoration, clean-host install/update and current published assets/CI were not verified. This is a substantial audit checkpoint, not an exhaustive production-readiness sign-off. Only FEEDBACK.md is being changed.
 
@@ -101,6 +101,7 @@ Tests are embedded Rust units plus public fixture integration, React/Vitest DOM 
 | CT-131 | Medium | Parser reliability / resource amplification | Cyclic Claude ancestry amplifies tiny logs into duplicate context | Confirmed | High |
 | CT-132 | Low | Parser fidelity | Codex framing-budget edge silently hides oversized messages | Confirmed | High |
 | CT-133 | Medium | Parser / product data fidelity | Claude multi-tool blocks lose operation identities and errors | Confirmed | High |
+| CT-134 | Low | Evidence presentation | Unsupported residual trend is presented as proof of no remainder | Confirmed | High |
 
 ## Critical Findings
 
@@ -424,15 +425,15 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Confidence:** High  
 **Affected Components:** Notification pressure, growth timeline and corpus pressure  
 **File Locations:** `crates/ct-application/src/notifications.rs:156-163,254-258`; `crates/ct-domain/src/model/session.rs:251-265`; `crates/ct-application/src/growth.rs:122-125,261`; `crates/ct-application/src/corpus.rs:367-390`  
-**User Impact:** A request with unknown context capacity can produce a precise-looking critical pressure alert using another model’s limit.  
+**User Impact:** A request with unknown capacity can produce a precise-looking alert using another model’s limit; growth/corpus can understate or overstate pressure despite an explicit later request limit.  
 **Description:** Notification utilisation and displayed evidence fall back directly to session metadata. Growth and corpus pressure use only the session-wide capacity, even when a later request has an explicit different limit. The domain helper deliberately rejects that fallback when the request explicitly changes model.  
 **Evidence:** Source trace also shows metadata 200k with a later 80k/100k request produces corpus comfortable (40%) rather than tight (80%). A synthetic model-B request with 90,000 prompt tokens and only model-A session metadata (100,000 capacity) has context_window_at=None but produces a pressure candidate.  
 **Root Cause:** Multiple analyses duplicate capacity resolution instead of using the domain evidence policy.  
 **Reproduction / Verification:** Corrected isolated Rust probe with notifications enabled passed; no OS notification sent.  
 **Recommended Solution:** Use context_window_at for each request in notifications, growth and corpus. Compute the maximum known per-turn utilization rather than peak tokens divided by one session limit; keep unknown-denominator requests explicit. Growth ranges must retain the included requests’ limits. Test model switches, explicit per-request limits and zero limits.  
-**Expected Benefit:** Consistent uncertainty across the context view and alerts.  
-**Estimated Effort:** Small  
-**Regression Risk:** Low  
+**Expected Benefit:** Consistent request-level capacity and uncertainty across context views, alerts, growth and corpus.  
+**Estimated Effort:** Medium  
+**Regression Risk:** Medium; update growth range/DTO consumers and preserve unknown capacities.  
 **Related Findings:** CT-101
 
 ### CT-120 — Historical secret and residual findings replay after an unrelated append
@@ -561,7 +562,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Description:** Transcript blocks preserve all operations, but normalized accounting selects only the first tool_use/tool_result while measuring the entire group.  
 **Evidence:** The committed fixture has call-a and call-b, a successful first result and failed second result. Both classification functions use find, and corpus uses those singular event identities/error flags.  
 **Root Cause:** One primary display classification doubles as a lossy accounting representation.  
-**Reproduction / Verification:** Independently traced committed fixture through parser and corpus; existing tests assert display blocks but not two calls/one error. No real producer incidence or native notification reproduction claimed.  
+**Reproduction / Verification:** Compiled cached-library probe loaded the checked-in chat-blocks fixture through ClaudeCodeAdapter and Corpus: tool_calls=1 and tool_errors=0 despite two calls and a failed second result. Exit 0; no real corpus or OS notifications accessed. Existing display assertions do not test accounting.  
 **Recommended Solution:** Preserve per-block tool identities/error flags in accounting, using separate block facts or derived operation records; retain one request usage record and UUID ancestry and avoid duplicating whole-message size. Assert corpus calls/errors/attribution and notification behavior for this fixture.  
 **Expected Benefit:** Consistent transcript, metrics and error reporting for supported multi-block messages.  
 **Estimated Effort:** Medium  
@@ -577,7 +578,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Status:** Confirmed  
 **Confidence:** High  
 **Affected Components:** Corpus progress effect and multi-listener notification helper  
-**File Locations:** `crates/ct-ui/src/App.tsx:2820-2823,4675-4679`; `crates/ct-ui/src/api.ts:1584-1599`; `crates/ct-ui/src/main.tsx:10-15`  
+**File Locations:** `crates/ct-ui/src/App.tsx:2820-2823,4675-4679`; `crates/ct-ui/src/api.ts:1584-1599`; `crates/ct-ui/src/main.tsx:10-14`  
 **User Impact:** Fast navigation or partial registration failure can leave orphan callbacks; registration errors in the corpus effect become unhandled rejections.  
 **Description:** Corpus cleanup can run before listen resolves and therefore sees no unlisten function. Separately, Promise.all registration of two notification listeners loses the successful cleanup handle if the other registration rejects.  
 **Evidence:** Existing session effects already demonstrate a disposed-flag pattern. The notification helper exposes cleanup only after both registrations succeed, and its caller cannot reclaim a handle lost inside the rejected promise.  
@@ -742,6 +743,25 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Regression Risk:** Low  
 **Related Findings:** None  
 
+### CT-134 — Unsupported residual trend is presented as proof of no remainder
+
+**Severity:** Low  
+**Category:** Evidence presentation  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Codex unlogged-context panel and residual DTO  
+**File Locations:** `crates/ct-ui/src/App.tsx:1100-1105`; `crates/ct-ui/src-tauri/src/commands.rs:1225-1234`; `crates/ct-domain/src/services/calibration.rs:86-101`  
+**User Impact:** The unlogged-context panel can tell users no remainder exists while the selected Codex snapshot has unattributed tokens.  
+**Description:** AgentNotFitted means this fitted-ratio analysis is not supported; the frontend instead makes a claim about complete session accounting.  
+**Evidence:** Backend returns AgentNotFitted for Codex before loading the session. Calibration independently allows nonzero residual, including unmeasured content.  
+**Root Cause:** A structural capability refusal is interpreted as evidence of absence.  
+**Reproduction / Verification:** Independent source trace and reviewer consolidation; no native visual reproduction. The claim is unsupported even before any session is inspected.  
+**Recommended Solution:** Describe the fitted-ratio trend as unavailable for Codex and direct users to the selected-turn unattributed remainder where present. Add a Codex nonzero-residual display assertion.  
+**Expected Benefit:** Preserves the distinction between unavailable analysis and measured zero.  
+**Estimated Effort:** Small  
+**Regression Risk:** Low  
+**Related Findings:** None  
+
 ## Architectural Recommendations
 
 1. **Request-input evidence boundary — immediate, CT-101.** Current reconstructors use response/report anchors for input inventories. Introduce explicit input/completion boundaries and membership confidence before tuning calibration. Benefit: interpretable downstream diagnostics. Tradeoff: legacy formats need honest ambiguity handling. Migrate fixtures and semantic baselines together; balanced totals must not justify wrong membership.
@@ -776,6 +796,24 @@ Programmatic linear Claude histories with short constant-size content; existing 
 
 The desktop_perf example documents cache caveats but discovers the real operator corpus; read, not executed. Follow-up profiling must isolate synthetic homes/archives and use release binaries. No startup/soak/memory-leak measurement is claimed.
 
+### Measured: optimized calibration and transcript indexing
+
+Current source was compiled with cargo --release (thin LTO), then an stdin harness linked those libraries with -O -C lto=thin -C codegen-units=1. Three samples per cell; medians in milliseconds. Two short constant-size messages per turn. Branch mode forks every tenth request back ten requests; compacted mode inserts a boundary every 100 requests. No user homes, disk parsing, IPC or webview are included.
+
+| Shape | 250 turns | 500 turns | 1000 turns |
+|---|---:|---:|---:|
+| Linear | 85.128 | 263.695 | 973.072 |
+| Branched | 24.462 | 90.887 | 377.121 |
+| Compacted | 37.290 | 133.914 | 392.369 |
+
+CT-123 persists with optimization: linear doubling gives approximately 3.10× then 3.69×. Branches/compaction reduce replay depth but every reconstruction still builds a whole-session UUID index. These are synthetic measurements on this workstation, not a native latency SLA or substitute for correct CT-101 semantics.
+
+Transcript page traversal with a synthetic unavailable RawEventSource (no disk), page size 30, three samples: 2,000 events/67 pages median 3.424 ms; 8,000/267 median 20.130 ms; 32,000/1,067 median 227.357 ms. This measures repeated backend indexing/building only, not frontend retained-DOM cost. It supports the scaling concern P-02 while showing small histories are cheap in this harness.
+
+### Measured: isolated release CLI startup
+
+Five new child processes ran release ct sessions --json against one copied public Codex fixture with explicit CODEX_HOME, empty Claude home and new archive root. Wall times: 1291.22, 423.12, 404.46, 401.66, 430.26 ms; median 423.12 ms. Includes process/tokenizer/discovery/serialization overhead; OS cache was uncontrolled, so the first sample is not claimed disk-cold. All exited 0 and produced parseable JSON. Process.PeakWorkingSet64 returned null after exit in this environment: no RSS result is claimed. Desktop startup, cache-hit UI latency, prolonged polling and memory retention remain follow-up measurements.
+
 ## Security Findings
 
 JSONL, attachment labels, tool output and paths are untrusted evidence. Malicious workspaces/tools or imported/modified sessions can influence them. A same-user attacker with arbitrary execution already has broader access; the review focuses on unexpectedly expanded authority.
@@ -789,11 +827,27 @@ JSONL, attachment labels, tool output and paths are untrusted evidence. Maliciou
 | Session → archive/MCP | Default redaction, explicit raw opt-out, value-free reports | CT-118 contextual JSON credential gap; Redacted does not mean secret-free |
 | Session → external CLI | Validated identity, encoded PowerShell data, cwd/CLI checks, preview | Real restoration unverified; no injection established |
 | Activation → navigation | Numeric durable IDs, startup queue, XML escaping | Actual Windows toast/deep-link activation untested |
-| Catalog/update → runtime | HTTPS, updater signature key, constrained endpoint, Woodpecker gates/digests | Current advisories/assets and clean-host update unverified |
+| Catalog/update → runtime | HTTPS, updater signature key, constrained endpoint, Woodpecker gates/digests | Advisory inventory below; current assets and clean-host update unverified |
 
 CT-110/111 detail attacker input, boundary, prerequisites, code and impact. CT-118 uses a synthetic value; no real credential was used/exposed. No private corpus was inspected. Ordinary parsing does not upload sessions. Synthetic values were confined to fixture/ignored test artifacts and are not copied here.
 
-Cargo.lock/package-lock and relevant pinned desktop code were inspected. No advisory scan, installed ACL review, Authenticode/clean-host verification or OS exploit was performed; dependency/update safety is not certified.
+Cargo.lock/package-lock and relevant pinned desktop code were inspected. Version-matched advisory queries were performed as detailed below. Installed ACL review, Authenticode/clean-host verification and OS exploits were not performed; dependency/update safety is not certified.
+
+### Dependency advisory inventory and exposure triage
+
+Inventory queried at 2026-10-09T00:09:12.171Z. These are dependency maintenance observations, not additional confirmed application exploits or severity inflation. No package was installed, updated or fixed.
+
+| Ecosystem / locked version | Advisory result | Applicability and recommendation |
+|---|---|---|
+| vitest / @vitest/mocker 4.1.10 | [GHSA-82fw-gwwq-j7x9](https://github.com/vitest-dev/vitest/security/advisories/GHSA-82fw-gwwq-j7x9); patched 4.1.11 | Dev-only. Advisory requires reachable mocker/interceptor registration; repository uses jsdom and plain React Vite plugin, not those standalone plugins. No ordinary project exploit path established. Upgrade together and rerun tests. |
+| nanoid 3.3.16 | [GHSA-2v37-7h3g-55p8](https://github.com/advisories/GHSA-2v37-7h3g-55p8); patched 3.3.18 | Dev-only via PostCSS. Advisory involves zero-size custom generator; no attacker-controlled size path found in app source. Update transitive resolution. |
+| source-map-js 1.2.1 | [GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q); patched 1.2.2 | Dev-only via PostCSS/css-tree. Indexed source-map section handling is the prerequisite; no hostile-map path from session content established. Update transitive resolution. |
+| undici 7.29.0 | npm returned 10 advisories, fixed 7.29.1; e.g. [BalancedPool TLS option loss](https://github.com/nodejs/undici/security/advisories/GHSA-w293-vg96-wgc3) | Dev-only via jsdom. BalancedPool advisory needs custom function-valued TLS options; no such project call found. Other entries concern WebSocket/retry/cache/decompression. No affected shipped desktop path established. Update jsdom-compatible resolution; retest. |
+| glib 0.18.5 | [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html), GHSA alias counted once; unsound VariantStrIter, patched >=0.20 | Not present in x86_64-pc-windows-msvc cargo tree. Relevant to a future Linux desktop build, not a demonstrated Windows exploit. Track upstream GTK/Tauri dependency migration. |
+| proc-macro-error 1.0.4 | [RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370.html), unmaintained | Not present in the Windows target tree; maintenance advisory rather than a demonstrated exploitable defect. |
+| unic-char-property / unic-char-range / unic-common / unic-ucd-ident / unic-ucd-version 0.9.0 | [0081](https://rustsec.org/advisories/RUSTSEC-2025-0081.html), [0075](https://rustsec.org/advisories/RUSTSEC-2025-0075.html), [0080](https://rustsec.org/advisories/RUSTSEC-2025-0080.html), [0100](https://rustsec.org/advisories/RUSTSEC-2025-0100.html), [0098](https://rustsec.org/advisories/RUSTSEC-2025-0098.html): unmaintained | Windows graph includes unic through urlpattern → tauri-utils in runtime/build paths. No associated exploitable defect was reported by this inventory. Track upstream replacement; avoid forcing incompatible transitive upgrades. |
+
+OSV querybatch checked all 539 registry package/version pairs in Cargo.lock and matched seven packages. This is a snapshot, not proof of absence of unknown vulnerabilities, target reachability or safety of vendored/non-registry code. npm reported five package entries (three high/two moderate at registry level); those ratings describe advisories, not this application’s demonstrated risk. Separate production dependency inclusion from development/tooling exposure.
 
 ## UI/UX Findings
 
@@ -846,6 +900,15 @@ Further assessment: parser mutation/property tests, rewrite/rename/delete during
 - Woodpecker exact-commit gates, trusted Windows packaging/digests and separate clean-host acceptance are sound discipline. Local checks were not treated as release evidence.
 
 ## Validation Results
+
+- **Optimized synthetic benchmark:** target/audit-release-performance.exe, rustc stdin with -O -C lto=thin -C codegen-units=1, current release rlibs. Exit 0; three samples per calibration shape/size and transcript size. Results/caveats in Performance Findings. No filesystem discovery/network/private inputs.
+- **Release CLI startup probe:** five ProcessStartInfo children, CreateNoWindow=true, captured stdout/stderr, public fixture in new ignored target/audit-startup-GUID and explicit isolated homes. All exit 0/valid JSON. Median wall time 423.12 ms; peak working set unavailable (null), not a zero-memory measurement.
+
+- **Public Claude multi-block accounting probe:** rustc stdin linked cached debug libraries; target/audit-block-accounting-evidence.exe loaded only tests/fixtures/claude_code/chat-blocks.jsonl and folded Corpus using UnavailablePricing. Exit 0: two calls/one failed result became tool_calls=1, tool_errors=0 (CT-133). One unused-import warning belongs to the temporary harness, not product Clippy.
+- **Release CLI build:** cargo build -p ct-cli --release --locked --offline passed (3m51s). Existing cached dependencies; ignored target artifacts only. This is a development build for benchmarking, not installer/desktop/release packaging evidence.
+- **Benchmark harness link attempt:** rustc -O with release rlibs failed at link because matching LTO mode was omitted; no benchmark results from that attempt. Retried with -C lto=thin -C codegen-units=1 and succeeded (exit 0); optimized results are in Performance Findings. Product release build itself passed.
+
+- **Rust advisory query:** PowerShell parsed registry package/version pairs from Cargo.lock and POSTed only those public names/versions to https://api.osv.dev/v1/querybatch. Exit 0; 539 checked, seven matched packages (glib has a duplicate alias). Primary RustSec advisories inspected. Offline locked cargo tree for Windows reported no glib/proc-macro-error and showed unic-char-property through urlpattern/tauri-utils. No install, dependency or lock change.
 
 - **Final synthetic fidelity/CLI probe:** rustc stdin linked cached debug libraries to target/audit-final-fidelity-evidence.exe. New ignored target/audit-final-fidelity-GUID only; public Codex fixture copied into explicit CODEX_HOME, empty Claude home and isolated archive. Exit 0. Two-node Claude cycle returned 100,000 items (CT-131); growth used 40% instead of recorded 80% (CT-119); two marks counted once (CT-126); captured inspect stdout contained terminal ESC (CT-129, never rendered); archive --verify --json returned prose (CT-127); a valid 4 MiB+1 Codex message silently became metadata (CT-132).
 - **npm advisories:** npm.cmd audit --prefix crates/ct-ui --json --ignore-scripts --cache target/audit-npm-cache-GUID. Exit 1 because advisory matches were found: 5 package entries, 3 registry-rated high and 2 moderate; all flagged lock entries dev:true. No installs/fixes or lock edits. See Security Findings for exposure triage, not a shipped-app vulnerability claim.
@@ -904,6 +967,10 @@ Recommendations only; no permission to implement.
 
 ## Review Progress Log
 
+- 2026-10-09T00:14:34.847Z — Optimized calibration and transcript probes completed; CT-123 scaling persists in release mode. Isolated release CLI startup measured; memory telemetry unavailable. Report structure validated: 34 unique IDs, all required fields; corrected one source line range beyond main.tsx EOF. Frontend significant functional source review now closed, with visual/native limits retained. Beginning final consolidation and scope reconciliation.
+
+- 2026-10-09T00:13:14.860Z — Committed evidence milestone 864f3d0 (FEEDBACK.md only). Rust advisory inventory and Windows target applicability triaged. CT-133 now reproduced with public fixture. Added CT-134 after verifying unsupported-analysis versus zero-remainder contradiction. Release CLI build passed; optimized synthetic benchmark running.
+
 - 2026-10-09T00:06:12.280Z — Completed additional CLI and parser/fixture source coverage with follow-up reviewers. Added CT-127..133 after independent code checks; runtime probes strengthened CT-119/126/127/129/131/132. Narrowed oversized finding to the exact framing-budget edge. npm advisory inventory queried without fixes; dependency paths are development-only. No production files changed.
 
 - 2026-10-09T00:02:20.616Z — Saved initial report in commit 802e7e7 (FEEDBACK.md only); application source remains at reviewed SHA. Archive fault probe confirmed CT-104/105 at runtime. Independently verified specialist family/growth paths, added CT-125/126, extended CT-119 to growth/corpus. Frontend follow-up verified updater/replay/preference safeguards and revalidated existing findings; malformed nested DTO remains a hardening hypothesis.
@@ -950,4 +1017,4 @@ Unchecked work prevents exhaustive-completion or production sign-off.
 3. Strengthen CT-104/105 with isolated fault injection and H-01 with an applicable overlap. Synthetic bytes and new ignored target/temp only. Use with_home or process-local fixture homes; never runtime defaults/private archives.
 4. Probe executables are ignored artifacts, not committed regression tests. Findings/validation sections and conversation log record construction/results; rebuild stdin harnesses if needed and never assume binaries match a newer SHA. Repeat checks only for new changes/failures.
 5. Performance: release synthetic linear/branch/compacted input, repeated samples and memory telemetry; retain debug timings as historical evidence. Native acceptance requires explicitly isolated profiles and supported tooling; jsdom is not visual verification.
-6. Update evidence immediately, preserve CT-101..CT-133, allocate CT-134 next, retain resolved/invalidated history, distinguish source/test/native/CI/release. End with counts/limitations/checkpoint. No confirmation needed between normal authorized review stages.
+6. Update evidence immediately, preserve CT-101..CT-134, allocate CT-135 next, retain resolved/invalidated history, distinguish source/test/native/CI/release. End with counts/limitations/checkpoint. No confirmation needed between normal authorized review stages.
