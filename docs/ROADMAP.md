@@ -7,9 +7,11 @@ interest, not a schedule or commitment.
 
 ## Current focus
 
-The [maintainer handoff](../HANDOFF.md) lists the immediate follow-up work from
-the [2026-10-07 parser audit](FORMAT-AUDIT-2026-10-07.md), including current
-producer captures, remaining Codex variants and nested drift diagnostics.
+The [maintainer handoff](../HANDOFF.md) and [engineering backlog](BACKLOG.md)
+record the current FEEDBACK audit follow-ups: 12 findings have remediation
+checkpoints and 22 remain open. Export writer coordination before bounded
+native worker dispatch, notification fidelity/cursors and Claude calibration
+scaling are next. Earlier parser/capture acceptance gaps remain explicit.
 
 - Keep Windows releases validated and published through Woodpecker; verify
   updater behavior and installation separately on a clean host.

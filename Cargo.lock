@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "ct-adapters"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "chrono",
  "ct-domain",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "ct-application"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "chrono",
  "ct-domain",
@@ -744,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "ct-cli"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "chrono",
@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "ct-domain"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "chrono",
  "serde",
@@ -767,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "ct-runtime"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "ct-adapters",
  "ct-application",
@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "ct-ui"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "chrono",

@@ -1,8 +1,9 @@
 # Local files in context composition
 
 Expanding a context category shows the items that contributed to it. When an
-item records a filesystem target that exists locally, its label opens the file
-with Windows' default application. Directories open in Explorer. Each file row
+item records an existing local target with a supported data-file extension,
+its label opens the canonical file with Windows' default application.
+Directories open in Explorer. Each file row
 also offers **Show in Explorer** and **Copy path**.
 
 The exact path is retained separately from the shortened display label. Long
@@ -14,8 +15,12 @@ Relative tool paths resolve only when the call records a working directory.
 The application never resolves them against its own directory. Paths from
 another operating system, UNC/device paths and unresolved relative paths remain
 unavailable locally. Missing temporary files say **File no longer available**;
-their path can still be copied. Executables and launch shortcuts offer Explorer
-rather than direct execution.
+their path can still be copied. Active and unknown extensions, including
+executables, scripts, shortcuts, Control Panel modules, HTML, SVG and macro
+documents, offer Explorer rather than direct Open. Both the recorded and
+canonical extensions must be supported. Supported groups include plain text,
+JSON/JSONL, common configuration files, raster images, PDF and common media.
+The associated reader is still determined by Windows.
 
 Opening checks the filesystem again, so deletion after a row was rendered
 produces an error in that row. A browser preview cannot open local files.

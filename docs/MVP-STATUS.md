@@ -1,6 +1,6 @@
 # ContextTrace MVP status
 
-Assessment date: **2026-10-08**
+Assessment date: **2026-10-09**
 
 ## Current state
 
@@ -10,6 +10,22 @@ turns and context composition, trace contributors, compare turns, and run
 optional diagnostics. Compatibility is evidence-based, not a claim that every
 version or streaming interface is supported; see the
 [compatibility policy](FORMAT-COMPATIBILITY.md).
+
+## v0.1.16 engineering fixes
+
+Twelve engineering audit findings have remediation checkpoints: request-input
+membership, cyclic Claude ancestry, archive transaction/recovery, incomplete
+billing, contextual JSON redaction, alerts-off live observation, local Open and
+instruction-reader boundaries, multi-tool accounting, notification identity and
+unmeasured-session browsing. The original 34-finding audit remains intact;
+[the backlog](BACKLOG.md) records 22 open findings and remaining acceptance.
+See [release notes](releases/v0.1.16.md).
+
+Local validation passed 547 Rust tests (one ignored), 187 frontend tests,
+focused live/context race regressions, formatting, strict Clippy, the frontend
+build, all 17 fixtures, validator negatives and PowerShell 5.1 release-note tests.
+Woodpecker exact-commit push validation and tag publication are pending.
+Native desktop and separate clean-host acceptance remain unverified.
 
 ## v0.1.15 cache/context metrics and instruction notifications
 
@@ -22,8 +38,7 @@ unpriced. See [release notes](releases/v0.1.15.md).
 Local development checks passed: 508 Rust tests (one ignored), formatting and
 strict Clippy, 180 frontend tests, the frontend build, all 17 fixture entries,
 validator regressions and PowerShell 5.1 release-note checks. Woodpecker push
-validation and tag publication are pending. Separate clean-host installer/updater
-acceptance and native desktop visual QA remain unverified.
+validation and tag publication passed in pipelines [110](https://ci.aneskurtovic.com/repos/5/pipeline/110) and [111](https://ci.aneskurtovic.com/repos/5/pipeline/111) for commit 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c; v0.1.15 is published stable. Separate clean-host installer/updater acceptance and native desktop visual QA remain unverified.
 
 ## v0.1.14 automatic model pricing
 

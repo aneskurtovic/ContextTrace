@@ -22,6 +22,11 @@ session.
 *The desktop app shows the same local-first measurements in dark and light
 themes. These screenshots use synthetic demonstration data.*
 
+v0.1.16 adds request, archive and tool-accounting fixes, safer local-file
+handling, independent live refresh and browsing without usage metrics. See
+[release notes](docs/releases/v0.1.16.md), [current verification](docs/MVP-STATUS.md)
+and the [engineering backlog](docs/BACKLOG.md).
+
 ## What it is
 
 It is not a chat-history viewer. The workflow it exists for is:

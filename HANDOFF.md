@@ -1,133 +1,47 @@
 # Maintainer handoff
 
-Updated: **2026-10-08**. The maintainer confirmed all seven original parser-audit follow-ups plus release work as eight tasks.
+Updated: **2026-10-09**. Prepared v0.1.16 from the checked FEEDBACK remediation work. This file and [the backlog](docs/BACKLOG.md) are the continuation entry points; no conversation history is required.
 
-## v0.1.15 cache/context metrics and instruction notifications
+## Release state
 
-Claude prompt snapshots no longer imply instruction drift, and historical
-instruction findings do not replay on appends. Codex cache reads are preserved
-for pricing. The desktop shows cache token counts and coverage plus used/total
-context for the selected model. Unsupported or incomplete billing usage stays
-unpriced. See [release notes](docs/releases/v0.1.15.md).
+v0.1.16 version files and [release notes](docs/releases/v0.1.16.md) are prepared. Exact-commit Woodpecker push validation, tag packaging, publication and public asset verification are pending. Local validation passed 547 Rust tests (one ignored), 187 frontend tests, six final live/context race regressions, formatting, strict Clippy, the frontend build, 17 fixtures, validator negatives and PowerShell 5.1 release-note serialization. Release-candidate reruns passed after removing only the verified repo-local disposable incremental cache: 547 Rust tests (one ignored), 187 frontend tests after npm ci, the production build, formatting and strict Clippy. All 17 fixtures, validator negatives and PowerShell 5.1 release-note serialization passed. Version files agree on 0.1.16; documentation links and the 12 implemented plus 22 open audit partition were checked.
 
-Local development checks passed: 508 Rust tests (one ignored), formatting and
-strict Clippy, 180 frontend tests, the frontend build, all 17 fixture entries,
-validator regressions and PowerShell 5.1 release-note checks. Woodpecker push
-validation and tag publication are pending. Separate clean-host installer/updater
-acceptance and native desktop visual QA remain unverified.
+The previous stable release is [v0.1.15](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.15), at 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c. Live checks confirmed successful [push pipeline 110](https://ci.aneskurtovic.com/repos/5/pipeline/110), [tag pipeline 111](https://ci.aneskurtovic.com/repos/5/pipeline/111) and stable publication.
 
-## v0.1.14 automatic model pricing
+## Completed implementation
 
-Spend & Forecast now loads LiteLLM's public prices automatically, using recorded
-catalog revisions for historical usage and current rates for forecasts. Prices
-and revision indices are cached locally. Missing models or required rates stay
-explicitly unpriced; no conversation data or model names are uploaded. See
-[release notes](docs/releases/v0.1.14.md) for pricing scope and historical-date limits.
+| Commit | Findings | Result |
+|---|---|---|
+| 2455a2b | CT-101, CT-131 | Separate request input from its own response; refuse cyclic ancestry. |
+| 6b49265 | CT-104, CT-105 | Immutable acknowledged archive revisions, writer coordination and incomplete-tail recovery. |
+| c1180af | CT-102 | Require complete applicable billing buckets; keep absent usage unpriced. |
+| 8df3b23 | CT-118 | Preserve decoded JSON credential context while redacting encoded spans. |
+| 11a40bf | CT-110 | Direct Open only for supported data extensions; canonical target revalidation. |
+| b46acf6 | CT-111 | Injected 4 MiB local regular-file instruction reader and typed refusals across desktop/CLI/MCP. |
+| 2d8b4b5 | CT-103 | Live descriptor observation independent of alerts/settings; compound identity and failed-emission retry. |
+| 85f84aa | CT-133 | Per-block Claude operation/error accounting without splitting usage or graph nodes. |
+| 4fb1752 | CT-121 | Compound notification keys and retained-record migration; format drift stays agent-wide. |
+| 6c44916 | CT-106 | Metadata/conversation/save controls survive optional context failure; stale/live guards. |
 
-Release commit `9018caf7637e86fdec944c1236bbbe930bca2955` passed all
-configured frontend, Rust/MSRV and Windows desktop/CLI checks in
-[Woodpecker push pipeline 107](https://ci.aneskurtovic.com/repos/5/pipeline/107).
-CI recorded 502 Rust tests passed (one ignored) and 178 frontend tests passed.
-[Tag pipeline 108](https://ci.aneskurtovic.com/repos/5/pipeline/108) packaged and
-published [v0.1.14](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.14),
-verified all six uploaded asset digests and confirmed the latest stable pointer.
-Independent public checks on 2026-10-08 confirmed stable publication, all six
-asset digests against the downloaded checksum manifest, and the public updater
-feed's version, pinned installer URL and matching signature metadata.
-Separate clean-host installer/updater acceptance and native desktop visual QA
-remain unverified. Metadata checks do not verify an in-app update or Windows
-Authenticode signature; see [release procedure](docs/RELEASING.md).
+Twelve of the original 34 findings have local remediation checkpoints. [FEEDBACK.md](FEEDBACK.md#remediation-progress) preserves the original audit and implementation evidence; it does not declare the audit closed.
 
-## v0.1.13 project organization and native resume
+## Next session
 
-Temporary workspaces are grouped in the project dropdown, with reversible
-visibility preferences. Session rows offer native Codex/Claude resume with
-folder validation, command preview/copy and subagent parent routing. See
-[projects and resume](docs/projects-and-resume.md) for requirements.
+1. Read [BACKLOG](docs/BACKLOG.md), [CLAUDE](CLAUDE.md) and the relevant FEEDBACK finding. Audit current branch, remote divergence and uncommitted files before editing; preserve unrelated or recoverable work.
+2. Address export scratch/commit writer coordination before CT-109 bounded worker offloading. Archive writer coordination is complete; synchronous native commands and export overlap remain open.
+3. Fix CT-119 request/model-window fidelity and CT-120 historical secret/residual alert replay.
+4. Improve CT-123 Claude calibration with immutable revision indexes and semantic-equivalence/release-mode performance checks. Then work through the remaining 22 findings in small checked commits.
 
-Local development checks passed: 495 Rust tests (one ignored), formatting and
-strict Clippy, 176 frontend tests with one worker and a 15-second timeout,
-the frontend production build, 17 fixture entries, validator regressions and
-the PowerShell 5.1 release-note check. A Windows stub CLI exercised the
-production resume command builder. Real-agent session restoration, native
-desktop visual QA, and clean-host installer/updater acceptance remain unverified.
+## Limits that survive this release
 
-Release commit `b15cb80dbed1b697579b4ff840b0f3e39ace365a` passed all
-configured frontend, Rust/MSRV and Windows desktop/CLI checks in
-[Woodpecker push pipeline 104](https://ci.aneskurtovic.com/repos/5/pipeline/104).
-CI recorded 495 Rust tests passed (one ignored) and 176 frontend tests passed.
-[Tag pipeline 105](https://ci.aneskurtovic.com/repos/5/pipeline/105) packaged and
-published [v0.1.13](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.13),
-verified all six uploaded asset digests and confirmed the latest stable pointer.
-GitHub metadata independently confirmed the six assets and stable publication
-on 2026-10-08. Signature metadata checks and clean-host updater acceptance are
-distinct; see [release procedure](docs/RELEASING.md).
+- Request reconstruction remains limited by recorded evidence: exact Codex request identity and aggregated Claude iterations are not inferred. Feature-matched captures and producer-version gaps remain in the compatibility catalog.
+- Unreferenced archive copies are retained; general orphan catalog reconciliation and power-loss rehearsal remain open.
+- The instruction reader refuses direct network/device paths, Windows remote drives, links/reparse points, non-regular files and excessive bodies. Concurrent ancestor replacement is not race-proof; Unix mount locality is not determined.
+- File-extension policy does not establish Windows reader behavior. Legacy notification tombstones without retained records cannot be assigned an agent reliably; CT-120 replay work remains open.
+- Separate clean-host installer, upgrade, uninstall/archive preservation, portable startup, signed in-app updater and Authenticode acceptance remain unverified. Installed toast activation, file associations, alerts-off Follow live, partial-context browsing and real Codex/Claude resume also need native acceptance.
 
-## v0.1.12 patch release
+## Verification and release policy
 
-Local file targets in Context composition now open with their full recorded
-paths, with Explorer/copy actions and missing-file states. Notification findings
-navigate to Conversation from every tab; new Windows toasts restore or launch
-the installed app through the installer-registered protocol.
-Commit `303b502` passed all configured checks in
-[push pipeline 100](https://ci.aneskurtovic.com/repos/5/pipeline/100).
-[Tag pipeline 101](https://ci.aneskurtovic.com/repos/5/pipeline/101) packaged,
-published and verified all six assets and the latest stable pointer for
-[v0.1.12](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.12).
-The v0.1.11 candidate failed before publication; v0.1.12 also fixes
-PowerShell 5.1 release-note serialization with a Windows CI regression check.
-Validation includes 488 passing Rust tests (one ignored) and 167 passing
-frontend tests.
-Actual Windows toast clicks, file associations and separate clean-host
-installer/updater acceptance remain unverified. See
-[release notes](docs/releases/v0.1.12.md) for upgrade behavior and limits.
+Always use Woodpecker. Exact main-commit push checks precede version-tag Windows packaging, publication, six-asset digest checks and stable metadata verification. Never run/dispatch GitHub Actions or substitute workstation packaging for release evidence. Follow [RELEASING](docs/RELEASING.md) and keep clean-host acceptance distinct from CI/publication.
 
-## v0.1.10 patch release
-
-Claude `away_summary` and `bridge_status` now parse as presentation-only
-session events, with a reviewed redacted capture and replay regression.
-Commit `78d345a` passed all configured checks in
-[push pipeline 93](https://ci.aneskurtovic.com/repos/5/pipeline/93).
-[Tag pipeline 94](https://ci.aneskurtovic.com/repos/5/pipeline/94) packaged,
-published and verified all six assets for
-[v0.1.10](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.10),
-confirmed as latest stable on 2026-10-08. The original eight-task evidence below
-describes the v0.1.9 milestone; its remaining capture and clean-host gaps persist.
-
-## Original v0.1.9 milestone (historical snapshot)
-
-| Task | Current evidence and remaining gate |
-|---|---|
-| 1. Exact-commit Woodpecker validation | Release commit `193150f` passed frontend, Rust (including MSRV), Windows desktop/CLI and smoke checks in [pipeline 90](https://ci.aneskurtovic.com/repos/5/pipeline/90). |
-| 2. Claude 2.1.293 persisted capture | Fresh reviewed/redacted capture added, with version, usage, DAG and source-position assertions. |
-| 3. Codex 0.161.0 capture evidence | Fresh ordinary persisted capture added. Rare newly covered shapes are absent from the available corpus and fresh capture; real feature-matched evidence cannot be supplied from these inputs. Synthetic contracts stay labelled. |
-| 4. Image generation and context compaction | Pinned upstream investigation, synthetic contracts and replay regressions implemented. Image bytes stay outside text estimates. An opaque context-compaction item does not invent an eviction boundary. |
-| 5. Nested drift detection | Unknown Codex notification and Claude system subtypes warn. Known telemetry stays metadata. Newly exposed Claude away_summary and bridge_status records remain warnings pending semantic evidence. |
-| 6. Media/input bounds | Media reference length excluded from text proxies, mixed media refuses exact recount, JSONL raw buffering is bounded, and oversized raw-inspector ranges are rejected before allocation. Truncated records remain warnings. |
-| 7. Separate stdout adapters | Explicit CLI import and opt-in directory contracts added for Codex exec, app-server and Claude stdout. Reviewed stdout captures and a pinned synthetic app-server fixture are catalogued separately. Presentation timelines cannot reconstruct omitted request history. |
-| 8. Release and clean-host acceptance | [v0.1.9](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.9) published as latest stable. [Pipeline 91](https://ci.aneskurtovic.com/repos/5/pipeline/91) passed the exact-commit gate, Windows packaging, publication and all six uploaded-asset digest checks. The maintainer confirmed no separate clean Windows host/VM is available, so installer, portable, upgrade, uninstall/archive preservation and signed updater acceptance cannot be performed in this session. |
-
-See [the original audit](docs/FORMAT-AUDIT-2026-10-07.md),
-[the follow-up report](docs/FORMAT-FOLLOWUP-2026-10-08.md), and
-[stream imports](docs/STREAM-IMPORTS.md) for source pins, capture limits,
-bounded-input behavior and the explicit import contract. Private corpus files
-and raw captures stay local.
-
-## Validation and release
-
-Follow [CLAUDE](CLAUDE.md), [CI](docs/CI.md) and [RELEASING](docs/RELEASING.md).
-Never substitute workstation packaging for the Woodpecker Windows tag pipeline.
-Local verification is development evidence; clean-host acceptance is separate.
-
-The v0.1.10 local Claude sweep read 43 sessions / 21,574 events, with no
-unreadable files and one malformed line. The away_summary/bridge_status
-warnings are resolved. Doctor correctly exits 1 for malformed input; do not
-suppress that warning to manufacture a green sweep.
-
-The latest stable release is v0.1.13 at `b15cb80dbed1b697579b4ff840b0f3e39ace365a`.
-GitHub latest-release metadata was checked on 2026-10-08: all six expected
-assets are uploaded, and the release is neither draft nor prerelease.
-The remaining work requires external evidence: feature-matched real Codex
-captures, a Claude 2.1.294 capture, real-agent resume verification and a
-separate clean Windows host. These gaps are not closed by green CI.
-Do not describe all eight tasks as fully accepted.
+Historical parser-audit/capture evidence remains in [the 2026-10-07 audit](docs/FORMAT-AUDIT-2026-10-07.md), [the follow-up](docs/FORMAT-FOLLOWUP-2026-10-08.md), [compatibility](docs/FORMAT-COMPATIBILITY.md) and [stream imports](docs/STREAM-IMPORTS.md). Private corpus files, tokens, signing material and runner-specific secrets stay out of documentation.
