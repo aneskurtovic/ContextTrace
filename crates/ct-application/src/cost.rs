@@ -286,17 +286,16 @@ pub fn project_scenario_with_provider(
             continue;
         };
         let mut usage = turn.usage;
-        if usage.prompt_tokens().is_none() && usage.output.unwrap_or(0) == 0 {
+        if usage.input.is_none() || usage.output.is_none() {
             unpriced.push(UnpricedTurn {
                 turn: turn.number.get(),
                 model,
-                reason: "the log did not record usable token usage".into(),
+                reason: "the log did not record complete input and output token usage".into(),
             });
             continue;
         }
-        let missing_split = usage.input.is_some_and(|input| input > 0)
-            && (usage.cache_read.is_none()
-                || (session.agent() == AgentKind::ClaudeCode && usage.cache_creation.is_none()));
+        let missing_split = usage.cache_read.is_none()
+            || (session.agent() == AgentKind::ClaudeCode && usage.cache_creation.is_none());
         if missing_split || usage.api_calls.is_some_and(|calls| calls > 1) {
             unpriced.push(UnpricedTurn {
                 turn: turn.number.get(),
@@ -605,6 +604,7 @@ mod tests {
                 usage: TokenUsage {
                     input: Some(1_000_000),
                     cache_read: Some(0),
+                    output: Some(0),
                     ..Default::default()
                 },
                 event_indices: vec![],
@@ -771,5 +771,86 @@ mod tests {
         assert_eq!(report.pricing_version, "test");
         assert_eq!(report.total.0, 3_000_000);
         assert_eq!(report.forecast.unwrap().additional_turns, 3);
+    }
+    #[test]
+    fn billing_completeness_distinguishes_unknown_buckets_from_known_zero_for_both_agents() {
+        let base = priced_session("known");
+        for agent in [AgentKind::Codex, AgentKind::ClaudeCode] {
+            for bits in 0u8..16 {
+                let mut turns = base.turns().to_vec();
+                turns[0].usage = TokenUsage {
+                    input: (bits & 1 != 0).then_some(0),
+                    output: (bits & 2 != 0).then_some(0),
+                    cache_read: (bits & 4 != 0).then_some(0),
+                    cache_creation: (bits & 8 != 0).then_some(0),
+                    ..Default::default()
+                };
+                let session = AgentSession::new(
+                    base.id().clone(),
+                    agent,
+                    base.metadata().clone(),
+                    vec![],
+                    turns,
+                    vec![],
+                );
+                let scenario = CostScenario {
+                    forecast_turns: Some(3),
+                    cap_input_tokens: Some(0),
+                    cap_output_tokens: Some(0),
+                    ..Default::default()
+                };
+                let report = project_scenario_with_provider(&session, &scenario, &DatedPrices);
+                let complete = bits & 7 == 7 && (agent == AgentKind::Codex || bits & 8 != 0);
+                assert_eq!(
+                    report.unpriced.is_empty(),
+                    complete,
+                    "{agent}, bucket bits {bits}"
+                );
+                assert_eq!(report.turns.len(), usize::from(complete));
+                assert_eq!(report.forecast.is_some(), complete);
+                assert_eq!(report.total.0, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn input_only_and_output_only_usage_are_unpriced_and_never_forecast() {
+        let base = priced_session("known");
+        for usage in [
+            TokenUsage {
+                input: Some(100),
+                cache_read: Some(0),
+                ..Default::default()
+            },
+            TokenUsage {
+                output: Some(50),
+                ..Default::default()
+            },
+        ] {
+            let mut turns = base.turns().to_vec();
+            turns[0].usage = usage;
+            let session = AgentSession::new(
+                base.id().clone(),
+                base.agent(),
+                base.metadata().clone(),
+                vec![],
+                turns,
+                vec![],
+            );
+            let report = project_scenario_with_provider(
+                &session,
+                &CostScenario {
+                    forecast_turns: Some(3),
+                    ..Default::default()
+                },
+                &DatedPrices,
+            );
+            assert!(report.turns.is_empty());
+            assert_eq!(report.unpriced.len(), 1);
+            assert!(report.unpriced[0]
+                .reason
+                .contains("complete input and output"));
+            assert!(report.forecast.is_none());
+        }
     }
 }
