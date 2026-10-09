@@ -4,11 +4,12 @@
 
 - Repository: https://github.com/aneskurtovic/ContextTrace
 - Branch: main
-- Commit SHA: 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c
+- Commit SHA: 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c (application source baseline; subsequent commits change only this report)
+- Audit preservation commits: 802e7e7, 864f3d0, da6b0d0; final consolidation committed separately
 - Audit started: 2026-10-08T19:22:19.385Z
-- Last updated: 2026-10-09T00:14:34.847Z
-- Audit status: In Progress — broad source review and local validation completed; exhaustive source coverage and desktop/release acceptance remain
-- Reviewed environment: Windows; installed Rust/Cargo and Node/npm; offline cached dependencies; approved shell execution; no application launch or real user corpus access
+- Last updated: 2026-10-09T00:18:41.227Z
+- Audit status: Completed source review and feasible local engineering audit — native/clean-host acceptance and identified empirical follow-ups remain unverified
+- Reviewed environment: Windows; installed Rust/Cargo and Node/npm; cached dependencies; approved shell execution; public advisory queries; synthetic/public fixture CLI probes only; no native application launch or real user corpus access
 - Reviewer: Astra
 
 ## Executive Summary
@@ -19,24 +20,24 @@ The highest priorities are incorrect request-input membership (CT-101), archive 
 
 Security has useful defenses: evidence-derived file actions, narrowly shaped resume arguments, escaped toast content, restricted webview capabilities and signed updates. Confirmed gaps require explicit interaction with attacker-influenced local evidence or affect the advertised redaction contract; no automatic remote compromise is demonstrated. The npm advisory inventory was refreshed: five flagged development packages require maintenance triage; shipped-app exploitability was not established. Rust advisory inventory matched one platform-specific unsoundness and six unmaintained packages; Windows exposure is triaged in Security Findings.
 
-Workspace tests, strict Clippy, formatting, 180 frontend tests, frontend production build, fixture catalog checks and release-helper unit tests passed locally. Several existing tests encode current behavior rather than independently asserting request-input semantics. Native interaction, assistive technology, real agent restoration, clean-host install/update and current published assets/CI were not verified. This is a substantial audit checkpoint, not an exhaustive production-readiness sign-off. Only FEEDBACK.md is being changed.
+Workspace tests, strict Clippy, formatting, 180 frontend tests, frontend production build, fixture catalog checks and release-helper unit tests passed locally. Several existing tests encode current behavior rather than independently asserting request-input semantics. Native interaction, assistive technology, real agent restoration, clean-host install/update and current published assets/CI were not verified. The source audit and feasible local verification are complete with the limitations recorded below. Production-readiness is not established: data-fidelity and archive defects need remediation, and native/clean-host acceptance is still missing. The audit reviewed significant implementation/error/consumer paths rather than claiming 100% branch or future-producer coverage. Only FEEDBACK.md changed; audit commits were explicitly authorized.
 
 ## Audit Coverage
 
-Status describes the reviewed scope below. Reviewed means source review; selected passing tests do not elevate an entire subsystem to Verified. Important remaining paths are listed at the end.
+Status describes the reviewed scope below. Reviewed means source review; selected passing tests do not elevate an entire subsystem to Verified. Significant source paths and feasible local checks have been reviewed. This is not 100% branch, producer-version, native or release verification; follow-up acceptance limits are listed at the end.
 
 | Subsystem | Status | Files Reviewed | Verification | Notes |
 |---|---|---|---|---|
-| Rust Domain | In Progress | model/session, tokens, context, identity, provenance, notification; ports; calibration, ratio; pricing | Workspace tests; synthetic input/pressure probes | Core evidence/usage semantics inspected; not every model/pricing edge independently rederived |
-| Application Services | In Progress | lib, cost, archive, notifications, instructions, transcript, export, secrets; selected corpus/lifecycle/diff/fidelity/diagnostics/ghost/growth/family | Workspace tests; targeted compiled probes | Important workflows traced; exhaustive lifecycle/diff/ghost edge review remains |
-| Adapters and Parsing | In Progress | Codex/Claude discovery, parse, reconstruct; jsonl, raw_source, walk, tool_target, archive, pricing, notifications; selected exact/compaction/streams/tokenizers/fingerprint | Workspace tests; 17-fixture manifest; synthetic reconstruction/redaction probes | Request boundary defect established; all producer variants and rewrite races not verified |
+| Rust Domain | Reviewed | model/session, tokens, context, identity, provenance, notification; ports; calibration, ratio; pricing | Workspace tests; synthetic input/pressure probes | Models, ports, calibration/ratio and pricing policy reviewed; mathematical/property coverage not exhaustive |
+| Application Services | Reviewed | lib, cost, archive, notifications, instructions, transcript, export, secrets; corpus/lifecycle/diff/fidelity/diagnostics/ghost/growth/family | Workspace tests; targeted compiled probes | Core implementations/consumers/error paths and relevant tests reviewed; future mutation/fault breadth remains |
+| Adapters and Parsing | Reviewed | Codex/Claude discovery, parse, reconstruct; jsonl, raw_source, walk, tool_target, archive, pricing, notifications; exact/compaction/streams/tokenizers/fingerprint | Workspace tests; 17-fixture manifest; synthetic reconstruction/redaction probes | Significant branches and all persisted/stream fixture assertions reviewed; real producer breadth/read races not certified |
 | Runtime | Reviewed | src/lib.rs; examples/desktop_perf.rs; desktop AppState cache consumers | Workspace tests; synthetic calibration benchmark | Composition fully inspected; original example not run because it discovers a real corpus |
-| CLI | In Progress | main dispatch/load/archive/transcript/export/diff/cost; mcp; format; selected render | Workspace tests; isolated smoke/MCP checks passed | Exhaustive argument/render and malformed MCP protocol checks remain |
-| React Frontend | In Progress | App, api, types, demo, format, main, CSS; six test files at relevant behaviors | 180 tests; TypeScript/Vite build | Major state/effect/consumer flows reviewed; nested contracts and all render branches not exhaustive |
+| CLI | Reviewed | main dispatch/load/archive/transcript/export/diff/cost; mcp; format; render | Workspace tests; isolated smoke/MCP checks passed | Flags/dispatch/human/JSON/MCP transport reviewed; typed bounds and error omissions documented |
+| React Frontend | Reviewed | App, api, types, demo, format, main, CSS; six test files at relevant behaviors | 180 tests; TypeScript/Vite build | Significant component/root render, state/effect, wrappers/validators and accessibility-control paths reviewed; decorative CSS/every test assertion not exhausted |
 | Tauri Integration | Reviewed | lib; commands; resume/local_files; notifications/activation/delivery; config/capabilities; pinned Windows IPC dependencies | Workspace tests, including native command unit tests using stubs | Source boundaries/lifecycle reviewed; installed behavior unverified |
-| Security | In Progress | Path actions, resume, instruction reads, redaction/export/archive, MCP transport, CSP/capabilities, update/release integrity | Synthetic redaction test; read-only association evidence; source traces | No exploit executed; advisory inventory, real ACLs and authenticated update acceptance remain |
-| Performance | In Progress | Calibration/reconstruction, parsed cache, transcript paging/rendering, notification persistence, corpus; desktop_perf | Synthetic debug derive_ratio timing at three sizes | No production release/RSS/native/soak measurement |
-| UI/UX | In Progress | Startup, projects/filtering, workspace/tabs, compare, spend, archives, notifications, resume/update; keyboard/focus logic/CSS | Existing DOM tests; source traces | No visual, screen-reader, geometry, contrast or installed interaction verification |
+| Security | Reviewed | Path actions, resume, instruction reads, redaction/export/archive, MCP transport, CSP/capabilities, update/release integrity | Synthetic redaction test; read-only association evidence; source traces | Advisory inventory + Windows applicability reviewed; real ACLs/authenticated update acceptance not verified |
+| Performance | Reviewed | Calibration/reconstruction, parsed cache, transcript paging/rendering, notification persistence, corpus; desktop_perf | Debug and optimized synthetic calibration/transcript; isolated release CLI startup | No desktop/native/soak measurement; RSS telemetry unavailable, release CLI is not release acceptance |
+| UI/UX | Reviewed | Startup, projects/filtering, workspace/tabs, compare, spend, archives, notifications, resume/update; keyboard/focus logic/CSS | Existing DOM tests; source traces | No visual, screen-reader, geometry, contrast or installed interaction verification |
 | Testing | Reviewed | Rust unit/integration/fixture tests; frontend suite; CI smoke helpers; fixture manifest validators; release-helper tests | Commands recorded below actually executed | Test coverage assessed; passing suite does not establish missing scenarios |
 | CI and Release | Reviewed | AGENTS, CLAUDE, RELEASING/CI/UPDATER; all five Woodpecker lanes; install/package/publish/gate helpers | Non-publishing helper tests only | No CI dispatch, build packaging, release publication, asset check or clean-host acceptance |
 | Cross-Component Flows | Reviewed | Input→snapshot/calibration→IPC; usage→cost→forecast/sandbox; archive→fallback; monitor→cache/event→React; target→native Open; resume/activation | Source traces plus selected synthetic probes | Selected critical flows traced; actual installed end-to-end paths remain |
@@ -126,7 +127,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Expected Benefit:** Correct prompt provenance and meaningful attribution/residuals.  
 **Estimated Effort:** Large; parser/domain boundary change plus semantic regressions.  
 **Regression Risk:** High; nearly every context analysis depends on these snapshots.  
-**Related Findings:** None yet.
+**Related Findings:** CT-123, CT-131, CT-133
 
 
 ### CT-104 — An interrupted manifest append hides the next successful archive
@@ -429,7 +430,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Description:** Notification utilisation and displayed evidence fall back directly to session metadata. Growth and corpus pressure use only the session-wide capacity, even when a later request has an explicit different limit. The domain helper deliberately rejects that fallback when the request explicitly changes model.  
 **Evidence:** Source trace also shows metadata 200k with a later 80k/100k request produces corpus comfortable (40%) rather than tight (80%). A synthetic model-B request with 90,000 prompt tokens and only model-A session metadata (100,000 capacity) has context_window_at=None but produces a pressure candidate.  
 **Root Cause:** Multiple analyses duplicate capacity resolution instead of using the domain evidence policy.  
-**Reproduction / Verification:** Corrected isolated Rust probe with notifications enabled passed; no OS notification sent.  
+**Reproduction / Verification:** Corrected isolated Rust probe with notifications enabled passed; no OS notification sent. A separate synthetic growth probe confirmed metadata 200k versus request 100k produces 40% for 80k input instead of 80%. Corpus classification remains independently source-traced.  
 **Recommended Solution:** Use context_window_at for each request in notifications, growth and corpus. Compute the maximum known per-turn utilization rather than peak tokens divided by one session limit; keep unknown-denominator requests explicit. Growth ranges must retain the included requests’ limits. Test model switches, explicit per-request limits and zero limits.  
 **Expected Benefit:** Consistent request-level capacity and uncertainty across context views, alerts, growth and corpus.  
 **Estimated Effort:** Medium  
@@ -505,7 +506,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Description:** derive_ratio reconstructs each measured turn. Every reconstruction rebuilds an all-event UUID index, walks its ancestor chain, constructs items and sums them. This is at least O(T×E), and a growing linear history also repeats prefixes quadratically.  
 **Evidence:** An isolated debug-build synthetic Claude DAG (two events per turn; short constant-size messages) took 446.92ms at 250 turns/500 events, 1675.30ms at 500/1000, and 6627.46ms at 1000/2000. Doubling turns produced approximately 3.75× and 3.96× elapsed work.  
 **Root Cause:** A per-turn reconstruction API is reused for aggregate calibration without session-level indexing or incremental aggregates.  
-**Reproduction / Verification:** Compiled stdin benchmark ran existing debug libraries with programmatic input only. These are single-run debug timings for derive_ratio, not production-release, cold-disk, native UI or RSS measurements. No private sessions used.  
+**Reproduction / Verification:** Compiled stdin benchmark ran existing debug libraries with programmatic input only. Those initial samples are single-run debug timings. A subsequent optimized thin-LTO harness ran three samples per shape/size: linear medians 85.128/263.695/973.072 ms at 250/500/1000 turns; branches and compactions also tested (Performance Findings). Disk, native UI and RSS not measured; no private sessions used.  
 **Recommended Solution:** First correct CT-101 boundaries, then build the UUID index once per loaded session and derive chain character/depth totals with memoized branch-aware aggregates respecting compaction/sidechains. Avoid constructing full ContextItem vectors solely for calibration. Bound/sample calibration only if accuracy is demonstrated. Add release-mode scaling benchmarks over synthetic linear, branched and compacted sessions with unchanged ratio assertions.  
 **Expected Benefit:** Reduces repeat work and provides a measurable latency budget for long sessions.  
 **Estimated Effort:** Medium to large  
@@ -660,7 +661,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Description:** The temporary map and GrowthPoint represent only one CompactionAt per turn. Later inserts overwrite prior marks without increasing unplaced_compactions.  
 **Evidence:** placed.insert(turn.get(), mark) replaces the prior value; compactions counts points with a mark. Codex grouping assigns every pending event to the next token-report turn, allowing multiple marks on one turn.  
 **Root Cause:** A one-to-one representation is used for a many-to-one event relationship.  
-**Reproduction / Verification:** Deterministic source path: two Compacted events both at turn 1 produce one placed mark and zero unplaced marks. Producer incidence was not measured; no frequency claim.  
+**Reproduction / Verification:** Compiled synthetic probe confirmed two Compacted events at turn 1 produce one placed mark and zero unplaced marks (exit 0). Producer incidence was not measured; no frequency claim.  
 **Recommended Solution:** Retain all marks per turn, or an explicit count plus a documented representative mark; update total, buckets and range calculations. Add two-compactions-one-turn and orphan-mark regressions.  
 **Expected Benefit:** Growth summaries preserve all recorded compactions.  
 **Estimated Effort:** Small  
@@ -678,10 +679,10 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **User Impact:** Automation requesting JSON receives prose that cannot be parsed.  
 **Description:** The shared archive command accepts --json but the verify branch never passes it to a renderer.  
 **Evidence:** archive_integrity has no JSON argument or serialization branch.  
-**Root Cause:** Captured synthetic fixture CLI archive --verify --json exited 0; serde_json rejected stdout as non-JSON. No real archive accessed.  
-**Reproduction / Verification:** Pass the flag through and serialize a stable id/integrity DTO; test each integrity outcome and the combined flags.  
-**Recommended Solution:** Reliable machine-readable archive checks.  
-**Expected Benefit:** undefined  
+**Root Cause:** The verify dispatch bypasses the shared JSON-output policy.  
+**Reproduction / Verification:** Captured synthetic fixture CLI archive --verify --json exited 0; serde_json rejected stdout as non-JSON. No real archive accessed.  
+**Recommended Solution:** Pass the flag through and serialize a stable id/integrity DTO; test each integrity outcome and the combined flags.  
+**Expected Benefit:** Reliable machine-readable archive checks.  
 **Estimated Effort:** Small  
 **Regression Risk:** Low  
 **Related Findings:** None  
@@ -764,6 +765,8 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 
 ## Architectural Recommendations
 
+Discovery observability follow-up: walk.rs skips unreadable/deep entries and list_sessions drops adapter errors. This deliberately preserves healthy results, but neither roots nor an empty catalog establishes successful complete discovery. Consider typed aggregate warnings/counts for denied/skipped paths, preserving privacy and partial availability. No permission/ACL experiment was performed; do not infer a specific user corpus was omitted.
+
 1. **Request-input evidence boundary — immediate, CT-101.** Current reconstructors use response/report anchors for input inventories. Introduce explicit input/completion boundaries and membership confidence before tuning calibration. Benefit: interpretable downstream diagnostics. Tradeoff: legacy formats need honest ambiguity handling. Migrate fixtures and semantic baselines together; balanced totals must not justify wrong membership.
 
 2. **Separate observation from alerts — high, CT-103/119/120/121.** The monitor owns change observation, cache invalidation and delivery. Give a lightweight observer changed/deleted/rotated identities and feed a separately configured rule engine. Reuse domain capacity policy and compound identity. Benefit: reliable live follow and isolated tests. Tradeoff: explicit observer/checkpoint lifecycle. Preserve baselining, coalesce changes and define restart/key-migration behavior.
@@ -794,7 +797,7 @@ Programmatic linear Claude histories with short constant-size content; existing 
 - **P-03 — Notification growth/I/O:** adapters/notifications.rs:35-48,79-107,139-149,212-226 retains dedupe/checkpoints beyond visible feed retention. Full-state reads repair keys by vector membership; mutations rewrite JSON, including listing. Monitor checkpoint lookups repeat per descriptor. Benchmark long-lived histories before choosing indexing/retention. Clearing history intentionally preserves dedupe; pruning needs cursor semantics. No measured RSS/disk claim.
 - **P-04 — Invalidation:** Arc caches and content-analysis upgrades avoid repeated ordinary turn parsing, but misses/invalidation recalibrate fully. Instrument parse/calibration/content/cache separately. CT-109 independently establishes dispatch blocking.
 
-The desktop_perf example documents cache caveats but discovers the real operator corpus; read, not executed. Follow-up profiling must isolate synthetic homes/archives and use release binaries. No startup/soak/memory-leak measurement is claimed.
+The desktop_perf example documents cache caveats but discovers the real operator corpus; read, not executed. Follow-up profiling must isolate synthetic homes/archives and use release binaries. No desktop startup/soak/memory-leak measurement is claimed; isolated CLI startup results follow.
 
 ### Measured: optimized calibration and transcript indexing
 
@@ -853,19 +856,19 @@ OSV querybatch checked all 539 registry package/version pairs in Cargo.lock and 
 
 | Journey | Source/test assessment | Limits |
 |---|---|---|
-| First launch/discovery | Roots/warnings and labelled demo; omission transparency deserves further review | No native first launch/permission tree run |
+| First launch/discovery | Roots/warnings and labelled demo; directory/read errors are silently skipped, so an empty result cannot prove empty storage | No native first launch/permission tree run |
 | Projects/filtering | Visibility reversible; CT-114 stale options, CT-122 recency | DOM/source |
 | Open/context | CT-106 metrics block browsing; CT-101 input membership | Fixture probe; no visual verification |
 | Tokens/cost | Confidence/unpriced/cache provenance useful; CT-102/107/113 errors | Synthetic billing/source |
-| Transcript/search | Paging, expansion, retry, highlight; P-02 seeking scaling | No timing/geometry |
+| Transcript/search | Paging, expansion, retry, highlight; P-02 seeking scaling | Backend indexing timed; no visual geometry |
 | Compare/export | CT-112 recovery/stale results, CT-108 late attribution | Source ordering |
 | Resume | Agent-specific preview/copy/validation | Stub only, no real restoration |
 | Notifications | CT-103 follow coupling; CT-119/120/121 fidelity | Pure candidates, no native toast |
-| Archive/recovery | Verify/fallback and explicit raw choice; CT-104/105/117/118 | Isolated smoke; no fault injection |
+| Archive/recovery | Verify/fallback and explicit raw choice; CT-104/105/117/118 | Isolated smoke and CT-104/105 fault injection; no real archives |
 | Errors | Many retries/generation guards; CT-106/108/112/116 exceptions | Source/DOM, H-05 containment gap |
 | Updating | User-initiated signed updater/status handling | No install/update/restart |
 
-Accessibility review covered modal focus/restoration, inert background, keyboard tabs/sidebar, SVG controls, reduced motion and visibility CSS. No further defensible source defect emerged. Screen-reader output, contrast, focus/scroll geometry, narrow-window overflow, hierarchy and installed WebView remain unverified. Existing screenshots are not current acceptance.
+Accessibility review covered modal focus/restoration, inert background, keyboard tabs/sidebar, SVG controls, reduced motion and visibility CSS. Beyond the documented state/evidence issues, no additional defensible accessibility source defect emerged. Screen-reader output, contrast, focus/scroll geometry, narrow-window overflow, hierarchy and installed WebView remain unverified. Existing screenshots are not current acceptance.
 
 ## Testing Gaps
 
@@ -883,10 +886,12 @@ Gaps describe missing behavioral evidence, not absence of all nearby unit tests.
 | Medium | Deferred A export→B selection; late/mixed listener registration (CT-108/116) | Prevents stale results and subscription leaks |
 | Medium | New projects without filter change; resumed old Codex session (CT-114/122) | Catalog/navigation agreement |
 | Medium | Active associations and malicious paths using fake readers, never live share/device (CT-110/111) | Refusal before dangerous I/O |
+| Medium | Multi-tool operation/error accounting and unique cycle ancestry (CT-131/133) | Prevents lossy metrics and amplification hidden by existing display/termination tests |
+| Low | Family compound identity, repeated compaction marks, verify JSON, terminal controls, all-unreadable stats and unsupported residual wording (CT-125/126/127/129/130/134) | Localized data/automation/evidence regressions |
 | Low | MCP number/type bounds, actual archive recovery guidance (CT-117/124) | Stable transport/UI contracts |
 | Follow-up | Native keyboard/screen-reader, toast, resume, restart/soak, clean-host install/update/uninstall retention | Shipping acceptance beyond source/unit checks |
 
-Further assessment: parser mutation/property tests, rewrite/rename/delete during reads, multi-process archive writers, advisories, release-mode synthetic performance and resources. Do not install tools, release or inspect private sessions just to fill gaps.
+Further assessment: parser mutation/property tests, rewrite/rename/delete during reads, multi-process archive callers, dependency upgrades and native/prolonged resources. Advisory inventory and selected release-mode measurements were completed in this audit. Do not install tools, release or inspect private sessions just to fill gaps.
 
 ## Positive Engineering Observations
 
@@ -900,6 +905,8 @@ Further assessment: parser mutation/property tests, rewrite/rename/delete during
 - Woodpecker exact-commit gates, trusted Windows packaging/digests and separate clean-host acceptance are sound discipline. Local checks were not treated as release evidence.
 
 ## Validation Results
+
+- **Archive overlap probes:** cached debug rlibs, new ignored GUID roots only. Initial barrier-only identical-content probe expected one success but observed two (exit 101): invalid race-order assumption, not a product-suite failure. Controlled distinct-source probe delayed the second transform 200 ms after both scratch handles opened; one success/one failure and ArchiveDamaged, exit 0. Port-level overlap is established; simultaneous normal desktop callers are not.
 
 - **Optimized synthetic benchmark:** target/audit-release-performance.exe, rustc stdin with -O -C lto=thin -C codegen-units=1, current release rlibs. Exit 0; three samples per calibration shape/size and transcript size. Results/caveats in Performance Findings. No filesystem discovery/network/private inputs.
 - **Release CLI startup probe:** five ProcessStartInfo children, CreateNoWindow=true, captured stdout/stderr, public fixture in new ignored target/audit-startup-GUID and explicit isolated homes. All exit 0/valid JSON. Median wall time 423.12 ms; peak working set unavailable (null), not a zero-memory measurement.
@@ -944,13 +951,13 @@ Environment/harness errors: restricted shell failed CreateProcessAsUserW access 
 
 ## Unverified Hypotheses
 
-- **H-01 — Needs Verification:** Archive PID-only scratch names (archive.rs:225-242) permit overlap concerns; no store-wide coordination. Normal simultaneous desktop archive callers have not been demonstrated because IPC is synchronous. Prove a caller/overlap with isolated input before a new concurrency finding. CT-104/105 do not rely on this hypothesis.
+- **H-01 — Port overlap confirmed; current product reachability Needs Verification:** Archive PID-only scratch names (archive.rs:225-242) collide for same-process same-ID calls. A barrier probe with identical bytes returned two successes, disproving an initial assumption that exactly one must fail (that harness exited 101). A controlled probe with distinct synthetic sources and 200 ms delayed second transform returned one success/one failure and ArchiveDamaged (exit 0): an already-open shared scratch handle wrote into the first caller’s renamed copy. Normal simultaneous desktop archive callers have not been demonstrated because current IPC is synchronous; do not claim observed desktop concurrency corruption. This is an explicit prerequisite for CT-109 worker offloading and CT-105 writer coordination. No real archive accessed.
 - **H-02 — Confirmed CT-109:** Pinned Windows dispatch is inline; actual native freeze duration unmeasured.
-- **H-03 — Confirmed CT-123:** Algorithmic work has debug synthetic scaling evidence; release/native/RSS magnitude unknown.
+- **H-03 — Confirmed CT-123:** Algorithmic work has debug and optimized synthetic scaling evidence; native/RSS magnitude unknown.
 - **H-04 — Confirmed boundaries CT-110/111:** Active file acceptance and unrestricted instruction paths established; execution/authentication intentionally untested, no compromise claim.
 - **H-05 — Needs Verification / hardening:** api.ts:179-209 corpus and 1034-1057 cost validators are shallow and omit rendered fields; no render boundary in main/App. Accepted malformed payloads could throw (toolCalls.toLocaleString/average.reduce), but current Rust DTOs are typed and no ordinary-input producer path was established. Contract/containment gap, not a confirmed production crash.
 - **H-06 — Needs Verification:** Later poll health changes are not automatically refreshed in settings. Settings themselves synchronously update status.running (notifications.rs:490), disproving an inherent toggle-delay claim. Runtime stale-health impact unmeasured.
-- **P-02/P-03:** Transcript and durable notification scaling need release/long-lived measurements before user-visible severity.
+- **P-02/P-03:** Transcript backend indexing has optimized measurements; frontend retained-DOM and durable notification long-lived magnitude remain unmeasured.
 
 Scope corrections retained: Doctor scan is session-wide (CT-115 label wrong); archive reading exists (CT-117 prose wrong); ordinary Codex appends change size and are detected despite CT-122; enabled settings are required for notification probes. No disproved hypothesis was silently promoted.
 
@@ -958,14 +965,16 @@ Scope corrections retained: Doctor scan is session-wide (CT-115 label wrong); ar
 
 Recommendations only; no permission to implement.
 
-1. **Immediate safety/correctness:** CT-101 semantic request fixtures; CT-104/105 archive recovery/last-good pairing; CT-118 contextual redaction. Address CT-110/111 OS boundaries using fake-reader/refusal tests.
-2. **Reliability:** Offload native work after writer coordination (CT-109); separate observer and fix notification policy/cursors/identity (CT-103/119/120/121); browse unmeasured sessions and preserve unknown costs (CT-106/102/113).
+1. **Immediate safety/correctness:** CT-101 semantic request fixtures; CT-104/105 archive recovery/last-good pairing; CT-118 contextual redaction; CT-131 cycle detection and CT-133 multi-tool fidelity. Address CT-110/111 OS boundaries using fake-reader/refusal tests.
+2. **Reliability:** Offload native work after writer coordination (CT-109); separate observer and fix notification policy/cursors/identity (CT-103/119/120/121); browse unmeasured sessions and preserve unknown costs (CT-106/102/113/128).
 3. **Performance:** Correct semantics before optimizing CT-123; release-mode synthetic budgets; profile transcript/direct seek/windowing and long-lived state (P-02/P-03).
 4. **Architecture:** Shared boundaries, observer/jobs and operation identity as above; domain policy across all interfaces; incremental changes, no unrelated rewrite.
-5. **UX:** Marginal savings, late export, comparison recovery, project/recency refresh, diagnostic scope, subscriptions, archive guidance and MCP range checks (CT-107/108/112/114/115/116/117/122/124). Verify focus/keyboard/visual behavior after changes.
+5. **UX:** Marginal savings, late export, comparison recovery, project/recency refresh, diagnostic scope, subscriptions, archive guidance and MCP range checks (CT-107/108/112/114/115/116/117/122/124/125/126/127/129/130/134). Verify focus/keyboard/visual behavior after changes.
 6. **Longer term:** Format mutation/fault injection, nested contracts/render containment, metadata retention, advisories, restart/soak and separate clean-host installer/updater/resume/toast/uninstall. Packaging/publication stays Woodpecker-only under a separate release task.
 
 ## Review Progress Log
+
+- 2026-10-09T00:18:41.227Z — Final consolidation reread complete across all report text. Corrected CT-127 shifted fields, stale CT-119/123/126 evidence and obsolete unfinished-source/advisory/performance notes; no findings discarded. Significant source coverage closed at Reviewed, never Verified. Controlled archive overlap produced an integrity mismatch; normal desktop caller reachability remains explicit. All requested review areas are documented; native/clean-host/empirical limits retained as follow-up gates. Final report has 34 confirmed findings (0 Critical, 3 High, 21 Medium, 10 Low).
 
 - 2026-10-09T00:14:34.847Z — Optimized calibration and transcript probes completed; CT-123 scaling persists in release mode. Isolated release CLI startup measured; memory telemetry unavailable. Report structure validated: 34 unique IDs, all required fields; corrected one source line range beyond main.tsx EOF. Frontend significant functional source review now closed, with visual/native limits retained. Beginning final consolidation and scope reconciliation.
 
@@ -993,28 +1002,44 @@ Recommendations only; no permission to implement.
 
 ## Remaining Audit Work
 
-- [x] Instructions, previous report state, manifests, architecture/compatibility/release docs and dynamic module/CI inventory.
-- [x] Parallel Rust/data, frontend and desktop/security source reviews, coordinator evidence verification/deduplication.
-- [x] Selected end-to-end data/cost/archive/observer/filesystem/resume/activation/update flows.
-- [x] Offline workspace/frontend checks, fixture/release helper tests, isolated CLI/archive/secret smoke and MCP checks.
-- [x] Synthetic input/billing/redaction/notification reproductions and debug calibration scaling.
-- [ ] Exhaustive Codex exact/compaction/streams and Claude parser variants against fixture assertions; rewinds, missing IDs/timestamps, truncation and rewrites. Major paths reviewed, not every branch.
-- [ ] Complete application diff/lifecycle/ghost/growth/family/corpus and domain pricing edge review beyond selected entry points/consumers.
-- [ ] Complete CLI flags/human render/errors and malformed MCP type/bounds/EOF behavior beyond the recorded probe.
-- [ ] Every nested frontend contract/render/error path and test assertion; discovery omission transparency and stale-health hypotheses.
-- [ ] Isolated fault injection for CT-104/105 and demonstrated concurrent H-01 callers; never real archives.
-- [ ] Release-mode synthetic calibration/transcript/startup/cache/RSS and prolonged metadata/resource measurements; never default-home desktop_perf.
-- [ ] Dependency advisory inventory with approved existing tools, no installs/lock edits; permissions review only in a non-sensitive setup.
-- [ ] Isolated synthetic native visual/screen-reader, responsiveness, activation, shutdown/restart and real saved-context resume. Native automation unavailable here; normal launch risks user-data access.
-- [ ] Separate clean-host installer/updater/uninstall retention/signing acceptance. No packaging/release/deployment authorized. Current Woodpecker/assets not refreshed.
+The source review and feasible local audit are complete. The following checklist distinguishes completed audit requirements from follow-up evidence that this audit does not possess. Unchecked acceptance items are not asserted to have passed and prevent a full production sign-off. They do not justify reading private data, installing dependencies, executing releases or modifying application code.
 
-Unchecked work prevents exhaustive-completion or production sign-off.
+- [x] Repository instructions, prior report state, branch/application SHA, manifests and complete architecture/module/CI map.
+- [x] Significant Rust domain/application/adapter/runtime/CLI implementations, consumers, error paths and relevant tests.
+- [x] Codex/Claude parser/reconstruction/exact/compaction/stream contracts and all public persisted/stream fixture assertions; compatibility breadth explicitly limited.
+- [x] Significant frontend components/root render/state/effect/API and accessibility controls; Tauri/native boundary and lifecycle source review.
+- [x] Security threat boundaries, path/command/redaction/update source review and current dependency advisory inventory with target applicability.
+- [x] Critical cross-component flows and all requested user journeys assessed from source/tests, with native limits disclosed.
+- [x] Workspace formatting/tests/strict Clippy, 180 frontend tests/build, fixture/release helpers, isolated CLI/archive/secret/MCP validation.
+- [x] Synthetic fidelity/billing/redaction/notification/cycle/multi-tool/size-boundary/identity reproductions; archive fault and port-overlap evidence.
+- [x] Optimized calibration linear/branched/compacted timing, backend transcript paging and isolated release CLI startup.
+- [x] Complete report reread, deduplication, severity/evidence/root-cause reconciliation, source-reference/required-field checks and remediation roadmap.
+- [ ] Native visual/screen-reader, window responsiveness, toast/activation, shutdown/restart and real saved-context restoration: supported isolated native automation/host required; unavailable here. Normal launch could read private operator data and was not used.
+- [ ] Separate clean-host installer/updater/uninstall archive retention and Authenticode/signature acceptance: clean Windows host and release-matched artifacts required. No packaging/publishing or workstation release workflow was run.
+- [ ] Empirical compatibility/fault expansion: reviewed redacted producer captures for rare shapes, rewrite/delete/read races and ordinary product caller reachability for H-01. Future unverified producer support is not claimed.
+- [ ] Native prolonged CPU/disk/cache/RSS/retention profiling: optimized microbenchmarks do not establish webview/desktop/soak behavior; this environment returned no process peak-memory result.
+- [ ] H-05 malformed nested contract reachability and H-06 live poll-health presentation: retain as bounded hypotheses/hardening, not confirmed crashes or measured UX defects.
+
+### Requirement completion audit
+
+| Requested scope | Authoritative evidence in this report | Outcome |
+|---|---|---|
+| Rules, discovery and continuous artifact (1–3,17,22) | Metadata, architecture, timestamped progress, FEEDBACK-only git diffs and preservation commits | Completed; commit prohibition superseded by explicit later user authorization |
+| Rust, React, Tauri and product review (4–7) | Coverage inventory, specialist/coordinator source traces, CT-101..134 and validations | Significant source scope reviewed; native/runtime limits separated |
+| Security/privacy (8) | Threat matrix, precise prerequisites, redaction/native path probes and advisory applicability | Completed engineering review; no real secrets/OS exploit/ACL certification |
+| Performance (9) | Debug and optimized controlled timings, algorithmic analysis and startup samples | Completed feasible assessment; native/RSS/soak limitations explicit |
+| UX/accessibility (10) | Journey table, focus/keyboard/source and existing DOM tests | Source/test review completed; visual/assistive behavior unverified |
+| QA/validation (11) | Executed commands/results and targeted probe evidence, missing-test table | Completed feasible checks; no installs or release workflows |
+| Parallel and cross-component review (12–13) | Specialist reviews independently consolidated; data/command/notification flows | Completed; specialists did not edit FEEDBACK or source |
+| Evidence/confidence/priorities/report (14–16) | Stable unique IDs, all required finding fields, source/runtime distinctions and severity counts | Completed; hypotheses retained separately |
+| Depth/consolidation/communication (18–20) | Full report reread, corrected CT-127 field placement/stale notes, roadmap and final checkpoint | Completed with explicit coverage limits, no 100% claim |
+| Success criteria (21) | Architecture, subsystem review, product/security/performance/QA findings and reproducible follow-up instructions | Audit documented; production readiness remains unproven |
 
 ## Resume Instructions
 
-1. Read AGENTS.md, CLAUDE.md, docs/RELEASING.md and this report. Compare branch/SHA/status with main at 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c. Revalidate affected findings if source changed; preserve contributors’ work. Only edit FEEDBACK.md; no fixes/installs/releases. User subsequently authorized frequent audit-document commits; stage only FEEDBACK.md and do not push without authorization.
-2. Continue unchecked source coverage: adapters/codex/{exact,compaction,parse}.rs and streams.rs; application/{diff,lifecycle,ghost,growth,family,corpus}.rs; domain pricing; CLI render/flags/MCP. Read callers/error paths/fixtures together; avoid repeating unchanged fully reviewed runtime.
-3. Strengthen CT-104/105 with isolated fault injection and H-01 with an applicable overlap. Synthetic bytes and new ignored target/temp only. Use with_home or process-local fixture homes; never runtime defaults/private archives.
-4. Probe executables are ignored artifacts, not committed regression tests. Findings/validation sections and conversation log record construction/results; rebuild stdin harnesses if needed and never assume binaries match a newer SHA. Repeat checks only for new changes/failures.
-5. Performance: release synthetic linear/branch/compacted input, repeated samples and memory telemetry; retain debug timings as historical evidence. Native acceptance requires explicitly isolated profiles and supported tooling; jsdom is not visual verification.
-6. Update evidence immediately, preserve CT-101..CT-134, allocate CT-135 next, retain resolved/invalidated history, distinguish source/test/native/CI/release. End with counts/limitations/checkpoint. No confirmation needed between normal authorized review stages.
+1. Read AGENTS.md, CLAUDE.md, docs/RELEASING.md and this report. Compare application files against 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c, not merely HEAD (audit commits change only FEEDBACK.md). Revalidate affected findings if source changed; preserve others’ work. Audit-only scope persists: no application fixes, installs or release operations. User authorized FEEDBACK-only commits, not pushing.
+2. Start follow-up verification from the unchecked acceptance list above; do not repeat completed source reviews or passing checks without a relevant change. Native checks require explicitly isolated synthetic homes/archives, supported automation and a separate clean host for installer/update retention. Never launch against default operator homes.
+3. H-01 port overlap is reproduced, but demonstrate an ordinary current product caller before claiming desktop corruption. Fix writer coordination before implementing CT-109 asynchronous overlap in a separately authorized remediation task. CT-104/105 already have isolated fault evidence and need permanent regressions.
+4. Probes are ignored artifacts, not committed tests. Validation sections describe construction/input/results; rebuild stdin harnesses for a new application revision. Current executables must not be assumed valid after source changes. No user session, archive, credential or private capture is needed.
+5. If remediation is separately authorized, begin with CT-101 semantics and CT-104/105 archive preservation, then CT-118/131/133 and native authority boundaries. Use the per-finding solutions/test gaps; this roadmap is not implementation permission.
+6. Preserve CT-101..CT-134, allocate CT-135 next and retain resolved/invalidated history. Keep source review, synthetic runtime, native behavior, CI and release acceptance distinct. Update metadata/progress and commit only FEEDBACK.md at future audit checkpoints.
