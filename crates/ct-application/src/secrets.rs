@@ -1304,6 +1304,8 @@ eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYnVuZGxlLmpzIiwic291cmNlcyI6W119Cg==";
                 usage: TokenUsage::default(),
                 event_indices: vec![0],
                 anchor_index: Some(0),
+
+                response_start_index: None,
             }],
             vec![],
         );

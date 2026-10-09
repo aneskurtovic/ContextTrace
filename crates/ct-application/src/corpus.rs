@@ -526,6 +526,7 @@ mod tests {
             },
             event_indices: Vec::new(),
             anchor_index: None,
+            response_start_index: None,
         }
     }
 

@@ -685,6 +685,14 @@ fn derive_turns(events: &mut [Event], extras: &[LineExtras]) -> Vec<Turn> {
         for &i in &indices {
             events[i].turn = Some(turn_number);
         }
+        let response_start_index = indices
+            .iter()
+            .copied()
+            .find(|&i| {
+                events[i].raw_type == "assistant"
+                    && (i == index || (request.is_some() && extras[i].request_id == request))
+            })
+            .unwrap_or(index);
         turns.push(Turn {
             number: turn_number,
             timestamp: events[index].timestamp,
@@ -692,6 +700,7 @@ fn derive_turns(events: &mut [Event], extras: &[LineExtras]) -> Vec<Turn> {
             usage,
             event_indices: indices,
             anchor_index: Some(index),
+            response_start_index: Some(response_start_index),
         });
         current_request = request;
         number += 1;
@@ -1134,6 +1143,35 @@ fn prompt_sum(v: &Value) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn response_boundary_includes_blocks_without_usage_before_the_report() {
+        let mut metadata = SessionMetadata::default();
+        let values = [
+            json!({"type":"user","uuid":"u","message":{"role":"user","content":"input"}}),
+            json!({"type":"assistant","uuid":"a","parentUuid":"u","requestId":"r","message":{"role":"assistant","content":[{"type":"thinking","thinking":"current reasoning"}]}}),
+            json!({"type":"assistant","uuid":"b","parentUuid":"a","requestId":"r","message":{"role":"assistant","content":[{"type":"text","text":"current output"}],"usage":{"input_tokens":10,"output_tokens":10}}}),
+        ];
+        let mut events = Vec::new();
+        let mut extras = Vec::new();
+        for (index, value) in values.into_iter().enumerate() {
+            let record = LineRecord {
+                line_no: index as u32 + 1,
+                offset: 0,
+                len: 100,
+                value: Some(value),
+                oversized: false,
+                truncated: false,
+                sniffed_type: None,
+            };
+            let (event, extra) = translate(&record, &mut metadata, false);
+            events.push(event);
+            extras.push(extra);
+        }
+        let turns = derive_turns(&mut events, &extras);
+        assert_eq!(turns[0].anchor_index, Some(2));
+        assert_eq!(turns[0].response_start_index, Some(1));
+    }
+
     #[test]
     fn novel_system_subtypes_are_reported_as_drift() {
         assert!(matches!(

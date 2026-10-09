@@ -1297,6 +1297,7 @@ fn derive_turns(events: &mut [Event], event_models: &[Option<String>]) -> Vec<Tu
         for &i in &pending {
             events[i].turn = Some(turn_number);
         }
+        let response_start_index = response_start(events, &pending);
         turns.push(Turn {
             number: turn_number,
             timestamp: events[index].timestamp,
@@ -1304,6 +1305,7 @@ fn derive_turns(events: &mut [Event], event_models: &[Option<String>]) -> Vec<Tu
             usage,
             event_indices: std::mem::take(&mut pending),
             anchor_index: Some(index),
+            response_start_index,
         });
         number += 1;
     }
@@ -1311,6 +1313,34 @@ fn derive_turns(events: &mut [Event], event_models: &[Option<String>]) -> Vec<Tu
     // Events after the final token report belong to an in-flight turn that never
     // completed. They are left unassigned rather than invented into a turn.
     turns
+}
+
+/// Infer an exclusive input boundary from the recorded output sequence.
+/// Task markers do not identify every API request; consumers disclose estimated membership.
+pub(super) fn response_start(events: &[Event], indices: &[usize]) -> Option<usize> {
+    let mut response_start_index = None;
+    for &i in indices {
+        match events[i].kind {
+            EventKind::TurnStarted
+            | EventKind::Compacted(_)
+            | EventKind::Message {
+                role: MessageRole::User | MessageRole::Developer | MessageRole::System,
+                ..
+            } => {
+                response_start_index = None;
+            }
+            EventKind::Message {
+                role: MessageRole::Assistant,
+                ..
+            }
+            | EventKind::Reasoning { .. }
+            | EventKind::ToolCall { .. } => {
+                response_start_index.get_or_insert(i);
+            }
+            _ => {}
+        }
+    }
+    response_start_index
 }
 
 // ---------------------------------------------------------------------------

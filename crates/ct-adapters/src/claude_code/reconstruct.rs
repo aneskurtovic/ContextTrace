@@ -30,7 +30,7 @@ use ct_domain::{
     AgentSession, CompactionEvent, ContextCategory, ContextItem, ContextItemId, ContextSource,
     Event, MessageRole, Provenance, TokenCount, TurnNumber,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Guard against a malformed or cyclic parent chain.
 ///
@@ -61,7 +61,17 @@ pub fn reconstruct(
         .event(anchor)
         .map(|e| e.links.is_sidechain)
         .unwrap_or(false);
-    let (chain, compaction) = walk_ancestors(session, anchor, &by_uuid, want_sidechain);
+    let (mut chain, compaction) = walk_ancestors(session, anchor, &by_uuid, want_sidechain)?;
+    if let Some(start) = turn_data.response_start_index {
+        if let Some(at) = chain.iter().position(|&i| {
+            i >= start
+                && session
+                    .event(i)
+                    .is_some_and(|e| e.raw_type == "assistant" && e.turn == Some(turn))
+        }) {
+            chain.truncate(at);
+        }
+    }
 
     let events: Vec<&Event> = chain
         .into_iter()
@@ -79,6 +89,11 @@ pub fn reconstruct(
         .filter_map(|event| to_item(event, estimator, &tool_names))
         .collect();
 
+    if turn_data.response_start_index.is_none() {
+        for item in &mut items {
+            item.provenance.confidence = ct_domain::Confidence::Estimated;
+        }
+    }
     promote_current_prompt(&mut items);
 
     Ok(ReconstructedContext {
@@ -114,16 +129,22 @@ fn walk_ancestors(
     anchor: usize,
     by_uuid: &HashMap<&str, usize>,
     want_sidechain: bool,
-) -> (Vec<usize>, Option<CompactionEvent>) {
+) -> PortResult<(Vec<usize>, Option<CompactionEvent>)> {
     let mut chain = Vec::new();
     let mut compaction = None;
     let mut cursor = Some(anchor);
-    let mut steps = 0;
+    let mut visited = HashSet::new();
 
     while let Some(index) = cursor {
-        steps += 1;
-        if steps > MAX_CHAIN {
-            break;
+        if !visited.insert(index) {
+            return Err(PortError::Unsupported(
+                "cyclic Claude parent chain; input membership unavailable".into(),
+            ));
+        }
+        if visited.len() > MAX_CHAIN {
+            return Err(PortError::Unsupported(
+                "Claude parent chain exceeds reconstruction limit".into(),
+            ));
         }
         let Some(event) = session.event(index) else {
             break;
@@ -148,13 +169,11 @@ fn walk_ancestors(
             .links
             .parent_uuid
             .as_deref()
-            .and_then(|parent| by_uuid.get(parent).copied())
-            // Guard against a self-referencing parent, which would loop.
-            .filter(|&next| next != index);
+            .and_then(|parent| by_uuid.get(parent).copied());
     }
 
     chain.reverse();
-    (chain, compaction)
+    Ok((chain, compaction))
 }
 
 /// Map each tool call's id to its name and target, so results can be named.
@@ -389,6 +408,7 @@ mod tests {
             },
             event_indices: (0..events.len()).collect(),
             anchor_index: Some(anchor),
+            response_start_index: None,
         };
         AgentSession::new(
             SessionId::new("cc-1").unwrap(),
@@ -534,22 +554,24 @@ mod tests {
     }
 
     #[test]
-    fn a_parent_cycle_terminates_instead_of_hanging() {
+    fn a_parent_cycle_is_reported_without_amplifying_context() {
         let events = vec![
             ev(1, "a", Some("b"), msg(MessageRole::User, 10)),
             ev(2, "b", Some("a"), msg(MessageRole::Assistant, 10)),
         ];
         let s = session(events, 1, 100);
-        let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
-        assert!(!r.items.is_empty());
+        assert!(
+            matches!(reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()), Err(PortError::Unsupported(reason)) if reason.contains("cyclic"))
+        );
     }
 
     #[test]
     fn a_self_referencing_parent_does_not_loop() {
         let events = vec![ev(1, "a", Some("a"), msg(MessageRole::User, 10))];
         let s = session(events, 0, 100);
-        let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
-        assert_eq!(r.items.len(), 1);
+        assert!(
+            matches!(reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()), Err(PortError::Unsupported(reason)) if reason.contains("cyclic"))
+        );
     }
 
     #[test]
@@ -681,7 +703,7 @@ mod tests {
                 path: "server\\CLAUDE.md".into()
             }
         );
-        assert_eq!(item.provenance.confidence, ct_domain::Confidence::Observed);
+        assert_eq!(item.provenance.confidence, ct_domain::Confidence::Estimated);
     }
 
     #[test]
@@ -728,6 +750,7 @@ mod tests {
                 usage: TokenUsage::default(),
                 event_indices: vec![0],
                 anchor_index: None,
+                response_start_index: None,
             }],
             vec![],
         );

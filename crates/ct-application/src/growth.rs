@@ -305,6 +305,8 @@ mod tests {
                 },
                 event_indices: vec![],
                 anchor_index: None,
+
+                response_start_index: None,
             })
             .collect();
 

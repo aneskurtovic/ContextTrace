@@ -4003,6 +4003,7 @@ mod tests {
             usage: Default::default(),
             event_indices: Vec::new(),
             anchor_index: None,
+            response_start_index: None,
         };
         let session = ct_domain::AgentSession::new(
             ct_domain::SessionId::new("model-usage").unwrap(),

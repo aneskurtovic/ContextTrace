@@ -168,9 +168,13 @@ pub struct Turn {
     /// Indices rather than clones: a turn can span hundreds of events, and a
     /// session tens of thousands.
     pub event_indices: Vec<usize>,
-    /// The event that carried this turn's usage report -- the anchor from which
-    /// context reconstruction starts.
+    /// The event that carried this turn's usage report (completion boundary).
     pub anchor_index: Option<usize>,
+    /// First generated event of this request, excluded from its input snapshot.
+    /// Claude records request identity; Codex infers this from output ordering.
+    /// None means the input boundary was not captured; membership is uncertain.
+    #[serde(default)]
+    pub response_start_index: Option<usize>,
 }
 
 impl Turn {
@@ -379,6 +383,7 @@ mod tests {
                 },
                 event_indices: vec![],
                 anchor_index: None,
+                response_start_index: None,
             })
             .collect();
         AgentSession::new(

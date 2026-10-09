@@ -855,3 +855,48 @@ fn a_codex_compaction_replaces_the_item_list() {
         "replacement_history should appear as the summary that replaced the history"
     );
 }
+
+#[test]
+fn claude_request_input_excludes_all_current_response_blocks_and_retains_previous_outputs() {
+    let (adapter, session) = claude();
+    for (number, expected_lines) in [
+        (1, vec![1, 2, 3]),
+        (2, vec![1, 2, 3, 4, 5, 6]),
+        (3, vec![12]),
+    ] {
+        let context = adapter
+            .reconstruct(
+                &session,
+                TurnNumber::new(number).unwrap(),
+                &HeuristicEstimator::for_code(),
+            )
+            .unwrap();
+        let lines: Vec<_> = context
+            .items
+            .iter()
+            .map(|item| item.provenance.source.unwrap().line_no)
+            .collect();
+        assert_eq!(
+            lines, expected_lines,
+            "request {number} input includes only its retained ancestors"
+        );
+    }
+}
+
+#[test]
+fn codex_request_input_excludes_current_reasoning_calls_and_their_later_results() {
+    let (adapter, session) = codex();
+    let context = adapter
+        .reconstruct(&session, TurnNumber::FIRST, &HeuristicEstimator::for_code())
+        .unwrap();
+    let lines: Vec<_> = context
+        .items
+        .iter()
+        .map(|item| item.provenance.source.unwrap().line_no)
+        .collect();
+    assert_eq!(lines, vec![1, 3]);
+    assert!(context
+        .items
+        .iter()
+        .all(|item| item.provenance.confidence == ct_domain::Confidence::Estimated));
+}

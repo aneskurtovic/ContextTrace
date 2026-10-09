@@ -398,6 +398,7 @@ mod tests {
             },
             event_indices: indices,
             anchor_index: indices_last(&[]),
+            response_start_index: None,
         }
     }
 

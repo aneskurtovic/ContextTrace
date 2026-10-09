@@ -1043,3 +1043,14 @@ The source review and feasible local audit are complete. The following checklist
 4. Probes are ignored artifacts, not committed tests. Validation sections describe construction/input/results; rebuild stdin harnesses for a new application revision. Current executables must not be assumed valid after source changes. No user session, archive, credential or private capture is needed.
 5. If remediation is separately authorized, begin with CT-101 semantics and CT-104/105 archive preservation, then CT-118/131/133 and native authority boundaries. Use the per-finding solutions/test gaps; this roadmap is not implementation permission.
 6. Preserve CT-101..CT-134, allocate CT-135 next and retain resolved/invalidated history. Keep source review, synthetic runtime, native behavior, CI and release acceptance distinct. Update metadata/progress and commit only FEEDBACK.md at future audit checkpoints.
+
+## Remediation Progress
+
+The audit above records the reviewed baseline. Implementation checkpoints below preserve those findings and distinguish local regressions from native, CI, and release acceptance.
+
+| Finding | Implementation status | Evidence and remaining limits |
+|---|---|---|
+| CT-101 | Implemented locally | Separate response-start and usage-report boundaries; Claude excludes all current request blocks and retains prior responses/results on the active chain; Codex excludes the inferred current output sequence and explicitly estimates membership. Source-line fixture assertions cover tool loops, compaction and rewinds. Precise Codex request identity and aggregated Claude iterations remain input-capture limitations. |
+| CT-131 | Implemented locally | A visited-index set rejects cyclic/self-referencing ancestry before duplication; chain limits report unsupported reconstruction. Permanent regressions cover both cycle shapes. |
+
+2026-10-09 checkpoint: 511 Rust tests passed (one ignored), formatting and strict workspace Clippy passed, all 17 catalogued fixtures and validator negative cases passed, and the PowerShell 5.1 release-note regression passed. No native desktop, Woodpecker, packaging or clean-host acceptance is claimed.
