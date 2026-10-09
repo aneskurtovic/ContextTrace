@@ -125,3 +125,11 @@ agent-qualified descriptor fingerprints, coalesces changes, and detects
 rotation/deletion on successful discovery. A failed agent discovery preserves
 its previous inventory; other agents still refresh. Failed UI emissions retry.
 Notification baselining and catch-up use separate persisted checkpoints.
+
+Notification deduplication uses versioned agent/session identities, including
+when two agents share a session ID. Format drift deliberately deduplicates
+across sessions of the same agent. Retained legacy feed records are qualified
+from their recorded locations on read; clearing history retains the qualified
+keys. Old tombstones without a retained record cannot be assigned an agent
+reliably, so they remain stored but do not suppress another agent. Persisted
+session checkpoints continue to prevent historical event replay.

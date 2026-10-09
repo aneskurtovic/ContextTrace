@@ -127,7 +127,7 @@ fn candidate(
             .and_then(|event| event.timestamp.as_ref())
         })
         .and_then(|time| u64::try_from(time.timestamp_millis()).ok());
-    NotificationCandidate {
+    let mut result = NotificationCandidate {
         dedupe_key: key,
         rule,
         severity,
@@ -137,7 +137,9 @@ fn candidate(
         location: location(session, turn, line),
         occurred_at_ms,
         evidence,
-    }
+    };
+    result.dedupe_key = result.qualified_dedupe_key();
+    result
 }
 
 fn advance(session: &AgentSession, checkpoint: &mut SessionNotificationCheckpoint) {
@@ -885,6 +887,50 @@ mod tests {
             turns,
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn candidates_qualify_agent_identity_and_keep_format_drift_agent_wide() {
+        let codex = session(&[900], 1000);
+        let claude = AgentSession::new(
+            codex.id().clone(),
+            AgentKind::ClaudeCode,
+            codex.metadata().clone(),
+            Vec::new(),
+            codex.turns().to_vec(),
+            Vec::new(),
+        );
+        let other = AgentSession::new(
+            SessionId::new("other").unwrap(),
+            AgentKind::Codex,
+            codex.metadata().clone(),
+            Vec::new(),
+            codex.turns().to_vec(),
+            Vec::new(),
+        );
+        let finding = SecretFinding {
+            kind: crate::SecretKind::EnvironmentSecret,
+            occurrences: 1,
+            turn: Some(TurnNumber::new(1).unwrap()),
+            line_no: 2,
+            event_type: "user".into(),
+        };
+        let settings = NotificationSettings::default();
+        let key = |session: &AgentSession| {
+            let mut out = Vec::new();
+            push_secret(session, &finding, &settings, &mut out);
+            out.remove(0).dedupe_key
+        };
+        assert_ne!(key(&codex), key(&claude));
+        assert_ne!(key(&codex), key(&other));
+        assert_eq!(key(&codex), key(&codex));
+        let format_key = |session: &AgentSession| {
+            let mut out = Vec::new();
+            push_format_drift(session, "future", 1, &settings, &mut out);
+            out.remove(0).dedupe_key
+        };
+        assert_eq!(format_key(&codex), format_key(&other));
+        assert_ne!(format_key(&codex), format_key(&claude));
     }
 
     #[test]
