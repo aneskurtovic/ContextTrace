@@ -6,18 +6,18 @@
 - Branch: main
 - Commit SHA: 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c
 - Audit started: 2026-10-08T19:22:19.385Z
-- Last updated: 2026-10-09T00:00:12.095Z
+- Last updated: 2026-10-09T00:06:12.280Z
 - Audit status: In Progress — broad source review and local validation completed; exhaustive source coverage and desktop/release acceptance remain
 - Reviewed environment: Windows; installed Rust/Cargo and Node/npm; offline cached dependencies; approved shell execution; no application launch or real user corpus access
 - Reviewer: Astra
 
 ## Executive Summary
 
-This revision has a strong layered Rust core, explicit provenance/confidence modeling, bounded JSONL reads, fixture-based compatibility checks, a shared CLI/desktop composition root, and substantial local test coverage. Passing tests nevertheless coexist with important semantic defects. **24 findings are confirmed: 0 Critical, 3 High, 18 Medium and 3 Low.** Confirmation includes traceable source contradictions; selected findings also have synthetic runtime reproductions. It does not imply native reproduction of every issue.
+This revision has a strong layered Rust core, explicit provenance/confidence modeling, bounded JSONL reads, fixture-based compatibility checks, a shared CLI/desktop composition root, and substantial local test coverage. Passing tests nevertheless coexist with important semantic defects. **33 findings are confirmed: 0 Critical, 3 High, 21 Medium and 9 Low.** Confirmation includes traceable source contradictions; selected findings also have synthetic runtime reproductions. It does not imply native reproduction of every issue.
 
 The highest priorities are incorrect request-input membership (CT-101), archive recovery after an interrupted manifest append (CT-104), and heavy synchronous Windows desktop commands (CT-109). Additional practical problems affect incomplete cost accounting, live refresh, browsing unmeasured sessions, default archive redaction and notification fidelity. Archive copies can remain recoverable even when metadata/listing fails; permanent loss of all bytes has not been demonstrated.
 
-Security has useful defenses: evidence-derived file actions, narrowly shaped resume arguments, escaped toast content, restricted webview capabilities and signed updates. Confirmed gaps require explicit interaction with attacker-influenced local evidence or affect the advertised redaction contract; no automatic remote compromise is demonstrated. Dependency advisory status was not refreshed.
+Security has useful defenses: evidence-derived file actions, narrowly shaped resume arguments, escaped toast content, restricted webview capabilities and signed updates. Confirmed gaps require explicit interaction with attacker-influenced local evidence or affect the advertised redaction contract; no automatic remote compromise is demonstrated. The npm advisory inventory was refreshed: five flagged development packages require maintenance triage; shipped-app exploitability was not established. Rust advisory inventory remains outstanding.
 
 Workspace tests, strict Clippy, formatting, 180 frontend tests, frontend production build, fixture catalog checks and release-helper unit tests passed locally. Several existing tests encode current behavior rather than independently asserting request-input semantics. Native interaction, assistive technology, real agent restoration, clean-host install/update and current published assets/CI were not verified. This is a substantial audit checkpoint, not an exhaustive production-readiness sign-off. Only FEEDBACK.md is being changed.
 
@@ -66,8 +66,6 @@ Tests are embedded Rust units plus public fixture integration, React/Vitest DOM 
 
 ## Findings Summary
 
-Historical source comments already use CT-012 through CT-072. Audit IDs start at CT-101 and have not been reused. Confirmed means strong evidence for the described deficiency, not necessarily installed-runtime verification.
-
 | ID | Severity | Category | Finding | Status | Confidence |
 |---|---|---|---|---|---|
 | CT-101 | High | Data fidelity / reconstruction | Response output is included in the prompt snapshot for the request that generated it | Confirmed | High |
@@ -88,12 +86,21 @@ Historical source comments already use CT-012 through CT-072. Audit IDs start at
 | CT-116 | Low | React lifecycle | Asynchronous listener acquisition can leak subscriptions | Confirmed | High |
 | CT-117 | Low | UX documentation | Archive guidance incorrectly says saved copies cannot be read | Confirmed | High |
 | CT-118 | Medium | Privacy / redaction | Archive redaction loses JSON credential key/value context | Confirmed | High |
-| CT-119 | Medium | Notification correctness | Pressure alerts reuse a context limit invalidated by a model switch | Confirmed | High |
+| CT-119 | Medium | Context metric correctness | Pressure analysis reuses session limits across requests and model switches | Confirmed | High |
 | CT-120 | Medium | Notification replay / cursor semantics | Historical secret and residual findings replay after an unrelated append | Confirmed | High |
 | CT-121 | Medium | Cross-agent identity | Global notification deduplication omits agent identity | Confirmed | High |
 | CT-122 | Medium | Discovery / recency / filtering | Codex recent activity is fixed to the session creation timestamp | Confirmed | High |
 | CT-123 | Medium | Performance / scaling | Claude calibration repeatedly reconstructs the whole session for every turn | Confirmed | High |
 | CT-124 | Low | CLI / MCP input correctness | MCP numeric parameters silently wrap instead of rejecting out-of-range values | Confirmed | High |
+| CT-125 | Low | Session identity | Family grouping merges independent agents with equal session IDs | Confirmed | High |
+| CT-126 | Low | Data fidelity | Growth summaries discard additional compactions assigned to one turn | Confirmed | High |
+| CT-127 | Low | CLI contract | Archive verification ignores the accepted JSON flag | Confirmed | High |
+| CT-128 | Medium | Cost presentation | Human cost comparisons conceal unpriced usage | Confirmed | High |
+| CT-129 | Low | Security / terminal output | CLI inspection prints untrusted terminal controls from metadata | Confirmed | High |
+| CT-130 | Low | CLI error communication | An entirely unreadable corpus is reported as empty | Confirmed | High |
+| CT-131 | Medium | Parser reliability / resource amplification | Cyclic Claude ancestry amplifies tiny logs into duplicate context | Confirmed | High |
+| CT-132 | Low | Parser fidelity | Codex framing-budget edge silently hides oversized messages | Confirmed | High |
+| CT-133 | Medium | Parser / product data fidelity | Claude multi-tool blocks lose operation identities and errors | Confirmed | High |
 
 ## Critical Findings
 
@@ -133,7 +140,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Description:** Readers skip malformed manifest lines, but writers append directly without repairing or separating an unterminated corrupt tail. An interrupted JSON fragment followed by a valid new entry becomes one malformed line.  
 **Evidence:** append_to_manifest uses append(true), serializes JSON plus newline and writes immediately; entries splits by newline and skips serde parse failures. No tail repair exists.  
 **Root Cause:** Read-side tolerance was treated as write-side crash recovery.  
-**Reproduction / Verification:** Source-level deterministic byte sequence: `{partial` + serialized entry + newline cannot parse, so entries omits the newly acknowledged archive. No real archive accessed or fault injected.  
+**Reproduction / Verification:** Isolated compiled Rust probe on Windows created a new ignored target directory and synthetic source. After seeding manifest.ndjson with `{partial`, ingest returned Ok, entries returned empty and path confirmed the copy existed. Exit 0; no real archive accessed.  
 **Recommended Solution:** Under an archive-wide interprocess lock, detect and quarantine/truncate an incomplete tail before appending. Ensure a valid record boundary, flush/sync according to the durability guarantee, and add restart-after-partial-tail regressions for new and existing IDs. Provide an orphan-copy reconciliation path.  
 **Expected Benefit:** A failed prior write cannot invalidate the next successful operation.  
 **Estimated Effort:** Medium  
@@ -211,7 +218,7 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Description:** Destination replacement occurs before append_to_manifest, which can fail. No rollback/versioned copy retains the metadata-byte pairing.  
 **Evidence:** fs::rename(tmp,dest) succeeds, then append_to_manifest propagates an I/O error. Existing manifest entry remains selected by last-wins reading.  
 **Root Cause:** A two-file commit has no transaction or recovery journal.  
-**Reproduction / Verification:** Source failure path confirmed; no disk-full or permission fault injected. Data loss is not claimed merely from metadata mismatch; content bytes may be recoverable.  
+**Reproduction / Verification:** Isolated compiled Rust probe on Windows ingested synthetic version 1, moved its own manifest aside and created a directory at that manifest path to force append-open failure. Reingesting version 2 returned Err after replacing the copy. Restoring the original manifest made verify return ArchiveDamaged with its old digest. Exit 0. Only new ignored test artifacts were renamed; no user data or permissions changed. Content bytes remained recoverable.  
 **Recommended Solution:** Write immutable versioned copies named by digest/revision, durably append the reference, and keep the prior referenced copy until success. Add failure-injected manifest-open/write cases and startup reconciliation. Use unique create_new scratch files and root-wide writer coordination for related concurrency risk.  
 **Expected Benefit:** Preserves the last acknowledged archive and accurate redaction/integrity status.  
 **Estimated Effort:** Medium  
@@ -409,20 +416,20 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Regression Risk:** Medium; preserving valid JSON and original unaffected bytes is essential.  
 **Related Findings:** CT-115
 
-### CT-119 — Pressure alerts reuse a context limit invalidated by a model switch
+### CT-119 — Pressure analysis reuses session limits across requests and model switches
 
 **Severity:** Medium  
-**Category:** Notification correctness  
+**Category:** Context metric correctness  
 **Status:** Confirmed  
 **Confidence:** High  
-**Affected Components:** Notification pressure evaluation and evidence  
-**File Locations:** `crates/ct-application/src/notifications.rs:156-163,254-258`; `crates/ct-domain/src/model/session.rs:251-265`  
+**Affected Components:** Notification pressure, growth timeline and corpus pressure  
+**File Locations:** `crates/ct-application/src/notifications.rs:156-163,254-258`; `crates/ct-domain/src/model/session.rs:251-265`; `crates/ct-application/src/growth.rs:122-125,261`; `crates/ct-application/src/corpus.rs:367-390`  
 **User Impact:** A request with unknown context capacity can produce a precise-looking critical pressure alert using another model’s limit.  
-**Description:** Notification utilisation and displayed evidence fall back directly to session metadata. The domain helper deliberately rejects that fallback when the request explicitly changes model.  
-**Evidence:** A synthetic model-B request with 90,000 prompt tokens and only model-A session metadata (100,000 capacity) has context_window_at=None but produces a pressure candidate.  
-**Root Cause:** Notification logic duplicates capacity resolution instead of using the domain evidence policy.  
+**Description:** Notification utilisation and displayed evidence fall back directly to session metadata. Growth and corpus pressure use only the session-wide capacity, even when a later request has an explicit different limit. The domain helper deliberately rejects that fallback when the request explicitly changes model.  
+**Evidence:** Source trace also shows metadata 200k with a later 80k/100k request produces corpus comfortable (40%) rather than tight (80%). A synthetic model-B request with 90,000 prompt tokens and only model-A session metadata (100,000 capacity) has context_window_at=None but produces a pressure candidate.  
+**Root Cause:** Multiple analyses duplicate capacity resolution instead of using the domain evidence policy.  
 **Reproduction / Verification:** Corrected isolated Rust probe with notifications enabled passed; no OS notification sent.  
-**Recommended Solution:** Use context_window_at in both utilisation and notification evidence. Withhold a percentage/band when capacity is unknown. Test model switches, explicit per-request limits and zero limits.  
+**Recommended Solution:** Use context_window_at for each request in notifications, growth and corpus. Compute the maximum known per-turn utilization rather than peak tokens divided by one session limit; keep unknown-denominator requests explicit. Growth ranges must retain the included requests’ limits. Test model switches, explicit per-request limits and zero limits.  
 **Expected Benefit:** Consistent uncertainty across the context view and alerts.  
 **Estimated Effort:** Small  
 **Regression Risk:** Low  
@@ -504,6 +511,63 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Regression Risk:** Medium to high; branch/compaction/calibration semantics must remain correct.  
 **Related Findings:** CT-101, CT-109
 
+### CT-128 — Human cost comparisons conceal unpriced usage
+
+**Severity:** Medium  
+**Category:** Cost presentation  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** CLI what-if rendering and cost report coverage  
+**File Locations:** `crates/ct-cli/src/render.rs:436-462`; `crates/ct-application/src/cost.rs:231-255,392-393`  
+**User Impact:** A comparison can present precise zero totals or misleading savings while excluding unknown-priced turns.  
+**Description:** The renderer drops both detailed reports’ warnings and unpriced arrays; generic policy assumptions do not recover that information.  
+**Evidence:** Normal cost rendering at render.rs:386-433 explicitly prints warnings and unpriced turns; cost_comparison prints only totals, savings and scenario assumptions.  
+**Root Cause:** Coverage information is discarded at the presentation boundary.  
+**Reproduction / Verification:** Source-traced report-to-render contradiction. JSON preserves the detailed reports; no current network pricing request required to establish the omission.  
+**Recommended Solution:** Render coverage and warnings for both populations, label totals as partial where needed and withhold a savings claim when baseline/scenario priced populations differ. Add all-unpriced and different-coverage cases.  
+**Expected Benefit:** Cost scenarios communicate uncertainty as clearly as ordinary cost reports.  
+**Estimated Effort:** Small  
+**Regression Risk:** Low  
+**Related Findings:** CT-102, CT-107  
+
+### CT-131 — Cyclic Claude ancestry amplifies tiny logs into duplicate context
+
+**Severity:** Medium  
+**Category:** Parser reliability / resource amplification  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Claude parent-chain reconstruction and derived analyses  
+**File Locations:** `crates/ct-adapters/src/claude_code/reconstruct.rs:120-153,537-548`  
+**User Impact:** A malformed two-node cycle creates 100,000 duplicate context items, corrupting provenance and increasing work in context, calibration and IPC consumers.  
+**Description:** The ancestry walk rejects self-links but revisits multi-node cycles until a large fixed step cap.  
+**Evidence:** Existing cycle regression checks only nonempty termination. No visited-index set prevents repeated members.  
+**Root Cause:** A traversal step cap is substituted for graph cycle detection.  
+**Reproduction / Verification:** Synthetic two-event AgentSession with a↔b parents reconstructed exactly 100,000 items in a compiled adapter probe (exit 0). No user logs opened; native timing was not measured.  
+**Recommended Solution:** Track visited event indices/UUIDs, stop before a repeated member, propagate an incomplete/cyclic ancestry diagnostic and retain each member at most once. Strengthen tests for two/longer cycles, acyclic long chains and branch boundaries.  
+**Expected Benefit:** Bounded work proportional to actual unique evidence and honest reconstruction fidelity.  
+**Estimated Effort:** Small  
+**Regression Risk:** Medium; expose incomplete ancestry without treating it as complete.  
+**Related Findings:** CT-101, CT-123  
+
+### CT-133 — Claude multi-tool blocks lose operation identities and errors
+
+**Severity:** Medium  
+**Category:** Parser / product data fidelity  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Claude accounting events, corpus metrics and tool-error notifications  
+**File Locations:** `crates/ct-adapters/src/claude_code/parse.rs:472-486,519-531`; `crates/ct-application/src/corpus.rs:296-360`; `crates/ct-adapters/tests/fixtures.rs:250-320`; `tests/fixtures/claude_code/chat-blocks.jsonl`  
+**User Impact:** Multiple calls/results on one line are counted as one; a later failed result can disappear from error metrics and notifications, and combined sizes attach to the first call.  
+**Description:** Transcript blocks preserve all operations, but normalized accounting selects only the first tool_use/tool_result while measuring the entire group.  
+**Evidence:** The committed fixture has call-a and call-b, a successful first result and failed second result. Both classification functions use find, and corpus uses those singular event identities/error flags.  
+**Root Cause:** One primary display classification doubles as a lossy accounting representation.  
+**Reproduction / Verification:** Independently traced committed fixture through parser and corpus; existing tests assert display blocks but not two calls/one error. No real producer incidence or native notification reproduction claimed.  
+**Recommended Solution:** Preserve per-block tool identities/error flags in accounting, using separate block facts or derived operation records; retain one request usage record and UUID ancestry and avoid duplicating whole-message size. Assert corpus calls/errors/attribution and notification behavior for this fixture.  
+**Expected Benefit:** Consistent transcript, metrics and error reporting for supported multi-block messages.  
+**Estimated Effort:** Medium  
+**Regression Risk:** Medium; preserve event source/ancestry and usage deduplication.  
+**Related Findings:** CT-101  
+
 ## Low Priority Findings
 
 ### CT-116 — Asynchronous listener acquisition can leak subscriptions
@@ -563,6 +627,120 @@ None confirmed in this audit. This is not a guarantee that no critical defect ex
 **Estimated Effort:** Small  
 **Regression Risk:** Low  
 **Related Findings:** None
+
+### CT-125 — Family grouping merges independent agents with equal session IDs
+
+**Severity:** Low  
+**Category:** Session identity  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Application family grouping and CLI families  
+**File Locations:** `crates/ct-application/src/family.rs:21-64`; `crates/ct-cli/src/main.rs:596-609`; related `crates/ct-application/src/diff.rs:267-268`  
+**User Impact:** An uncommon cross-agent ID collision hides one root and can associate branches with the other agent.  
+**Description:** families keys root and parent maps by the bare ID string; the unfiltered CLI accepts both agents.  
+**Evidence:** roots.insert overwrites equal IDs regardless of agent; branch entries also share the bare parent key.  
+**Root Cause:** Compound identity is discarded during grouping.  
+**Reproduction / Verification:** Isolated Rust probe passed two synthetic root descriptors with the same ID and different agents; families returned one result (exit 0). Branch merging follows the same map key. No real corpus accessed.  
+**Recommended Solution:** Key both maps by (AgentKind, SessionId), carry agent in the family DTO and add mixed-agent root/orphan/branch tests. Include agent in diff same_session identity to prevent misleading explanation text.  
+**Expected Benefit:** Preserves independent producer identities and branch provenance.  
+**Estimated Effort:** Small  
+**Regression Risk:** Low; update DTO consumers and deterministic ordering.  
+**Related Findings:** CT-121  
+
+### CT-126 — Growth summaries discard additional compactions assigned to one turn
+
+**Severity:** Low  
+**Category:** Data fidelity  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Growth timeline, buckets and CLI/MCP summaries  
+**File Locations:** `crates/ct-application/src/growth.rs:127-132,153-161,215-265`; `crates/ct-adapters/src/codex/parse.rs:1277-1306`  
+**User Impact:** Multiple recorded compactions before a request report are shown and counted as one. Their triggers/reclaimed amounts are lost from growth output.  
+**Description:** The temporary map and GrowthPoint represent only one CompactionAt per turn. Later inserts overwrite prior marks without increasing unplaced_compactions.  
+**Evidence:** placed.insert(turn.get(), mark) replaces the prior value; compactions counts points with a mark. Codex grouping assigns every pending event to the next token-report turn, allowing multiple marks on one turn.  
+**Root Cause:** A one-to-one representation is used for a many-to-one event relationship.  
+**Reproduction / Verification:** Deterministic source path: two Compacted events both at turn 1 produce one placed mark and zero unplaced marks. Producer incidence was not measured; no frequency claim.  
+**Recommended Solution:** Retain all marks per turn, or an explicit count plus a documented representative mark; update total, buckets and range calculations. Add two-compactions-one-turn and orphan-mark regressions.  
+**Expected Benefit:** Growth summaries preserve all recorded compactions.  
+**Estimated Effort:** Small  
+**Regression Risk:** Low to Medium; consumers need a plural/count-compatible contract.  
+**Related Findings:** CT-119  
+
+### CT-127 — Archive verification ignores the accepted JSON flag
+
+**Severity:** Low  
+**Category:** CLI contract  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Archive verify dispatch and human renderer  
+**File Locations:** `crates/ct-cli/src/main.rs:686-695`; `crates/ct-cli/src/render.rs:2611-2661`  
+**User Impact:** Automation requesting JSON receives prose that cannot be parsed.  
+**Description:** The shared archive command accepts --json but the verify branch never passes it to a renderer.  
+**Evidence:** archive_integrity has no JSON argument or serialization branch.  
+**Root Cause:** Captured synthetic fixture CLI archive --verify --json exited 0; serde_json rejected stdout as non-JSON. No real archive accessed.  
+**Reproduction / Verification:** Pass the flag through and serialize a stable id/integrity DTO; test each integrity outcome and the combined flags.  
+**Recommended Solution:** Reliable machine-readable archive checks.  
+**Expected Benefit:** undefined  
+**Estimated Effort:** Small  
+**Regression Risk:** Low  
+**Related Findings:** None  
+
+### CT-129 — CLI inspection prints untrusted terminal controls from metadata
+
+**Severity:** Low  
+**Category:** Security / terminal output  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Codex metadata and CLI inspect headers  
+**File Locations:** `crates/ct-adapters/src/codex/parse.rs:492-493,1258-1269`; `crates/ct-cli/src/render.rs:675-686`  
+**User Impact:** Explicitly inspecting an attacker-influenced local log can manipulate terminal display and conceal or overwrite visible output.  
+**Description:** Decoded cwd/model/git metadata reaches terminal print calls without escaping controls.  
+**Evidence:** A synthetic copy of the public fixture changed cwd to a JSON-escaped ESC[2J sequence; captured stdout contained the decoded terminal control.  
+**Root Cause:** Metadata headers bypass the sanitizer used for message/raw display.  
+**Reproduction / Verification:** Isolated CLI child used only fixture homes and a new archive root; stdout was captured and searched as bytes, never rendered. Exit 0. Terminal-specific clipboard or command execution was not tested or claimed.  
+**Recommended Solution:** Apply a common terminal-safe formatter to every untrusted human-output field, including IDs, paths, model/branch and errors; preserve exact values in JSON through normal JSON escaping. Test ESC, C0/C1 controls and multiline fields.  
+**Expected Benefit:** Prevents local evidence from controlling CLI terminal presentation.  
+**Estimated Effort:** Small  
+**Regression Risk:** Low  
+**Related Findings:** CT-110, CT-111  
+
+### CT-130 — An entirely unreadable corpus is reported as empty
+
+**Severity:** Low  
+**Category:** CLI error communication  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Corpus aggregation and human stats  
+**File Locations:** `crates/ct-cli/src/render.rs:142-155`; `crates/ct-application/src/corpus.rs:192-211`; `crates/ct-application/src/lib.rs:676`  
+**User Impact:** Users are told no sessions exist when discovered sessions all failed to load, hiding the need for recovery or permission fixes.  
+**Description:** The zero-success branch returns before printing unreadable count.  
+**Evidence:** add_unreadable increments only unreadable; successful add increments sessions. stats tests sessions==0 before the warning.  
+**Root Cause:** Empty discovery and failed parsing share a presentation branch.  
+**Reproduction / Verification:** Deterministic source path with sessions=0 and unreadable=1; JSON carries the correct count. No private or unreadable user file was opened.  
+**Recommended Solution:** Distinguish zero discovered sessions from zero successful loads; print excluded counts before returning, with doctor guidance. Add zero-success/one-failure and mixed-success cases.  
+**Expected Benefit:** Accurate diagnosis of discovery and parsing failures.  
+**Estimated Effort:** Small  
+**Regression Risk:** Low  
+**Related Findings:** None  
+
+### CT-132 — Codex framing-budget edge silently hides oversized messages
+
+**Severity:** Low  
+**Category:** Parser fidelity  
+**Status:** Confirmed  
+**Confidence:** High  
+**Affected Components:** Bounded JSONL reader and Codex oversized classification  
+**File Locations:** `crates/ct-adapters/src/jsonl.rs:106-117,133-169`; `crates/ct-adapters/src/codex/parse.rs:407-454`  
+**User Impact:** A narrow record-size boundary can omit a context-bearing message while reporting no unrecognized event.  
+**Description:** The reader retains MAX_PARSE_BYTES+2 for framing. A record with content size MAX_PARSE_BYTES+1 or +2 can be oversized yet nontruncated; unsupported oversized kinds fall back to SessionEvent.  
+**Evidence:** Valid response_item/message at exactly 4 MiB+1 was classified as metadata with unrecognised_total=0. Larger drained records correctly hit the truncated guard.  
+**Root Cause:** Oversized fallback conflates safely ignorable metadata with unsupported context-bearing content.  
+**Reproduction / Verification:** Compiled probe created only a synthetic 4 MiB+1 JSON message in ignored target; adapter load confirmed SessionEvent and zero warnings (exit 0). This is not a broad claim about all records above 4 MiB.  
+**Recommended Solution:** Use Unrecognised/incomplete classification for oversized shapes not explicitly supported; add MAX−1/MAX/MAX+1/MAX+2/MAX+3 cases with LF, CRLF and EOF framing.  
+**Expected Benefit:** No silent fidelity gap at the reader budget boundary.  
+**Estimated Effort:** Small  
+**Regression Risk:** Low  
+**Related Findings:** None  
 
 ## Architectural Recommendations
 
@@ -669,6 +847,11 @@ Further assessment: parser mutation/property tests, rewrite/rename/delete during
 
 ## Validation Results
 
+- **Final synthetic fidelity/CLI probe:** rustc stdin linked cached debug libraries to target/audit-final-fidelity-evidence.exe. New ignored target/audit-final-fidelity-GUID only; public Codex fixture copied into explicit CODEX_HOME, empty Claude home and isolated archive. Exit 0. Two-node Claude cycle returned 100,000 items (CT-131); growth used 40% instead of recorded 80% (CT-119); two marks counted once (CT-126); captured inspect stdout contained terminal ESC (CT-129, never rendered); archive --verify --json returned prose (CT-127); a valid 4 MiB+1 Codex message silently became metadata (CT-132).
+- **npm advisories:** npm.cmd audit --prefix crates/ct-ui --json --ignore-scripts --cache target/audit-npm-cache-GUID. Exit 1 because advisory matches were found: 5 package entries, 3 registry-rated high and 2 moderate; all flagged lock entries dev:true. No installs/fixes or lock edits. See Security Findings for exposure triage, not a shipped-app vulnerability claim.
+
+- **Synthetic archive/family probe:** rustc stdin linked existing debug ct_domain/ct_application/ct_adapters rlibs to target/audit-archive-fault-evidence.exe; ran against a newly verified target/audit-archive-fault-GUID root. Exit 0. Confirmed CT-104 acknowledged-but-unlisted entry, CT-105 failed metadata commit replacing bytes and yielding ArchiveDamaged, and CT-125 cross-agent root collapse. No real archives, permission changes, network or source files.
+
 All results are **local development evidence at the recorded SHA**, not Woodpecker, release or installed acceptance. No dependencies installed. Compiler output went to ignored target, frontend build to ignored dist, smoke homes/archives to a new GUID target directory. No normal application launch, private session discovery, real archive access or workflow dispatch.
 
 | Command / check | Environment | Actual result | Limits |
@@ -721,6 +904,10 @@ Recommendations only; no permission to implement.
 
 ## Review Progress Log
 
+- 2026-10-09T00:06:12.280Z — Completed additional CLI and parser/fixture source coverage with follow-up reviewers. Added CT-127..133 after independent code checks; runtime probes strengthened CT-119/126/127/129/131/132. Narrowed oversized finding to the exact framing-budget edge. npm advisory inventory queried without fixes; dependency paths are development-only. No production files changed.
+
+- 2026-10-09T00:02:20.616Z — Saved initial report in commit 802e7e7 (FEEDBACK.md only); application source remains at reviewed SHA. Archive fault probe confirmed CT-104/105 at runtime. Independently verified specialist family/growth paths, added CT-125/126, extended CT-119 to growth/corpus. Frontend follow-up verified updater/replay/preference safeguards and revalidated existing findings; malformed nested DTO remains a hardening hypothesis.
+
 - 2026-10-09T00:00:12.095Z — Continuation verified unchanged application SHA and clean production worktree; FEEDBACK.md was the only untracked file. Two follow-up source reviewers are active, and a CLI reviewer was assigned. User explicitly authorized frequent commits of the audit document, superseding the earlier no-commit rule. No production changes or release operations authorized.
 
 - 2026-10-08T19:50:11.199Z: Consolidated 24 findings (0 Critical, 3 High, 18 Medium, 3 Low), all required sections and next steps. Debug CLI build, three isolated smoke scripts and MCP protocol/boundary probe passed. Final document verification detected stale summary placeholders from a report-helper scope error; rewritten with explicit document arguments and disk verification. Git confirms unchanged SHA and only untracked FEEDBACK.md.
@@ -763,4 +950,4 @@ Unchecked work prevents exhaustive-completion or production sign-off.
 3. Strengthen CT-104/105 with isolated fault injection and H-01 with an applicable overlap. Synthetic bytes and new ignored target/temp only. Use with_home or process-local fixture homes; never runtime defaults/private archives.
 4. Probe executables are ignored artifacts, not committed regression tests. Findings/validation sections and conversation log record construction/results; rebuild stdin harnesses if needed and never assume binaries match a newer SHA. Repeat checks only for new changes/failures.
 5. Performance: release synthetic linear/branch/compacted input, repeated samples and memory telemetry; retain debug timings as historical evidence. Native acceptance requires explicitly isolated profiles and supported tooling; jsdom is not visual verification.
-6. Update evidence immediately, preserve CT-101..CT-124, allocate CT-125 next, retain resolved/invalidated history, distinguish source/test/native/CI/release. End with counts/limitations/checkpoint. No confirmation needed between normal authorized review stages.
+6. Update evidence immediately, preserve CT-101..CT-133, allocate CT-134 next, retain resolved/invalidated history, distinguish source/test/native/CI/release. End with counts/limitations/checkpoint. No confirmation needed between normal authorized review stages.
