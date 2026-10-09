@@ -4,7 +4,9 @@ Updated: **2026-10-09**. Prepared v0.1.16 from the checked FEEDBACK remediation 
 
 ## Release state
 
-v0.1.16 version files and [release notes](docs/releases/v0.1.16.md) are prepared. Exact-commit Woodpecker push validation, tag packaging, publication and public asset verification are pending. Local validation passed 547 Rust tests (one ignored), 187 frontend tests, six final live/context race regressions, formatting, strict Clippy, the frontend build, 17 fixtures, validator negatives and PowerShell 5.1 release-note serialization. Release-candidate reruns passed after removing only the verified repo-local disposable incremental cache: 547 Rust tests (one ignored), 187 frontend tests after npm ci, the production build, formatting and strict Clippy. All 17 fixtures, validator negatives and PowerShell 5.1 release-note serialization passed. Version files agree on 0.1.16; documentation links and the 12 implemented plus 22 open audit partition were checked.
+Release publication is blocked by the offline Woodpecker Windows runner (agent 4, last contact 2026-10-09 13:09:09 UTC). Main release candidate 8cdaf9bab779f3331de8f959150e041e81980cd2 was pushed. Pipeline 113 passed frontend and Linux Rust/MSRV (486 Rust tests, one ignored), but Windows validation is pending. No v0.1.16 tag or release has been created; latest stable remains v0.1.15. A documentation follow-up records this state. Before tagging, restore the existing Windows runner, wait for all three push statuses on the latest main SHA to pass, then create/push v0.1.16 and verify its Woodpecker Windows tag pipeline, six assets and stable metadata.
+
+v0.1.16 version files and [release notes](docs/releases/v0.1.16.md) are prepared. Local validation passed 547 Rust tests (one ignored), 187 frontend tests, six final live/context race regressions, formatting, strict Clippy, the frontend build, 17 fixtures, validator negatives and PowerShell 5.1 release-note serialization. Release-candidate reruns passed after removing only the verified repo-local disposable incremental cache: 547 Rust tests (one ignored), 187 frontend tests after npm ci, the production build, formatting and strict Clippy. All 17 fixtures, validator negatives and PowerShell 5.1 release-note serialization passed. Version files agree on 0.1.16; documentation links and the 12 implemented plus 22 open audit partition were checked.
 
 The previous stable release is [v0.1.15](https://github.com/aneskurtovic/ContextTrace/releases/tag/v0.1.15), at 8a72cc76a8f1aec04911dc31d48cc63cb3e34d8c. Live checks confirmed successful [push pipeline 110](https://ci.aneskurtovic.com/repos/5/pipeline/110), [tag pipeline 111](https://ci.aneskurtovic.com/repos/5/pipeline/111) and stable publication.
 
@@ -27,10 +29,11 @@ Twelve of the original 34 findings have local remediation checkpoints. [FEEDBACK
 
 ## Next session
 
-1. Read [BACKLOG](docs/BACKLOG.md), [CLAUDE](CLAUDE.md) and the relevant FEEDBACK finding. Audit current branch, remote divergence and uncommitted files before editing; preserve unrelated or recoverable work.
-2. Address export scratch/commit writer coordination before CT-109 bounded worker offloading. Archive writer coordination is complete; synchronous native commands and export overlap remain open.
-3. Fix CT-119 request/model-window fidelity and CT-120 historical secret/residual alert replay.
-4. Improve CT-123 Claude calibration with immutable revision indexes and semantic-equivalence/release-mode performance checks. Then work through the remaining 22 findings in small checked commits.
+1. **Finish the release first:** recover the configured Windows runner. From the latest main commit, verify successful Woodpecker frontend/rust/windows push statuses; create an annotated v0.1.16 tag only after those checks pass, then wait for release-gate and release-windows publication/asset verification. Record the actual pipeline numbers and release commit here. No credentials or workstation packaging should be substituted.
+2. Read [BACKLOG](docs/BACKLOG.md), [CLAUDE](CLAUDE.md) and the relevant FEEDBACK finding. Audit current branch, remote divergence and uncommitted files before editing; preserve unrelated or recoverable work.
+3. Address export scratch/commit writer coordination before CT-109 bounded worker offloading. Archive writer coordination is complete; synchronous native commands and export overlap remain open.
+4. Fix CT-119 request/model-window fidelity and CT-120 historical secret/residual alert replay.
+5. Improve CT-123 Claude calibration with immutable revision indexes and semantic-equivalence/release-mode performance checks. Then work through the remaining 22 findings in small checked commits.
 
 ## Limits that survive this release
 

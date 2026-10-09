@@ -2,6 +2,10 @@
 
 Updated: **2026-10-09**. Baseline: [FEEDBACK.md](../FEEDBACK.md), 34 confirmed findings. Twelve have local remediation checkpoints in v0.1.16; **22 remain open**. Original audit evidence stays intact. A green release does not close the full audit.
 
+## Release blocker
+
+Release publication is blocked by the offline Woodpecker Windows runner (agent 4, last contact 2026-10-09 13:09:09 UTC). Main release candidate 8cdaf9bab779f3331de8f959150e041e81980cd2 was pushed. Pipeline 113 passed frontend and Linux Rust/MSRV (486 Rust tests, one ignored), but Windows validation is pending. No v0.1.16 tag or release has been created; latest stable remains v0.1.15. A documentation follow-up records this state. Before tagging, restore the existing Windows runner, wait for all three push statuses on the latest main SHA to pass, then create/push v0.1.16 and verify its Woodpecker Windows tag pipeline, six assets and stable metadata.
+
 ## Next implementation order
 
 1. Coordinate export scratch files and commit destinations before CT-109 worker offloading. Archive writer coordination is implemented; export remains a prerequisite. Verify delayed native I/O, bounded overlap and UI responsiveness separately.

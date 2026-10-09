@@ -22,10 +22,11 @@ session.
 *The desktop app shows the same local-first measurements in dark and light
 themes. These screenshots use synthetic demonstration data.*
 
-v0.1.16 adds request, archive and tool-accounting fixes, safer local-file
+The v0.1.16 release candidate adds request, archive and tool-accounting fixes, safer local-file
 handling, independent live refresh and browsing without usage metrics. See
 [release notes](docs/releases/v0.1.16.md), [current verification](docs/MVP-STATUS.md)
-and the [engineering backlog](docs/BACKLOG.md).
+and the [engineering backlog](docs/BACKLOG.md). Latest stable remains v0.1.15
+until the configured Windows runner returns and Woodpecker publishes v0.1.16.
 
 ## What it is
 
