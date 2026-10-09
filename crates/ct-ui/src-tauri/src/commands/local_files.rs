@@ -113,17 +113,24 @@ fn resolve(target: &FileTarget) -> Option<PathBuf> {
     local_absolute(cwd).then(|| Path::new(cwd).join(path))
 }
 
-fn executable(path: &Path) -> bool {
+/// Only familiar passive data formats get an Open action. Active and unknown
+/// associations remain Reveal-only, regardless of their recorded display name.
+fn supported_data_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
             [
-                "exe", "com", "bat", "cmd", "ps1", "msi", "msp", "lnk", "url", "hta", "reg", "vbs",
-                "vbe", "js", "jse", "wsf", "wsh", "scr", "pif",
+                "txt", "md", "json", "jsonl", "csv", "tsv", "log", "yaml", "yml", "toml", "xml",
+                "ini", "cfg", "conf", "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tif",
+                "tiff", "pdf", "mp3", "wav", "flac", "ogg", "mp4", "webm", "mov", "avi",
             ]
             .iter()
             .any(|candidate| ext.eq_ignore_ascii_case(candidate))
         })
+}
+
+fn can_open_file(recorded: &Path, canonical: &Path) -> bool {
+    supported_data_file(recorded) && supported_data_file(canonical)
 }
 
 fn inspect(target: &FileTarget) -> FileTargetDto {
@@ -155,8 +162,9 @@ fn inspect(target: &FileTarget) -> FileTargetDto {
             } else {
                 "unreadable"
             };
-            dto.can_open = metadata.is_dir()
-                || (metadata.is_file() && !executable(&path) && !executable(&canonical));
+            dto.resolved_path = Some(canonical.display().to_string());
+            dto.can_open =
+                metadata.is_dir() || (metadata.is_file() && can_open_file(&path, &canonical));
         }
         Err(error) => {
             dto.status = if error.kind() == std::io::ErrorKind::NotFound {
@@ -217,7 +225,7 @@ pub fn open_context_file(
         .ok_or("This path could not be resolved.")?;
     match action {
         FileAction::Open if target.can_open => app.opener().open_path(path, None::<&str>),
-        FileAction::Open => return Err("Use Show in Explorer for executable files.".into()),
+        FileAction::Open => return Err("Use Show in Explorer for this file type.".into()),
         FileAction::Reveal => app.opener().reveal_item_in_dir(path),
     }
     .map_err(|error| error.to_string())
@@ -257,7 +265,59 @@ mod tests {
         });
         assert_eq!(info.status, "missing");
         assert!(!info.can_open);
-        assert!(executable(Path::new("RUN.CMD")));
-        assert!(!executable(Path::new("screenshot.png")));
+        assert!(!supported_data_file(Path::new("RUN.CMD")));
+        assert!(supported_data_file(Path::new("screenshot.png")));
+    }
+    #[test]
+    fn active_unknown_and_disguised_targets_are_reveal_only() {
+        for name in [
+            "payload.cpl",
+            "payload.CPL",
+            "payload.exe",
+            "payload.dll",
+            "payload.msc",
+            "payload.lnk",
+            "payload.url",
+            "payload.hta",
+            "payload.js",
+            "payload.ps1",
+            "payload.docm",
+            "payload.html",
+            "payload.svg",
+            "payload",
+            "payload.unknown",
+        ] {
+            assert!(!can_open_file(Path::new(name), Path::new(name)), "{name}");
+        }
+        // A data-looking link cannot make its active canonical target openable.
+        assert!(!can_open_file(
+            Path::new("photo.png"),
+            Path::new("payload.cpl")
+        ));
+        assert!(!can_open_file(
+            Path::new("payload.cpl"),
+            Path::new("photo.png")
+        ));
+        assert!(can_open_file(
+            Path::new("photo.PNG"),
+            Path::new("photo.png")
+        ));
+    }
+
+    #[test]
+    fn existing_cpl_is_available_for_reveal_without_open() {
+        let dir = std::env::temp_dir().join(format!("ct-file-policy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("fixture.CPL");
+        std::fs::write(&file, b"inert data; never dispatched").unwrap();
+        let info = inspect(&FileTarget {
+            path: file.display().to_string(),
+            working_directory: None,
+        });
+        assert_eq!(info.status, "file");
+        assert!(!info.can_open);
+        assert!(info.resolved_path.is_some());
+        std::fs::remove_file(file).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 }

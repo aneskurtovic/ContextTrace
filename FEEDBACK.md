@@ -1054,6 +1054,7 @@ The audit above records the reviewed baseline. Implementation checkpoints below 
 | CT-102 | Implemented locally | Complete input/output and applicable cache buckets required; 32-case absent/zero matrix and audit reproductions pass. Incomplete usage stays unpriced and disables forecasts. |
 | CT-104 | Implemented locally | Incomplete manifest tails remain separate; independent OS-locked writers and restart regressions pass. General orphan catalog reconciliation remains a follow-up. |
 | CT-105 | Implemented locally | Immutable revisions preserve acknowledged byte/metadata pairs on commit failure; legacy copies remain readable; failed-commit retry reuses intact orphan copies. |
+| CT-110 | Implemented locally | Open allows supported passive data extensions only; active/unknown formats remain Reveal-only. Both recorded and canonical extensions are checked, and dispatch uses the revalidated canonical path. Inert CPL and disguised-target regressions pass; actual OS associations remain native acceptance. |
 | CT-118 | Implemented locally | Decoded JSON member context and original encoded-span mapping redact generic/escaped values while preserving surrounding bytes. Placeholder/code controls, large values and disk-level CLI smoke pass; arbitrary unknown secrets are outside the pattern contract. |
 | CT-131 | Implemented locally | A visited-index set rejects cyclic/self-referencing ancestry before duplication; chain limits report unsupported reconstruction. Permanent regressions cover both cycle shapes. |
 
