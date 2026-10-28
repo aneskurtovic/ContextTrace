@@ -11,6 +11,10 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 
 $validator = Join-Path $PSScriptRoot 'check-fixture-manifest.ps1'
+$shell = (Get-Process -Id $PID).Path
+if (-not $shell -or -not (Test-Path -LiteralPath $shell -PathType Leaf)) {
+    throw 'Unable to locate the current PowerShell executable.'
+}
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("contexttrace-fixture-manifest-{0}" -f [guid]::NewGuid().ToString('N'))
 
 New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'tests') | Out-Null
@@ -42,7 +46,7 @@ try {
         $previousPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $validator -RepoRoot $tempRoot 2>&1 | Out-Null
+            & $shell -NoProfile -ExecutionPolicy Bypass -File $validator -RepoRoot $tempRoot 2>&1 | Out-Null
             $validatorExitCode = $LASTEXITCODE
         }
         finally {

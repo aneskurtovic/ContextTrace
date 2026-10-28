@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
-type State = "current" | "available" | "installing" | "error";
+type State = "current" | "available" | "installing" | "installed" | "error";
 
 export default function UpdaterNotice() {
   const [state, setState] = useState<State>("current");
@@ -75,6 +75,9 @@ export default function UpdaterNotice() {
     try {
       // The Windows updater exits this process after launching the NSIS installer.
       await update.downloadAndInstall();
+      // Windows launches its installer and exits; macOS returns after replacing
+      // the bundle and requires a restart to run the new version.
+      setState("installed");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
       setState("error");
@@ -87,12 +90,14 @@ export default function UpdaterNotice() {
     <aside className="updater-notice" role="status" aria-live="polite">
       {state === "available" && update ? (
         <>
-          <div><strong>ContextTrace {update.version} is ready</strong><span>Install when convenient. The app closes while Windows installs it.</span></div>
+          <div><strong>ContextTrace {update.version} is ready</strong><span>Install when convenient. The app may close during installation.</span></div>
           <button type="button" onClick={() => void install()}>Install update</button>
           <button type="button" className="updater-dismiss" onClick={dismiss}>Dismiss</button>
         </>
       ) : state === "installing" ? (
         <><strong>Updating ContextTrace</strong><span>{message}</span></>
+      ) : state === "installed" ? (
+        <><div><strong>Update installed</strong><span>Restart ContextTrace to use the new version.</span></div><button type="button" onClick={() => void invoke("restart_after_update").catch((error: unknown) => { setMessage(error instanceof Error ? error.message : String(error)); setState("error"); })}>Restart now</button></>
       ) : state === "error" ? (
         <><div><strong>Update failed</strong><span>{message}</span></div><button type="button" onClick={() => void checkForUpdates()}>Retry</button></>
       ) : null}

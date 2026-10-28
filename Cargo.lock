@@ -754,14 +754,18 @@ dependencies = [
  "ct-application",
  "ct-domain",
  "ct-runtime",
+ "flate2",
+ "notify-rust",
  "serde",
  "serde_json",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tauri-winrt-notification",
+ "tempfile",
 ]
 
 [[package]]

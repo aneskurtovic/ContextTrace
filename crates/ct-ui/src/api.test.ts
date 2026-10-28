@@ -77,6 +77,9 @@ describe('notification IPC contracts', () => {
     await expect(getNotificationSettings()).resolves.toEqual(demoNotificationSettings);
     invoke.mockResolvedValueOnce(demoNotificationStatus);
     await expect(getNotificationStatus()).resolves.toEqual(demoNotificationStatus);
+    const macStatus = { ...demoNotificationStatus, osPermission: 'unknown' };
+    invoke.mockResolvedValueOnce(macStatus);
+    await expect(getNotificationStatus()).resolves.toEqual(macStatus);
     invoke.mockResolvedValueOnce(demoNotificationPage);
     await expect(listNotifications(null, 30, false)).resolves.toEqual(demoNotificationPage);
     expect(invoke).toHaveBeenLastCalledWith('list_notifications', {

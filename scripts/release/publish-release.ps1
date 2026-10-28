@@ -16,51 +16,16 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 $version = $Tag.Substring(1)
 $assetPrefix = "ContextTrace-$version-windows-x64"
 $installerName = "$assetPrefix-setup.exe"
-$assetNames = @(
-    $installerName,
-    "$installerName.sig",
-    "$assetPrefix-portable.zip",
-    "$assetPrefix-cli.zip",
-    'SHA256SUMS.txt',
-    'latest.json'
-)
+$macMode = if ($env:CONTEXTTRACE_MACOS_RELEASE -eq '1') { '1' } elseif ([string]::IsNullOrEmpty($env:CONTEXTTRACE_MACOS_RELEASE) -or $env:CONTEXTTRACE_MACOS_RELEASE -eq '0') { '0' } else { throw 'CONTEXTTRACE_MACOS_RELEASE must be 0 or 1.' }
+$assetNames = @(node scripts/release/release-assets.cjs names $version $macMode | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to determine release assets.' }
 $stageDirectory = "C:\woodpecker-cache\contexttrace\release-assets\$Tag"
-if (-not (Test-Path -LiteralPath $stageDirectory -PathType Container)) {
-    throw "No staged release assets were found at '$stageDirectory'."
-}
-
-$files = Get-ChildItem -LiteralPath $stageDirectory -File
-$actualNames = @($files | ForEach-Object { $_.Name } | Sort-Object)
+& node scripts/release/release-assets.cjs verify $stageDirectory $Tag $macMode
+if ($LASTEXITCODE -ne 0) { throw 'Staged release verification failed.' }
 $expectedNames = @($assetNames | Sort-Object)
-if (Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames) {
-    throw "The staged directory must contain exactly these six assets: $($assetNames -join ', ')."
-}
-
-$checksums = Get-Content -LiteralPath (Join-Path $stageDirectory 'SHA256SUMS.txt')
 $expectedHashes = @{}
-foreach ($name in $assetNames | Where-Object { $_ -ne 'SHA256SUMS.txt' }) {
-    $entry = @($checksums | Where-Object { $_ -match ('^[0-9a-fA-F]{64} \*?' + [regex]::Escape($name) + '$') })
-    if ($entry.Count -ne 1) {
-        throw "SHA256SUMS.txt must contain exactly one checksum for '$name'."
-    }
-    $expectedHash = [regex]::Match($entry[0], '^[0-9a-fA-F]{64}').Value
-    $actualHash = (Get-FileHash -LiteralPath (Join-Path $stageDirectory $name) -Algorithm SHA256).Hash
-    if ($actualHash -ne $expectedHash) {
-        throw "The staged asset '$name' does not match SHA256SUMS.txt."
-    }
-    $expectedHashes[$name] = $actualHash.ToLowerInvariant()
-}
-$expectedHashes['SHA256SUMS.txt'] = (Get-FileHash -LiteralPath (Join-Path $stageDirectory 'SHA256SUMS.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
-
-$manifestPath = Join-Path $stageDirectory 'latest.json'
-$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$installerUrl = "https://github.com/$owner/$repository/releases/download/$Tag/$installerName"
-if ($manifest.version -ne $version -or $manifest.platforms.'windows-x86_64'.url -ne $installerUrl) {
-    throw 'latest.json does not match this tag and its versioned installer URL.'
-}
-$installerSignature = (Get-Content -LiteralPath (Join-Path $stageDirectory "$installerName.sig") -Raw).Trim()
-if ($manifest.platforms.'windows-x86_64'.signature -ne $installerSignature) {
-    throw 'latest.json installer signature does not match the staged .sig file.'
+foreach ($name in $assetNames) {
+    $expectedHashes[$name] = (Get-FileHash -LiteralPath (Join-Path $stageDirectory $name) -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
 $headers = @{
@@ -116,6 +81,9 @@ if ($tagObject.type -ne 'commit' -or [string]::IsNullOrWhiteSpace([string]$tagOb
     throw "GitHub tag '$Tag' does not resolve to a commit."
 }
 $targetCommit = [string]$tagObject.sha
+if ([string]::IsNullOrWhiteSpace($env:CI_COMMIT_SHA) -or $targetCommit -ne $env:CI_COMMIT_SHA) {
+    throw "GitHub tag '$Tag' no longer points to the Woodpecker commit."
+}
 $existingReleases = Invoke-RestMethod -Uri "$apiRoot/releases?per_page=100" -Headers $headers
 $existingRelease = @($existingReleases | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1)
 if ($existingRelease.Count -gt 0) {
@@ -125,7 +93,7 @@ if ($existingRelease.Count -gt 0) {
         tag_name = $Tag
         target_commitish = $targetCommit
         name = "ContextTrace $Tag"
-        body = "Windows x64 release. Woodpecker validation, packaging and asset integrity checks passed."
+        body = "ContextTrace release. Woodpecker validation, packaging and asset integrity checks passed."
         draft = $false
         prerelease = $true
         generate_release_notes = $false
@@ -189,7 +157,7 @@ foreach ($name in $assetNames) {
 $verifiedRelease = Invoke-RestMethod -Uri "$apiRoot/releases/$($release.id)" -Headers $headers
 $publishedNames = @($verifiedRelease.assets | ForEach-Object { $_.Name } | Sort-Object)
 if (Compare-Object -ReferenceObject $expectedNames -DifferenceObject $publishedNames) {
-    throw 'GitHub release does not contain the expected six release assets.'
+    throw 'GitHub release does not contain the expected release assets.'
 }
 foreach ($asset in $verifiedRelease.assets) {
     if ($asset.digest -ne "sha256:$($expectedHashes[[string]$asset.name])") {
@@ -235,4 +203,4 @@ if ($null -eq $latestRelease -or $latestRelease.tag_name -ne $Tag) {
     $latestTag = if ($null -eq $latestRelease) { 'unavailable' } else { [string]$latestRelease.tag_name }
     throw "GitHub's stable updater feed still points to '$latestTag' instead of '$Tag'."
 }
-Write-Host "Stable release published and all six assets verified: $($verifiedRelease.html_url)"
+Write-Host "Stable release published and all assets verified: $($verifiedRelease.html_url)"

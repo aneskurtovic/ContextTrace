@@ -94,3 +94,31 @@ post-publication acceptance pass; they do not control release creation. The
 unsigned development installer can trigger SmartScreen; do not describe a
 release as signed unless Windows reports a valid Authenticode signature and
 the updater's Tauri signature also verifies.
+
+## Optional macOS release inputs
+
+Windows-only remains the default. The optional macOS path has not yet been
+exercised on native Macs or in a release pipeline; do not enable it until the
+infrastructure, signing and acceptance gates below are met. Follow the native
+preparation procedure in [macOS port notes](MACOS.md) for each architecture at
+the exact commit and version intended for the tag. The updater key remains on
+the Windows runner, where final tag packaging signs the updater archives.
+
+Provision a trusted, access-controlled transfer to the Windows agent. Its
+intake root must contain exactly `arm64` and `x64` directories, each with its
+native `evidence.json`, DMG, CLI archive and updater app archive. Evidence
+records the commit, tag, architecture and SHA-256 for those files. A hash
+delivered alongside an artifact does not authenticate its origin; the transfer
+and native host must themselves be trusted. Configure both Woodpecker Windows
+packaging and publishing steps with `CONTEXTTRACE_MACOS_RELEASE=1` and the same
+absolute `CONTEXTTRACE_MACOS_INTAKE_DIR`. The live workflow does not provision
+these settings or a Mac runner. Missing or mismatched inputs fail the opt-in
+path. Retrying a tag requires the same mode and matching inputs.
+
+The Windows pipeline assembles the artifacts, signs and verifies the updater
+archives, checks staged checksums and version-pinned feed entries for
+`darwin-aarch64` and `darwin-x86_64`, publishes, and verifies uploaded asset
+digests. See the [Tauri updater format](https://v2.tauri.app/plugin/updater/).
+Native build evidence and separate clean-host installation, Gatekeeper and
+updater acceptance on both architectures remain distinct from Woodpecker
+results. Development handoffs are not release inputs.

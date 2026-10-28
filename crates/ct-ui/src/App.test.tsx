@@ -850,7 +850,7 @@ describe("desktop accessibility and state handling", () => {
     expect(document.querySelector(".app-shell")?.getAttribute("data-theme")).toBe("light");
     expect(screen.getByRole("button", { name: "Switch to dark theme" })).not.toBeNull();
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
     expect(await screen.findByRole("dialog", { name: "Command palette" })).not.toBeNull();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
@@ -1441,6 +1441,19 @@ describe('notifications', () => {
     expect(drawer.querySelectorAll('.os-delivered')).toHaveLength(0);
   });
 
+  it('does not claim macOS notification permission is granted', async () => {
+    mockedApi.getNotificationStatus.mockResolvedValue({
+      ...demoNotificationStatus,
+      osPermission: 'unknown',
+      deliverability: { state: 'ready', appId: 'dev.contexttrace.desktop' },
+      obstacle: null,
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByText('OS: permission unknown')).not.toBeNull();
+  });
+
   it('reports a real outcome for a test notification instead of assuming one', async () => {
     render(<App />);
 
@@ -1461,6 +1474,13 @@ describe('notifications', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
 
     expect(await screen.findByText(/no installed shortcut carries the app id/)).not.toBeNull();
+    mockedApi.sendTestNotification.mockResolvedValue({
+      delivered: true,
+      reason: null,
+      deliverability: { state: 'ready', appId: 'dev.contexttrace.desktop' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
+    expect(await screen.findByText(/Notification submitted to the operating system/)).not.toBeNull();
   });
 
   it('explains an empty settings panel instead of redrawing the feed', async () => {

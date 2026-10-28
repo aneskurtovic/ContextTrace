@@ -486,7 +486,7 @@ export type NotificationRuleId =
 
 export type NotificationSeverity = 'info' | 'warning' | 'critical';
 export type NotificationDelivery = 'off' | 'feed' | 'feedAndOs';
-export type NotificationPermission = 'granted' | 'denied' | 'prompt' | 'unsupported';
+export type NotificationPermission = 'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown';
 
 export interface NotificationRuleSetting {
   delivery: NotificationDelivery;

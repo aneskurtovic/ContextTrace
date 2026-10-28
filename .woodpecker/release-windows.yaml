@@ -3,6 +3,9 @@
 # The tag-only workflow runs on the existing self-hosted Windows local agent.
 # It waits for the tagged commit's Woodpecker push checks on main, creates the
 # signed assets, then publishes and verifies them on the Windows runner.
+# The trusted runner may provision CONTEXTTRACE_MACOS_RELEASE=1 and
+# CONTEXTTRACE_MACOS_INTAKE_DIR in its process environment for both steps.
+# Absent that explicit opt-in, the existing Windows-only release is used.
 
 labels:
   platform: windows/amd64

@@ -6,9 +6,7 @@
 #
 # Linux is now verified for everything except `ct-ui`: `.woodpecker/rust.yaml`
 # formats, lints, tests and MSRV-checks the workspace there on every push. The
-# tree needed no change for that, because it contains no `#[cfg(windows)]`.
-# `ct-ui` is Windows-only in CI by choice, not by limitation -- it links a real
-# WebView2 application through Tauri, and this project ships only for Windows.
-# macOS remains unbuilt and untested. See docs/CI.md.
+# `ct-ui` is validated in the Windows lane; macOS native validation remains
+# outstanding. See docs/CI.md and docs/MACOS.md.
 channel = "stable"
 components = ["rustfmt", "clippy"]

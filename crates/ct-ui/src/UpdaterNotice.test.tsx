@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import UpdaterNotice from "./UpdaterNotice";
 
 const mocks = vi.hoisted(() => ({
@@ -59,6 +59,18 @@ describe("desktop updater notice", () => {
 
     expect(screen.getByText("ContextTrace 0.1.3 is ready")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Install update" })).not.toBeNull();
+  });
+
+  it("offers a restart after an update is installed", async () => {
+    const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
+    mocks.check.mockResolvedValue({ version: "0.1.3", close: vi.fn(), downloadAndInstall });
+    render(<UpdaterNotice />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1800); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Install update" })); });
+    expect(downloadAndInstall).toHaveBeenCalledOnce();
+    expect(screen.getByText("Restart ContextTrace to use the new version.")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Restart now" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("restart_after_update");
   });
 
   it("does not run the installer updater from a portable build", async () => {

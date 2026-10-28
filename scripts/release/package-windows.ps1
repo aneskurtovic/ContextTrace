@@ -51,57 +51,51 @@ $stageRoot = Join-Path $cacheRoot 'release-assets'
 $publishedStage = Join-Path $stageRoot $tag
 $assetPrefix = "ContextTrace-$version-windows-x64"
 $installerName = "$assetPrefix-setup.exe"
-$assetNames = @(
-    $installerName,
-    "$installerName.sig",
-    "$assetPrefix-portable.zip",
-    "$assetPrefix-cli.zip",
-    'SHA256SUMS.txt',
-    'latest.json'
-)
+$macMode = if ($env:CONTEXTTRACE_MACOS_RELEASE -eq '1') { '1' } elseif ([string]::IsNullOrEmpty($env:CONTEXTTRACE_MACOS_RELEASE) -or $env:CONTEXTTRACE_MACOS_RELEASE -eq '0') { '0' } else { throw 'CONTEXTTRACE_MACOS_RELEASE must be 0 or 1.' }
+if ($macMode -eq '1' -and [string]::IsNullOrWhiteSpace($env:CONTEXTTRACE_MACOS_INTAKE_DIR)) { throw 'Mac release intake directory is required when enabled.' }
+$assetNames = @(node scripts/release/release-assets.cjs names $version $macMode | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to determine release assets.' }
+
 
 # Retrying a tag must reuse the exact updater manifest and archives already
 # uploaded for that release. In particular, latest.json contains pub_date, so
 # rebuilding it would produce a different digest and make safe retries fail.
 if (Test-Path -LiteralPath $publishedStage -PathType Container) {
     try {
-        $existingFiles = Get-ChildItem -LiteralPath $publishedStage -File
-        $actualNames = @($existingFiles | ForEach-Object { $_.Name } | Sort-Object)
-        $expectedNames = @($assetNames | Sort-Object)
-        if (Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames) {
-            throw 'The existing staged release does not contain exactly the expected files.'
-        }
-
-        $checksums = Get-Content -LiteralPath (Join-Path $publishedStage 'SHA256SUMS.txt')
-        foreach ($name in $assetNames | Where-Object { $_ -ne 'SHA256SUMS.txt' }) {
-            $entry = @($checksums | Where-Object { $_ -match ('^[0-9a-fA-F]{64} \*?' + [regex]::Escape($name) + '$') })
-            if ($entry.Count -ne 1) {
-                throw "The existing SHA256SUMS.txt must contain exactly one checksum for '$name'."
-            }
-            $expectedHash = [regex]::Match($entry[0], '^[0-9a-fA-F]{64}').Value
-            $actualHash = (Get-FileHash -LiteralPath (Join-Path $publishedStage $name) -Algorithm SHA256).Hash
-            if ($actualHash -ne $expectedHash) {
-                throw "The existing staged asset '$name' does not match SHA256SUMS.txt."
-            }
-        }
-
-        $manifest = Get-Content -LiteralPath (Join-Path $publishedStage 'latest.json') -Raw | ConvertFrom-Json
-        $expectedInstallerUrl = "https://github.com/aneskurtovic/ContextTrace/releases/download/$tag/$installerName"
-        $stagedSignature = (Get-Content -LiteralPath (Join-Path $publishedStage "$installerName.sig") -Raw).Trim()
-        if ($manifest.version -ne $version -or $manifest.platforms.'windows-x86_64'.url -ne $expectedInstallerUrl -or $manifest.platforms.'windows-x86_64'.signature -ne $stagedSignature) {
-            throw 'The existing updater manifest does not match the staged tag, installer URL and signature.'
+        & node scripts/release/release-assets.cjs verify $publishedStage $tag $macMode
+        if ($LASTEXITCODE -ne 0) { throw 'Existing staged assets failed verification.' }
+        # Recheck the trusted intake against cached native files on every retry.
+        if ($macMode -eq '1') {
+            $retryIntake = Join-Path $stageRoot (".intake-" + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $retryIntake | Out-Null
+            try {
+                $commit = (git rev-parse HEAD).Trim().ToLowerInvariant()
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($env:CI_COMMIT_SHA) -or $commit -ne $env:CI_COMMIT_SHA.ToLowerInvariant()) { throw 'Checkout does not match Woodpecker commit.' }
+                & node scripts/release/release-assets.cjs intake $env:CONTEXTTRACE_MACOS_INTAKE_DIR $retryIntake $tag $commit
+                if ($LASTEXITCODE -ne 0) { throw 'Mac intake verification failed.' }
+                foreach ($file in Get-ChildItem -LiteralPath $retryIntake -File) {
+                    if ((Get-FileHash -LiteralPath $file.FullName).Hash -ne (Get-FileHash -LiteralPath (Join-Path $publishedStage $file.Name)).Hash) { throw 'Cached macOS artifact differs from trusted intake.' }
+                }
+            } finally { Remove-Item -LiteralPath $retryIntake -Recurse -Force }
         }
 
         Write-Host "Reusing the checksum-verified release assets already staged at $publishedStage."
         exit 0
     } catch {
-        Write-Warning "Existing staged release is invalid and will be rebuilt: $($_.Exception.Message)"
+        throw "Existing staged release cannot be reused: $($_.Exception.Message)"
     }
 }
 
 $stagingRoot = Join-Path $stageRoot '.staging'
 $stage = Join-Path $stagingRoot "$tag-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+if ($macMode -eq '1') {
+    $commit = (git rev-parse HEAD).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($env:CI_COMMIT_SHA) -or $commit -ne $env:CI_COMMIT_SHA.ToLowerInvariant()) { throw 'Checkout does not match Woodpecker commit.' }
+    & node scripts/release/release-assets.cjs intake $env:CONTEXTTRACE_MACOS_INTAKE_DIR $stage $tag $commit
+    if ($LASTEXITCODE -ne 0) { throw 'Mac intake verification failed.' }
+}
 
 Write-Host "Building ContextTrace $version on the Windows Woodpecker agent."
 & npm ci --prefix crates/ct-ui
@@ -121,6 +115,13 @@ try {
     $env:TAURI_SIGNING_PRIVATE_KEY = $updaterSigningKey
     & .\node_modules\.bin\tauri.cmd bundle --bundles nsis --ci
     if ($LASTEXITCODE -ne 0) { throw "Tauri bundling failed with exit code $LASTEXITCODE." }
+    if ($macMode -eq '1') {
+        foreach ($arch in @('arm64', 'x64')) {
+            $archive = Join-Path $stage "ContextTrace-$version-macos-$arch-updater.app.tar.gz"
+            & .\node_modules\.bin\tauri.cmd signer sign (Resolve-Path -LiteralPath $archive).Path
+            if ($LASTEXITCODE -ne 0) { throw "Updater signing failed for $arch." }
+        }
+    }
 }
 finally {
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
@@ -176,17 +177,17 @@ Compress-Archive -Path (Join-Path $cliStage '*') -DestinationPath (Join-Path $st
 Remove-Item -LiteralPath $cliStage -Recurse -Force
 
 $signature = (Get-Content -LiteralPath (Join-Path $stage "$assetPrefix-setup.exe.sig") -Raw).Trim()
-$latest = @{
-    version = $version
-    notes = "ContextTrace $version"
-    pub_date = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-    platforms = @{
-        'windows-x86_64' = @{
-            signature = $signature
-            url = "https://github.com/aneskurtovic/ContextTrace/releases/download/v$version/$assetPrefix-setup.exe"
-        }
+$platforms = @{
+    'windows-x86_64' = @{ signature = $signature; url = "https://github.com/aneskurtovic/ContextTrace/releases/download/$tag/$installerName" }
+}
+if ($macMode -eq '1') {
+    foreach ($entry in @(@('arm64', 'darwin-aarch64'), @('x64', 'darwin-x86_64'))) {
+        $archiveName = "ContextTrace-$version-macos-$($entry[0])-updater.app.tar.gz"
+        $platforms[$entry[1]] = @{ signature = (Get-Content -LiteralPath (Join-Path $stage "$archiveName.sig") -Raw).Trim(); url = "https://github.com/aneskurtovic/ContextTrace/releases/download/$tag/$archiveName" }
     }
-} | ConvertTo-Json -Depth 5
+}
+$latest = @{ version = $version; notes = "ContextTrace $version"; pub_date = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); platforms = $platforms } | ConvertTo-Json -Depth 5
+
 [System.IO.File]::WriteAllText(
     (Join-Path $stage 'latest.json'),
     $latest,
@@ -198,9 +199,11 @@ $checksums = Get-ChildItem -LiteralPath $stage -File | Sort-Object Name | ForEac
 }
 Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Value $checksums -Encoding ascii
 
+& node scripts/release/release-assets.cjs verify $stage $tag $macMode
+if ($LASTEXITCODE -ne 0) { throw 'Staged release verification failed.' }
+
 if (Test-Path -LiteralPath $publishedStage) {
-    Write-Host "Replacing the previous incomplete or superseded release output: $publishedStage"
-    Remove-Item -LiteralPath $publishedStage -Recurse -Force
+    throw "Release output already exists: $publishedStage"
 }
 New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
 Move-Item -LiteralPath $stage -Destination $publishedStage

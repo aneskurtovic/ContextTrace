@@ -93,11 +93,10 @@ impl Default for FileArchiveStore {
 /// See [`default_root`].
 const WINDOWS_ARCHIVE_DIR: &str = "ContextTrace-archive";
 
-/// `%LOCALAPPDATA%\ContextTrace-archive` on Windows, `$XDG_DATA_HOME` or
-/// `~/.local/share` elsewhere. Checked in this order without `cfg(windows)`
-/// gating, matching [`crate::home_dir`]'s style: `LOCALAPPDATA` is simply
-/// unset on platforms where it does not apply, so the fallbacks are reached
-/// there without needing a compile-time split.
+/// `%LOCALAPPDATA%\ContextTrace-archive` on Windows and
+/// `~/Library/Application Support/ContextTrace/archive` on macOS.
+/// Other systems use `$XDG_DATA_HOME` or `~/.local/share`.
+/// On macOS an existing legacy archive is retained in place.
 ///
 /// # Why not `%LOCALAPPDATA%\ContextTrace\archive`
 ///
@@ -125,6 +124,15 @@ fn default_root() -> PathBuf {
     if let Some(dir) = std::env::var_os("CONTEXTTRACE_ARCHIVE") {
         return PathBuf::from(dir);
     }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = home_dir() {
+        let legacy = std::env::var_os("XDG_DATA_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local/share"))
+            .join("contexttrace/archive");
+        return macos_archive_root(&home, &legacy);
+    }
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         return PathBuf::from(local).join(WINDOWS_ARCHIVE_DIR);
     }
@@ -142,6 +150,55 @@ fn default_root() -> PathBuf {
     // working directory is a worse default than any of the above, but it is
     // still a place, which is what every other branch here promises to return.
     PathBuf::from("contexttrace-archive")
+}
+
+// Preserve archives written by older source builds, including their notification
+// state. Never move or merge potentially unique user data during startup.
+#[cfg(any(target_os = "macos", test))]
+fn macos_archive_root(home: &Path, legacy: &Path) -> PathBuf {
+    let current = home.join("Library/Application Support/ContextTrace/archive");
+    if current.exists() || !legacy.is_dir() {
+        current
+    } else {
+        legacy.to_path_buf()
+    }
+}
+
+#[cfg(test)]
+mod macos_path_tests {
+    use super::*;
+
+    #[test]
+    fn new_mac_install_uses_application_support_and_preserves_legacy_archive() {
+        let root = std::env::temp_dir().join(format!(
+            "ct-macos-path-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let legacy = root.join(".local/share/contexttrace/archive");
+        assert_eq!(
+            macos_archive_root(&root, &legacy),
+            root.join("Library/Application Support/ContextTrace/archive")
+        );
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("manifest.ndjson"), "preserved").unwrap();
+        assert_eq!(macos_archive_root(&root, &legacy), legacy);
+        assert_eq!(
+            fs::read_to_string(legacy.join("manifest.ndjson")).unwrap(),
+            "preserved"
+        );
+        let current = root.join("Library/Application Support/ContextTrace/archive");
+        fs::create_dir_all(&current).unwrap();
+        assert_eq!(macos_archive_root(&root, &legacy), current);
+        assert_eq!(
+            fs::read_to_string(legacy.join("manifest.ndjson")).unwrap(),
+            "preserved"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 /// Turn a session id into a filesystem-safe path component.

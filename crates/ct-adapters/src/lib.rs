@@ -50,13 +50,16 @@ pub use tokenizers::{HeuristicEstimator, TiktokenEstimator};
 
 use std::path::PathBuf;
 
-/// Resolve a user's home directory without pulling in a dependency for it.
-///
-/// Checks `USERPROFILE` then `HOME`, so it works under both native Windows and
-/// the Git Bash/MSYS environments this project is developed in.
+/// Resolve the home directory using the native platform's conventional variable.
+/// Ignore empty values so a usable fallback is not shadowed.
 pub(crate) fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
+    #[cfg(windows)]
+    let variables = ["USERPROFILE", "HOME"];
+    #[cfg(not(windows))]
+    let variables = ["HOME", "USERPROFILE"];
+    variables.into_iter().find_map(|name| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
 }

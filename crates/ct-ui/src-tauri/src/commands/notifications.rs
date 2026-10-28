@@ -496,7 +496,13 @@ pub fn get_notification_status(
     state: tauri::State<'_, NotificationState>,
 ) -> NotificationStatusDto {
     let deliverability = state.deliverability(&app).clone();
-    let permission = permission_label(app.notification().permission_state());
+    // The desktop plugin returns Granted unconditionally, including macOS.
+    // Keep the established Windows behavior, but do not claim macOS permission.
+    let permission = if cfg!(target_os = "macos") {
+        "unknown"
+    } else {
+        permission_label(app.notification().permission_state())
+    };
     let status = state.status();
     NotificationStatusDto {
         monitoring: status.running,

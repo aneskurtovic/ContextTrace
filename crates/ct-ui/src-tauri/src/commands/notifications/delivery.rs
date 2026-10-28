@@ -1,4 +1,5 @@
-//! Windows toast delivery, and whether this build can perform it at all.
+//! Native notification delivery and whether this build can perform it at all.
+//! macOS uses the plugin's notify-rust backend directly to retain send errors.
 //!
 //! # Why this is not `tauri_plugin_notification`
 //!
@@ -64,16 +65,13 @@ pub enum Deliverability {
     /// because the usual shape of this state is a build run out of a Cargo
     /// target directory on a machine where the app was never installed, and
     /// naming the directory is what makes the message actionable.
+    #[cfg(any(windows, test))]
     #[serde(rename_all = "camelCase")]
     Unregistered {
         app_id: String,
         exe_dir: Option<String>,
     },
-    /// Not Windows. The desktop ships for Windows only; this arm exists so the
-    /// crate still compiles and reports honestly elsewhere. Absent on Windows
-    /// rather than merely unreachable there: a state that cannot occur should
-    /// not be representable, and leaving it in would also be the one variant
-    /// nothing ever constructs on the platform that ships.
+    /// Unsupported platform or a macOS executable outside its app bundle.
     #[cfg(not(windows))]
     Unsupported,
 }
@@ -85,6 +83,7 @@ impl Deliverability {
     pub fn obstacle(&self) -> Option<String> {
         match self {
             Deliverability::Ready { .. } => None,
+            #[cfg(any(windows, test))]
             Deliverability::Unregistered { app_id, exe_dir } => {
                 let running = exe_dir
                     .as_deref()
@@ -98,9 +97,11 @@ impl Deliverability {
                 ))
             }
             #[cfg(not(windows))]
-            Deliverability::Unsupported => {
-                Some("OS notifications are supported on Windows only.".into())
-            }
+            Deliverability::Unsupported => Some(if cfg!(target_os = "macos") {
+                "Launch the ContextTrace .app bundle to enable OS notifications.".into()
+            } else {
+                "OS notifications are supported on Windows and macOS only.".into()
+            }),
         }
     }
 }
@@ -135,10 +136,36 @@ fn show(app_id: &str, title: &str, body: &str) -> ct_domain::OsDeliveryStatus {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn show(app_id: &str, title: &str, body: &str) -> ct_domain::OsDeliveryStatus {
+    // Use our bundle identity, never Terminal's. A successful submission is
+    // not proof the user saw a banner (Focus and system settings can hide it).
+    // The backend allows this operation only once per process, including on
+    // failure. Cache the result so subsequent sends retain the same outcome.
+    static APPLICATION: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    if let Err(reason) = APPLICATION
+        .get_or_init(|| notify_rust::set_application(app_id).map_err(|error| error.to_string()))
+    {
+        return ct_domain::OsDeliveryStatus::Failed {
+            reason: reason.clone(),
+        };
+    }
+    match notify_rust::Notification::new()
+        .summary(title)
+        .body(body)
+        .show()
+    {
+        Ok(_) => ct_domain::OsDeliveryStatus::Delivered,
+        Err(error) => ct_domain::OsDeliveryStatus::Failed {
+            reason: error.to_string(),
+        },
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn show(_app_id: &str, _title: &str, _body: &str) -> ct_domain::OsDeliveryStatus {
     ct_domain::OsDeliveryStatus::Failed {
-        reason: "OS notifications are supported on Windows only.".into(),
+        reason: "OS notifications are supported on Windows and macOS only.".into(),
     }
 }
 
@@ -166,7 +193,37 @@ pub fn deliverability(app_id: &str, product_name: &str) -> Deliverability {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn deliverability(app_id: &str, _product_name: &str) -> Deliverability {
+    if std::env::current_exe()
+        .ok()
+        .is_some_and(|exe| is_macos_bundle_executable(&exe))
+    {
+        Deliverability::Ready {
+            app_id: app_id.into(),
+        }
+    } else {
+        Deliverability::Unsupported
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn is_macos_bundle_executable(exe: &Path) -> bool {
+    let Some(macos) = exe.parent() else {
+        return false;
+    };
+    let Some(contents) = macos.parent() else {
+        return false;
+    };
+    let Some(bundle) = contents.parent() else {
+        return false;
+    };
+    macos.file_name().is_some_and(|name| name == "MacOS")
+        && contents.file_name().is_some_and(|name| name == "Contents")
+        && bundle.extension().is_some_and(|ext| ext == "app")
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn deliverability(_app_id: &str, _product_name: &str) -> Deliverability {
     Deliverability::Unsupported
 }
@@ -178,6 +235,7 @@ pub fn deliverability(_app_id: &str, _product_name: &str) -> Deliverability {
 /// the parent directory's name rather than on the string `target` anywhere in
 /// the path, so a user who installs into `C:\target\release of tools` is not
 /// told they are running a development build.
+#[cfg(any(windows, test))]
 fn is_cargo_target_dir(dir: &Path) -> bool {
     let named = |path: Option<&Path>, name: &str| {
         path.and_then(Path::file_name)
@@ -273,7 +331,7 @@ mod tests {
     fn an_unregistered_app_id_is_named_and_a_build_directory_is_added_when_there_is_one() {
         let from_a_build = Deliverability::Unregistered {
             app_id: "dev.contexttrace.desktop".into(),
-            exe_dir: Some("C:\\work\\target\\debug".into()),
+            exe_dir: Some("work/target/debug".into()),
         }
         .obstacle()
         .expect("an obstacle to explain");
@@ -282,7 +340,7 @@ mod tests {
             "{from_a_build:?} does not say which identity failed"
         );
         assert!(
-            from_a_build.contains("C:\\work\\target\\debug"),
+            from_a_build.contains("work/target/debug"),
             "{from_a_build:?} does not say where it is running from"
         );
 
@@ -353,20 +411,36 @@ mod tests {
 
     #[test]
     fn cargo_target_layouts_are_recognised_and_lookalikes_are_not() {
-        assert!(is_cargo_target_dir(Path::new("C:\\work\\target\\debug")));
-        assert!(is_cargo_target_dir(Path::new("C:\\work\\target\\release")));
+        assert!(is_cargo_target_dir(Path::new("work/target/debug")));
+        assert!(is_cargo_target_dir(Path::new("work/target/release")));
         assert!(
-            !is_cargo_target_dir(Path::new("C:\\Users\\me\\AppData\\Local\\ContextTrace")),
+            !is_cargo_target_dir(Path::new("Users/me/AppData/Local/ContextTrace")),
             "the installed location is not a build directory"
         );
         assert!(
-            !is_cargo_target_dir(Path::new("C:\\target\\release of tools")),
+            !is_cargo_target_dir(Path::new("target/release of tools")),
             "'target' earlier in the path is not a Cargo layout"
         );
         assert!(
-            !is_cargo_target_dir(Path::new("C:\\work\\debug")),
+            !is_cargo_target_dir(Path::new("work/debug")),
             "a debug directory with no target parent is not a Cargo layout"
         );
+    }
+
+    #[test]
+    fn mac_notifications_require_a_bundle_executable() {
+        assert!(is_macos_bundle_executable(Path::new(
+            "/Applications/ContextTrace.app/Contents/MacOS/context-trace"
+        )));
+        assert!(!is_macos_bundle_executable(Path::new(
+            "/tmp/target/release/context-trace"
+        )));
+        assert!(!is_macos_bundle_executable(Path::new(
+            "/tmp/ContextTrace.app/context-trace"
+        )));
+        assert!(!is_macos_bundle_executable(Path::new(
+            "/tmp/ContextTrace/Contents/MacOS/context-trace"
+        )));
     }
 
     #[test]

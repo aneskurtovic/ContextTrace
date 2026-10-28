@@ -63,7 +63,9 @@ What runs today:
 
 ## Install
 
-Windows x64 is the supported surface. After a stable release is published,
+Windows x64 is the supported surface. A [macOS port](docs/MACOS.md) is in
+development, with native build instructions and outstanding validation gates.
+After a stable release is published,
 install the latest desktop version for the current user from PowerShell:
 
 ```powershell

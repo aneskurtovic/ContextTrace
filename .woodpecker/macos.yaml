@@ -1,0 +1,16 @@
+# Opt-in until a trusted native Mac agent is provisioned. Never runs PR code.
+# The agent must advertise platform=darwin/arm64 and backend=local.
+when:
+  - event: manual
+    branch: main
+    evaluate: 'MACOS_VALIDATE == "true"'
+
+labels:
+  platform: darwin/arm64
+  backend: local
+
+steps:
+  - name: native-macos-validation
+    image: /bin/bash
+    commands:
+      - bash scripts/ci/check-macos.sh

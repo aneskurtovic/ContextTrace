@@ -1,5 +1,9 @@
 # Continuous integration
 
+The opt-in native macOS development workflow and its runner requirements are
+documented in [the macOS port notes](MACOS.md). Mac release acceptance remains
+outstanding and is separate from Windows CI results.
+
 ContextTrace uses Linux jobs for portable Rust/frontend checks and a Windows
 job for the native Tauri/MSVC build and Windows-specific CLI smoke tests. The
 Windows job is limited to trusted repository events; do not enable untrusted

@@ -1021,7 +1021,7 @@ const notificationRuleIds: NotificationRuleId[] = [
 const notificationRuleIdSet = new Set(notificationRuleIds);
 const notificationSeverities = new Set(['info', 'warning', 'critical']);
 const notificationDeliveries = new Set(['off', 'feed', 'feedAndOs']);
-const notificationPermissions = new Set(['granted', 'denied', 'prompt', 'unsupported']);
+const notificationPermissions = new Set(['granted', 'denied', 'prompt', 'unsupported', 'unknown']);
 
 function isNotificationRuleId(value: unknown): value is NotificationRuleId {
   return typeof value === 'string' && notificationRuleIdSet.has(value as NotificationRuleId);

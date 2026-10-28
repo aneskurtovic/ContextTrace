@@ -101,6 +101,12 @@ steps:
     commands:
       - npm ci --prefix crates/ct-ui
 
+  - name: release-asset-tests
+    image: *shell
+    environment: *windows_env
+    commands:
+      - node --test scripts/release/release-assets.test.cjs
+
   - name: desktop
     image: *shell
     environment: *windows_env

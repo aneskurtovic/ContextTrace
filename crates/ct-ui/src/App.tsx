@@ -3810,7 +3810,7 @@ const NOTIFICATION_RULES: Array<{
 function osDeliveryLabel(status: NotificationStatus): string {
   switch (status.deliverability.state) {
     case 'ready':
-      return status.osPermission === 'denied' ? 'denied' : 'ready';
+      return status.osPermission === 'denied' ? 'denied' : status.osPermission === 'unknown' ? 'permission unknown' : 'ready';
     case 'unregistered':
       return 'app not installed';
     case 'unsupported':
@@ -3852,7 +3852,7 @@ function NotificationDeliveryTest() {
       {result && (
         <p className={result.delivered ? 'delivery-result' : 'delivery-result failed'} role='status'>
           {result.delivered
-            ? 'Windows accepted the toast. If nothing appeared, check Windows notification settings for ContextTrace.'
+            ? 'Notification submitted to the operating system. If nothing appeared, check your notification settings and Focus mode.'
             : result.reason ?? 'No notification was sent.'}
         </p>
       )}
@@ -5467,7 +5467,7 @@ export default function App() {
         <button className="command-trigger" type="button" onClick={openPalette} aria-haspopup="dialog">
           <span aria-hidden="true">⌕</span>
           <span>Commands and navigation…</span>
-          <kbd>Ctrl K</kbd>
+          <kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K"}</kbd>
         </button>
         <div className="topbar-actions">
           <button
