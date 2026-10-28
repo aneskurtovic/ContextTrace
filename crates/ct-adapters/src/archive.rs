@@ -221,6 +221,7 @@ impl Default for FileArchiveStore {
 ///
 /// A *sibling* of the desktop app's install directory, never a child of it.
 /// See [`default_root`].
+#[cfg(any(windows, test))]
 const WINDOWS_ARCHIVE_DIR: &str = "ContextTrace-archive";
 
 /// `%LOCALAPPDATA%\ContextTrace-archive` on Windows and

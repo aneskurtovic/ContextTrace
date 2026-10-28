@@ -2,7 +2,7 @@
 # Native development validation and handoff; not release evidence.
 set -euo pipefail
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo 'Linux x86_64 required.' >&2; exit 1; }
-for tool in node npm cargo rustup pkg-config dpkg-deb file sha256sum tar xvfb-run dbus-run-session timeout; do
+for tool in node npm cargo rustup pkg-config dpkg-deb file sha256sum tar xvfb-run dbus-run-session tauri-driver WebKitWebDriver; do
   command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
 done
 for package in webkit2gtk-4.1 gtk+-3.0 libsoup-3.0; do pkg-config --exists "$package" || { echo "Missing development package: $package" >&2; exit 1; }; done
@@ -23,12 +23,15 @@ cargo clippy -p ct-ui --release --features linux-updater --locked -- -D warnings
 npm test --prefix crates/ct-ui
 cargo build --release --locked -p ct-cli
 (cd crates/ct-ui && npm run tauri -- build --ci --config src-tauri/tauri.linux.conf.json -- --locked)
-# A process surviving a short headless session is a startup smoke, not desktop acceptance.
-set +e
-dbus-run-session -- xvfb-run -a timeout 10s "$CARGO_TARGET_DIR/release/context-trace"
-smoke=$?
-set -e
-[[ "$smoke" -eq 124 ]] || { echo "Desktop startup smoke exited unexpectedly: $smoke" >&2; exit 1; }
+# Use a disposable home, explicit roots, and a real WebKitWebDriver session.
+# WebKit refuses its sandbox as root in containers; disable it only for this
+# isolated CI smoke, never in the shipped application or a normal desktop.
+smoke_home="$work/smoke-home"
+mkdir -p "$smoke_home" "$work/smoke-config" "$work/smoke-data" "$work/smoke-cache" "$work/smoke-runtime" "$work/smoke-codex/sessions" "$work/smoke-claude" "$work/smoke-archive"
+chmod 700 "$work/smoke-runtime"
+smoke_env=("HOME=$smoke_home" "XDG_CONFIG_HOME=$work/smoke-config" "XDG_DATA_HOME=$work/smoke-data" "XDG_CACHE_HOME=$work/smoke-cache" "XDG_RUNTIME_DIR=$work/smoke-runtime" "CODEX_HOME=$work/smoke-codex" "CLAUDE_CONFIG_DIR=$work/smoke-claude" "CONTEXTTRACE_ARCHIVE=$work/smoke-archive")
+if [[ "$(id -u)" == 0 ]]; then smoke_env+=("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1"); fi
+env "${smoke_env[@]}" dbus-run-session -- xvfb-run -a node scripts/ci/smoke-linux-webdriver.mjs "$CARGO_TARGET_DIR/release/context-trace" "$work/smoke-archive" "$work/webdriver.png"
 cli="$CARGO_TARGET_DIR/release/ct"
 file "$cli" | grep -q 'x86-64' || { echo 'Wrong CLI architecture.' >&2; exit 1; }
 "$cli" --help >/dev/null

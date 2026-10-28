@@ -17,14 +17,15 @@ package names elsewhere):
 sudo apt-get update
 sudo apt-get install build-essential curl wget file pkg-config libwebkit2gtk-4.1-dev \
   libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
-  libfuse2 xdg-utils xvfb xauth dbus-x11
+  libfuse2 xdg-utils xvfb xauth dbus-x11 webkit2gtk-driver
+cargo install tauri-driver --version 2.1.0 --locked
 bash scripts/ci/check-linux.sh
 ```
 
 The script runs formatting, workspace tests and Clippy, the Linux updater feature
 release-profile Clippy check, frontend tests, and builds the CLI, deb and
-AppImage. It inspects package architecture and desktop entries, then performs
-a short headless startup smoke using Xvfb and a D-Bus session. Output is placed
+AppImage. It inspects package architecture and desktop entries, then uses WebKitWebDriver under Xvfb and D-Bus to check the rendered app shell
+and a real native startup IPC call in an isolated home. Output is placed
 in a new `target/linux-handoffs/x64.*` directory with SHA-256 hashes and build
 information. Fixture manifest checks require PowerShell and run in the existing
 Windows CI lane; run those separately as described in `CLAUDE.md` when available.

@@ -70,7 +70,7 @@ pub enum Deliverability {
         exe_dir: Option<String>,
     },
     /// Unsupported platform or a macOS executable outside its app bundle.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     Unsupported,
 }
 
@@ -94,7 +94,7 @@ impl Deliverability {
                      after that any build can deliver.{running}"
                 ))
             }
-            #[cfg(not(windows))]
+            #[cfg(not(any(windows, target_os = "linux")))]
             Deliverability::Unsupported => Some(if cfg!(target_os = "macos") {
                 "Launch the ContextTrace .app bundle to enable OS notifications.".into()
             } else {
@@ -111,14 +111,21 @@ pub fn deliver(
     body: &str,
     launch: &str,
 ) -> ct_domain::OsDeliveryStatus {
-    let Deliverability::Ready { app_id } = deliverability else {
-        return ct_domain::OsDeliveryStatus::Failed {
+    match deliverability {
+        Deliverability::Ready { app_id } => show(app_id, title, body, launch),
+        #[cfg(any(windows, test))]
+        Deliverability::Unregistered { .. } => ct_domain::OsDeliveryStatus::Failed {
             reason: deliverability
                 .obstacle()
                 .unwrap_or_else(|| "undeliverable".into()),
-        };
-    };
-    show(app_id, title, body, launch)
+        },
+        #[cfg(not(any(windows, target_os = "linux")))]
+        Deliverability::Unsupported => ct_domain::OsDeliveryStatus::Failed {
+            reason: deliverability
+                .obstacle()
+                .unwrap_or_else(|| "undeliverable".into()),
+        },
+    }
 }
 
 // The wrapper previously used here has no launch/activationType support.
@@ -175,9 +182,7 @@ fn show(_app_id: &str, title: &str, body: &str, _launch: &str) -> ct_domain::OsD
     // Tauri packages ContextTrace.desktop; the hint omits the suffix.
     match notify_rust::Notification::new()
         .appname("ContextTrace")
-        .hint(notify_rust::Hint::DesktopEntry(
-            linux_desktop_entry().into(),
-        ))
+        .hint(notify_rust::Hint::DesktopEntry("ContextTrace".into()))
         .summary(title)
         .body(body)
         .show()

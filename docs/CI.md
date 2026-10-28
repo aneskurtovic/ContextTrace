@@ -82,9 +82,10 @@ release pipelines and local corpus evidence.
 
 `linux-desktop` uses the configured `linux/amd64` Docker runner. It installs
 Debian 12 development dependencies, runs workspace and frontend checks, builds
-both deb and AppImage bundles, checks their architecture and runs a short
-Xvfb/D-Bus startup smoke. For a native development handoff, install Node 22.13+
-and Rust plus the packages listed in `.woodpecker/linux-desktop.yaml`, then run
+both deb and AppImage bundles, checks their architecture and uses WebKitWebDriver under Xvfb and D-Bus to
+check the rendered shell and native startup IPC in an isolated home. For a native development handoff, install Node 22.13+
+and Rust plus the packages listed in `.woodpecker/linux-desktop.yaml`, install
+`tauri-driver` 2.1.0 with `cargo install tauri-driver --version 2.1.0 --locked`, then run
 `bash scripts/ci/check-linux.sh`. Its checksummed artifacts under
 `target/linux-handoffs` are development output, not release evidence. Desktop
 behavior, distribution compatibility, install, uninstall and updater acceptance
