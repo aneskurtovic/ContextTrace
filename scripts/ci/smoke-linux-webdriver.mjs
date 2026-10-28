@@ -40,7 +40,7 @@ try {
   const deadline = Date.now() + 15000;
   while (true) {
     if (childError || child.exitCode !== null) throw childError || new Error(`tauri-driver exited: ${child.exitCode}`);
-    try { await request('GET', '/status', undefined, 1000); break; }
+    try { const status = await request('GET', '/status', undefined, 1000); if (status?.ready !== true) throw new Error('WebDriver is not ready'); break; }
     catch (error) { if (Date.now() >= deadline) throw new Error(`tauri-driver did not become ready: ${error.message}`); await delay(250); }
   }
   const created = await request('POST', '/session', {

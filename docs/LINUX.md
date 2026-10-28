@@ -1,8 +1,9 @@
 # Linux desktop builds
 
 Linux x86_64 packaging is in development. The build baseline is Debian 12;
-Ubuntu 22.04 is a target for separate acceptance, not a verified compatibility
-claim. Published Linux assets and clean-host acceptance are not yet available.
+Ubuntu 24.04 is a target for separate acceptance, not a verified compatibility
+claim. Debian 12 builds require glibc 2.36 or newer, including the AppImage;
+older distributions require a compatible older build base and separate validation. Published Linux assets and clean-host acceptance are not yet available.
 Windows remains the supported release surface. See [CI](CI.md) and the
 [release procedure](RELEASING.md) for the distinction between development
 artifacts, Woodpecker release verification and clean-host testing.
@@ -80,7 +81,7 @@ the release and acceptance gates pass.
 
 ## Separate acceptance
 
-On clean Debian 12 and Ubuntu 22.04 desktop hosts, record distribution,
+On clean Debian 12 and Ubuntu 24.04 desktop hosts, record distribution,
 desktop/session type, architecture, installed prerequisites and artifact hashes.
 Check deb install, app launch, log discovery for both agents, upgrade, removal
 and archive preservation. Separately run the AppImage, test its updater on a
