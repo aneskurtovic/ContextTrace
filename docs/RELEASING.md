@@ -138,3 +138,27 @@ digests. See the [Tauri updater format](https://v2.tauri.app/plugin/updater/).
 Native build evidence and separate clean-host installation, Gatekeeper and
 updater acceptance on both architectures remain distinct from Woodpecker
 results. Development handoffs are not release inputs.
+
+## Optional Linux release inputs
+
+Windows-only remains the default. Linux x86_64 release intake is opt-in and has
+not yet been exercised in a tag pipeline. On a trusted Debian 12 x86_64 host,
+install the prerequisites in `.woodpecker/linux-desktop.yaml` and run
+`bash scripts/release/prepare-linux.sh v<version> <commit> <new-absolute-output-directory>`
+from a clean checkout at the exact release commit. The output contains a deb,
+an AppImage, a CLI archive and `evidence.json` with their hashes. The deb has
+no built-in updater; the AppImage is built with the `linux-updater` feature.
+The updater signing key must remain on Windows. A checksum transferred alongside
+an artifact does not authenticate its origin: the host and transfer must be
+trusted. Configure both Windows packaging and publishing steps with
+`CONTEXTTRACE_LINUX_RELEASE=1` and the same absolute
+`CONTEXTTRACE_LINUX_INTAKE_DIR`; no host, transfer, or settings are provisioned
+by this repository. Retries require the same mode and matching inputs.
+
+The Windows tag pipeline first requires the `linux-desktop` push status to pass
+on the exact tagged commit, then validates the intake, signs the AppImage, generates a
+`linux-x86_64` feed entry, and checks staged and published digests. This does not
+prove Linux installation or updater behavior. Separately test the deb and
+AppImage on clean supported Linux desktops, including protocol registration,
+notifications, archive preservation, launch, upgrade and uninstall. Record
+these results independently from Woodpecker CI and Windows acceptance.

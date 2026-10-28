@@ -257,16 +257,19 @@ fn default_root() -> PathBuf {
     #[cfg(target_os = "macos")]
     if let Some(home) = home_dir() {
         let legacy = std::env::var_os("XDG_DATA_HOME")
-            .filter(|value| !value.is_empty())
+            .filter(|value| Path::new(value).is_absolute())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".local/share"))
             .join("contexttrace/archive");
         return macos_archive_root(&home, &legacy);
     }
+    #[cfg(windows)]
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         return PathBuf::from(local).join(WINDOWS_ARCHIVE_DIR);
     }
-    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+    if let Some(xdg) =
+        std::env::var_os("XDG_DATA_HOME").filter(|value| valid_xdg_data_home(Path::new(value)))
+    {
         return PathBuf::from(xdg).join("contexttrace").join("archive");
     }
     if let Some(home) = home_dir() {
@@ -280,6 +283,10 @@ fn default_root() -> PathBuf {
     // working directory is a worse default than any of the above, but it is
     // still a place, which is what every other branch here promises to return.
     PathBuf::from("contexttrace-archive")
+}
+
+fn valid_xdg_data_home(path: &Path) -> bool {
+    path.is_absolute()
 }
 
 // Preserve archives written by older source builds, including their notification
@@ -297,6 +304,14 @@ fn macos_archive_root(home: &Path, legacy: &Path) -> PathBuf {
 #[cfg(test)]
 mod macos_path_tests {
     use super::*;
+
+    #[test]
+    fn xdg_data_home_must_be_absolute() {
+        assert!(!valid_xdg_data_home(Path::new("")));
+        assert!(!valid_xdg_data_home(Path::new("relative/data")));
+        #[cfg(unix)]
+        assert!(valid_xdg_data_home(Path::new("/home/user/data")));
+    }
 
     #[test]
     fn new_mac_install_uses_application_support_and_preserves_legacy_archive() {

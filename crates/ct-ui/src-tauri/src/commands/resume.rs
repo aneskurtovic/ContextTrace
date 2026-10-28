@@ -67,7 +67,7 @@ fn executable(agent: AgentKind) -> Option<PathBuf> {
     if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
         directories.push(PathBuf::from(home).join(".local/bin"));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     directories.extend([
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
@@ -91,7 +91,25 @@ fn executable(agent: AgentKind) -> Option<PathBuf> {
                 })
             })
         })
-        .find(|path| path.is_file())
+        .find(|path| executable_file(path))
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
 }
 
 // PowerShell recognises typographic quotes as delimiters too. Keep those and
@@ -133,7 +151,8 @@ fn plan(
         None => Some("No working folder was recorded. Enter an existing local folder.".to_string()),
         Some(path) if !super::local_files::local_absolute(path) => Some("Enter an absolute local working folder.".to_string()),
         Some(path) if !Path::new(path).is_dir() => Some("The working folder is missing or inaccessible. Enter an existing folder.".to_string()),
-        _ if !cfg!(windows) => Some("Opening a resume terminal is currently supported on Windows. Copy the command instead.".to_string()),
+        _ if !cfg!(any(windows, target_os = "linux")) => Some("Opening a resume terminal is currently supported on Windows and Linux. Copy the command instead.".to_string()),
+        _ if cfg!(target_os = "linux") && linux_terminal().is_none() => Some("No supported terminal was found (gnome-terminal, konsole, or xterm). Copy the command instead.".to_string()),
         _ if executable.is_none() => Some(format!("{} was not found. Install its CLI or add it to PATH, then retry. You can also copy the command.", program(descriptor.agent))),
         _ => None,
     };
@@ -271,9 +290,76 @@ fn launch(plan: &ResumePlan, executable: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+// Only known terminal argument conventions are accepted. Never interpret
+// environment-provided terminal commands or interpolate a shell script.
+fn linux_terminal() -> Option<(PathBuf, &'static str)> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut directories: Vec<_> = std::env::var_os("PATH")
+            .map(|paths| {
+                std::env::split_paths(&paths)
+                    .filter(|path| path.is_absolute())
+                    .collect()
+            })
+            .unwrap_or_default();
+        directories.extend([
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+        ]);
+        for (name, separator) in [("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")] {
+            if let Some(path) = directories
+                .iter()
+                .map(|dir| dir.join(name))
+                .find(|path| executable_file(path))
+            {
+                return Some((path, separator));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_terminal_command(
+    plan: &ResumePlan,
+    executable: &Path,
+    terminal: &Path,
+    separator: &str,
+) -> Result<std::process::Command, String> {
+    let directory = plan
+        .directory
+        .as_deref()
+        .ok_or("Choose a working folder first.")?;
+    let agent = super::parse_agent(&plan.agent)?;
+    let mut command = std::process::Command::new(terminal);
+    command
+        .current_dir(directory)
+        .arg(separator)
+        .arg(executable);
+    match agent {
+        AgentKind::Codex => {
+            command.args(["resume", &plan.id, "--cd", directory]);
+        }
+        AgentKind::ClaudeCode => {
+            command.args(["--resume", &plan.id]);
+        }
+    }
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn launch(plan: &ResumePlan, executable: &Path) -> Result<(), String> {
+    let (terminal, separator) = linux_terminal().ok_or("No supported terminal was found.")?;
+    linux_terminal_command(plan, executable, &terminal, separator)?
+        .spawn()
+        .map_err(|error| format!("Could not open the resume terminal: {error}"))?;
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn launch(_plan: &ResumePlan, _executable: &Path) -> Result<(), String> {
-    Err("Opening a resume terminal is currently supported on Windows.".into())
+    Err("Opening a resume terminal is currently supported on Windows and Linux.".into())
 }
 
 #[tauri::command]
@@ -300,6 +386,60 @@ pub fn resume_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_cli_discovery_requires_an_executable_regular_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cli = dir.path().join("codex");
+        std::fs::write(&cli, b"stub").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!executable_file(&cli));
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(executable_file(&cli));
+        assert!(!executable_file(dir.path()));
+    }
+
+    #[test]
+    fn linux_terminal_passes_directory_and_agent_arguments_without_a_shell() {
+        let plan = ResumePlan {
+            agent: "codex".into(),
+            id: "12345678-1234-1234-1234-123456789abc".into(),
+            project: None,
+            directory: Some("/tmp/O'Brien; $(bad)".into()),
+            command: String::new(),
+            can_launch: true,
+            reason: None,
+            is_parent: false,
+        };
+        let cmd = linux_terminal_command(
+            &plan,
+            Path::new("/usr/bin/codex"),
+            Path::new("/usr/bin/xterm"),
+            "-e",
+        )
+        .unwrap();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "-e",
+                "/usr/bin/codex",
+                "resume",
+                &plan.id,
+                "--cd",
+                "/tmp/O'Brien; $(bad)"
+            ]
+        );
+        assert_eq!(
+            cmd.get_current_dir(),
+            Some(Path::new("/tmp/O'Brien; $(bad)"))
+        );
+    }
 
     #[cfg(windows)]
     #[test]

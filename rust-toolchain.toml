@@ -4,9 +4,7 @@
 # Windows-GNU pin stopped linking when the local LLVM-MinGW installation no
 # longer supplied GCC runtime libraries.
 #
-# Linux is now verified for everything except `ct-ui`: `.woodpecker/rust.yaml`
-# formats, lints, tests and MSRV-checks the workspace there on every push. The
-# `ct-ui` is validated in the Windows lane; macOS native validation remains
-# outstanding. See docs/CI.md and docs/MACOS.md.
+# Portable Rust checks and native Linux desktop builds have separate
+# Woodpecker workflows. See docs/CI.md and docs/MACOS.md for acceptance limits.
 channel = "stable"
 components = ["rustfmt", "clippy"]

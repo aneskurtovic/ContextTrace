@@ -4,7 +4,7 @@ The opt-in native macOS development workflow and its runner requirements are
 documented in [the macOS port notes](MACOS.md). Mac release acceptance remains
 outstanding and is separate from Windows CI results.
 
-ContextTrace uses Linux jobs for portable Rust/frontend checks and a Windows
+ContextTrace uses Linux jobs for portable Rust/frontend checks and native Linux desktop validation, and a Windows
 job for the native Tauri/MSVC build and Windows-specific CLI smoke tests. The
 Windows job is limited to trusted repository events; do not enable untrusted
 pull requests on any self-hosted runner that can access the host or secrets.
@@ -29,8 +29,8 @@ npm test --prefix crates/ct-ui
 npm run build --prefix crates/ct-ui
 ```
 
-The Linux Rust lane excludes `ct-ui`, whose native Tauri/WebView2 application
-is built on Windows. On Windows, also run the complete workspace gates:
+The Linux Rust lane excludes `ct-ui`; the separate `linux-desktop` lane builds
+the native Tauri application with GTK and WebKitGTK. On Windows, also run the complete workspace gates:
 
 ```powershell
 cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -77,3 +77,15 @@ the local single-worker frontend verification command. That diagnostic
 retry does not replace the configured Woodpecker frontend check. Pipeline
 results must be checked on the exact pushed commit, separately from older
 release pipelines and local corpus evidence.
+
+## Linux desktop lane
+
+`linux-desktop` uses the configured `linux/amd64` Docker runner. It installs
+Debian 12 development dependencies, runs workspace and frontend checks, builds
+both deb and AppImage bundles, checks their architecture and runs a short
+Xvfb/D-Bus startup smoke. For a native development handoff, install Node 22.13+
+and Rust plus the packages listed in `.woodpecker/linux-desktop.yaml`, then run
+`bash scripts/ci/check-linux.sh`. Its checksummed artifacts under
+`target/linux-handoffs` are development output, not release evidence. Desktop
+behavior, distribution compatibility, install, uninstall and updater acceptance
+still require separate clean Linux desktop hosts.

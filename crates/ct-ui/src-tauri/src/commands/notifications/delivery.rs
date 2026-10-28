@@ -98,7 +98,7 @@ impl Deliverability {
             Deliverability::Unsupported => Some(if cfg!(target_os = "macos") {
                 "Launch the ContextTrace .app bundle to enable OS notifications.".into()
             } else {
-                "OS notifications are supported on Windows and macOS only.".into()
+                "OS notifications are supported on Windows, macOS and Linux only.".into()
             }),
         }
     }
@@ -169,10 +169,30 @@ fn show(app_id: &str, title: &str, body: &str, _launch: &str) -> ct_domain::OsDe
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+fn show(_app_id: &str, title: &str, body: &str, _launch: &str) -> ct_domain::OsDeliveryStatus {
+    // The freedesktop notification service acknowledges submission, not display.
+    // Tauri packages ContextTrace.desktop; the hint omits the suffix.
+    match notify_rust::Notification::new()
+        .appname("ContextTrace")
+        .hint(notify_rust::Hint::DesktopEntry(
+            linux_desktop_entry().into(),
+        ))
+        .summary(title)
+        .body(body)
+        .show()
+    {
+        Ok(_) => ct_domain::OsDeliveryStatus::Delivered,
+        Err(error) => ct_domain::OsDeliveryStatus::Failed {
+            reason: error.to_string(),
+        },
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn show(_app_id: &str, _title: &str, _body: &str, _launch: &str) -> ct_domain::OsDeliveryStatus {
     ct_domain::OsDeliveryStatus::Failed {
-        reason: "OS notifications are supported on Windows and macOS only.".into(),
+        reason: "OS notifications are supported on Windows, macOS and Linux only.".into(),
     }
 }
 
@@ -247,7 +267,16 @@ fn is_macos_bundle_executable(exe: &Path) -> bool {
         && bundle.extension().is_some_and(|ext| ext == "app")
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+pub fn deliverability(app_id: &str, _product_name: &str) -> Deliverability {
+    // D-Bus submission is attempted directly; an unavailable service returns
+    // its error from show rather than being reported as successful delivery.
+    Deliverability::Ready {
+        app_id: app_id.into(),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub fn deliverability(_app_id: &str, _product_name: &str) -> Deliverability {
     Deliverability::Unsupported
 }
