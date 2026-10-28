@@ -51,7 +51,11 @@ precedence; the legacy archive is left untouched.
 Deleting the application must leave these directories intact.
 
 Session discovery uses the existing Codex and Claude Code adapters and home
-directory conventions. Command-K opens search.
+directory conventions. Command-K opens search. Local-file actions use the
+system opener; application bundles remain reveal-only. Resume displays a
+copyable POSIX shell command on macOS, but launching a terminal from the app
+remains Windows-only. macOS notifications do not yet support click-through to
+the associated session.
 
 ## Remaining release gates
 

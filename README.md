@@ -9,10 +9,10 @@ session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Status: source and the Windows 0.1.5 binary release are public.**
+> **Status: source and Windows releases are public.**
 > The CLI and Windows desktop app implement the discovery-to-diagnosis
-> workflow. Compatibility is limited to the persisted JSONL formats and
-> producer versions covered by committed fixtures. See [MVP status](docs/MVP-STATUS.md)
+> workflow. Context reconstruction and explicit stream imports have separate
+> contracts, limited to the surfaces and producer versions covered by fixtures. See [MVP status](docs/MVP-STATUS.md)
 > for current verification and release gates.
 
 ![ContextTrace dark overview showing prompt growth and the selected-turn snapshot with synthetic demonstration data](docs/images/desktop-overview-dark.png)
@@ -21,6 +21,12 @@ session.
 
 *The desktop app shows the same local-first measurements in dark and light
 themes. These screenshots use synthetic demonstration data.*
+
+The v0.1.16 release candidate adds request, archive and tool-accounting fixes, safer local-file
+handling, independent live refresh and browsing without usage metrics. See
+[release notes](docs/releases/v0.1.16.md), [current verification](docs/MVP-STATUS.md)
+and the [engineering backlog](docs/BACKLOG.md). Latest stable remains v0.1.15
+until the configured Windows runner returns and Woodpecker publishes v0.1.16.
 
 ## What it is
 
@@ -31,9 +37,15 @@ It is not a chat-history viewer. The workflow it exists for is:
 > understand the behaviour.
 
 Supported agents: **OpenAI Codex CLI** and **Anthropic Claude Code**.
-The supported input surface is their persisted local session JSONL; see the
+Context reconstruction uses their persisted local session JSONL; see the
 [format compatibility policy](docs/FORMAT-COMPATIBILITY.md) for versioned
-fixtures, limits and the update process.
+fixtures, limits and the update process. Saved Codex exec/app-server and Claude
+stdout captures have a separate [CLI timeline importer](docs/STREAM-IMPORTS.md);
+those streams do not expose complete request history.
+
+The [2026-10-07 format audit](docs/FORMAT-AUDIT-2026-10-07.md) records recent
+parser fixes and remaining coverage gaps. Maintainers should start with
+[HANDOFF.md](HANDOFF.md) for validation evidence and next steps.
 
 ## Features
 
@@ -44,6 +56,8 @@ What runs today:
 | Corpus summary | Where a month of sessions went, and what the totals could not measure | CLI + desktop |
 | Session transcript | What was actually said, with injected content and tool results in place | CLI + desktop |
 | Named sessions | Which session is which, from the log's own title or first prompt | CLI + desktop |
+| Project organization | Temporary workspaces grouped separately, with reversible project visibility preferences | Desktop |
+| Native session resume | Open a saved Codex or Claude Code conversation in a Windows terminal | Desktop |
 | Context composition | What filled a turn's context window, by category and confidence | CLI + desktop |
 | Largest contributors | Which items are biggest, ranked and named by what they acted on | CLI + desktop |
 | Item lifecycle tracing | When an item entered context, and when — or why — it left | CLI + desktop |
@@ -54,6 +68,7 @@ What runs today:
 | Exact duplicate detection | Identical content repeated in a turn, and its token cost | CLI + desktop |
 | Low-information scoring | Large, highly-compressible blocks ranked by likely waste | CLI + desktop |
 | Secret scanning and redacted export | Where credential-shaped strings appear, without ever printing them | CLI + desktop |
+| Saved stream import | A presentation timeline and separately scoped usage from an explicitly selected stdout/app-server capture | CLI |
 | Format-drift sweep | Whether this build recognises every event type across a local corpus | CLI |
 | Parse fidelity | How much of one session this build understood, and what it did not | CLI + desktop |
 | NDJSON export | The whole session as typed records, cross-checked against the totals | CLI + desktop |
@@ -65,8 +80,7 @@ What runs today:
 
 Windows x64 is the supported surface. A [macOS port](docs/MACOS.md) is in
 development, with native build instructions and outstanding validation gates.
-After a stable release is published,
-install the latest desktop version for the current user from PowerShell:
+Install the latest stable desktop version for the current user from PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/aneskurtovic/ContextTrace/main/scripts/install.ps1 | iex
@@ -154,7 +168,7 @@ already gone, those copies are the only remaining evidence, and an uninstaller
 must not be able to take them with it. The consequence is that they outlive the
 app, so delete that directory yourself if you want them gone — and note it holds
 session content, including credentials if anything was archived with `--raw`.
-Nothing else survives removal.
+Other local settings, including webview project visibility preferences, are not covered by the archive-preservation guarantee.
 
 Until a release candidate has a verified Windows signature, expect
 SmartScreen to warn about the unsigned installer. See
@@ -254,10 +268,10 @@ Run `ct <command> --help` for the full option surface.
 
 ## Roadmap
 
-The updater-enabled 0.1.5 Windows release is available. See the [install
+Updater-enabled Windows releases are available. See the [install
 instructions](#install) and [release downloads](https://github.com/aneskurtovic/ContextTrace/releases/latest).
 
-Configurable local pricing/forecasting, instruction-file comparisons and
+Automatic third-party pricing/forecasting, instruction-file comparisons and
 temporal ghost views are available in the CLI, MCP surface and desktop app.
 
 Deliberately deferred: a persistent SQLite index, until measured
@@ -266,10 +280,34 @@ certificate until the production-release decision.
 
 No dates or promises. See the [public roadmap](docs/ROADMAP.md).
 
-### Local pricing overrides
+### Automatic model pricing
+
+The desktop, CLI, MCP, corpus totals and cost-budget notifications use
+[LiteLLM's public price catalog](https://docs.litellm.ai/docs/completion/token_usage)
+automatically. No price entry, account or API key is needed. Rates are matched
+by exact model ID; request timestamps select the catalog revision recorded at
+or before that request through the public GitHub commits API. Untimed requests
+use current rates with an explicit warning. Forecasts reprice average recorded
+usage at current rates.
+
+Catalog revisions and date indices are cached under the archive root in
+`pricing/`; mutable indices refresh hourly. Cached revisions remain available
+offline. Missing history, unknown model IDs, missing cache rates and failed
+lookups stay unpriced, with partial totals and no forecast. GitHub public API
+limits can delay uncached lookups; failed requests back off for one minute.
+Only public catalog data and date queries are downloaded; session content,
+paths, IDs and model names are never uploaded.
+
+These are standard text-token list-price estimates, not subscription bills.
+Git timestamps record when LiteLLM observed a rate, not guaranteed vendor
+effective dates. Media/tool charges, negotiated discounts, service tiers and
+non-default cache durations are outside the estimate. Per-turn results retain
+the immutable revision URL and version for auditability.
+
+### Advanced contract overrides
 
 `ct cost <id> --pricing pricing.json --forecast-turns 20` reads a local JSON
-override without changing the bundled table. Rates are integer microdollars per
+contract override; unmatched models still use automatic rates. Rates are integer microdollars per
 million tokens so the file remains exact and reviewable:
 
 ```json
@@ -290,7 +328,7 @@ million tokens so the file remains exact and reviewable:
 }
 ```
 
-The forecast uses the average priced turn as an estimate for the explicit
+The forecast uses average recorded token usage at current rates for the explicit
 additional-turn horizon; future model choice, cache state and agent behaviour
 are not observed.
 
@@ -327,12 +365,15 @@ See [methodology](docs/methodology.md) for how the ratio is derived, what
 ## Privacy
 
 **Local-first.** Session data contains source code, prompts, terminal
-output and potentially secrets. ContextTrace has no upload, telemetry or
-cloud code. The desktop capability set is core-only and its
-content-security policy permits only local Tauri IPC; session data stays on
-the machine.
+output and potentially secrets. ContextTrace analyzes logs locally and has no
+session-upload or telemetry feature. The webview content-security policy limits
+connections to local Tauri IPC. Native updater checks contact GitHub; opening a
+local file delegates to Windows. **Resume** starts the installed agent CLI,
+which may contact its service and write its own session state.
 
-**Read-only.** Agent directories are inputs. ContextTrace never writes to them.
+**Read-only analysis.** Agent directories are inputs; ContextTrace does not
+rewrite their logs. A resumed agent runs with its own configured permissions
+and can write to its session storage and working folder.
 
 **One ContextTrace-owned directory.** `ct archive <id>` keeps a copy of a session so
 it outlives its log — a log that is rotated, pruned, or lost with a wiped home
@@ -341,11 +382,13 @@ gone. Copies go to a ContextTrace-owned directory, never back to an agent's, and
 `ct roots` prints its exact path whether or not anything has been archived yet.
 Nothing is archived until you ask for it.
 
-The desktop app writes to that same directory and no other: its Archive panel
+The desktop app uses that directory for its analysis data: its Archive panel
 does what `ct archive` does, its Export panel writes NDJSON to an `exports`
 subdirectory, and notification history/preferences plus the remembered corpus
 sweep live in their own subdirectories. These automatic state writes contain
 ContextTrace's local summaries and settings, not a copy of the agent roots.
+Project visibility preferences are stored separately in the local desktop
+webview. CLI exports can be redirected to a destination you choose.
 
 An archive concentrates by construction what was previously scattered: one place
 holding every prompt, tool output and credential a machine has produced is a
@@ -370,8 +413,9 @@ redact by default applies to it unchanged.
 | [Methodology](docs/methodology.md) | How two agents' logs become comparable numbers, and where the tool refuses to answer |
 | [Architecture](docs/architecture.md) | Crate layout, the invariants the type system enforces, fixtures and testing |
 | [MVP status](docs/MVP-STATUS.md) | What's implemented, what's gated, and the release plan |
-| [Release procedure](docs/RELEASING.md) | How Windows release candidates are built, checked and optionally signed |
+| [Release procedure](docs/RELEASING.md) | How Woodpecker packages, signs for the updater, publishes and verifies Windows releases |
 | [Continuous integration](docs/CI.md) | What runs on Linux, what needs real Windows, and what a green pipeline still does not prove |
+| [Projects and resume](docs/projects-and-resume.md) | Temporary folders, project visibility and native conversation continuation |
 | [Updater](docs/UPDATER.md) | Desktop update behavior and release-feed requirements |
 | [Documentation index](docs/README.md) | Public documentation map |
 | [Notifications](docs/notifications.md) | The twelve rules, how delivery is decided, and why a delivered toast is not assumed |

@@ -88,6 +88,9 @@ pub struct ArchiveEntry {
     /// at all, and for those the archive is a byte-identical copy.
     pub archived_bytes: u64,
     pub archived_digest: String,
+    /// Immutable digest-named copy; false for the original <id>.jsonl layout.
+    #[serde(default)]
+    pub versioned_copy: bool,
     /// Records in which at least one value was replaced.
     pub redacted_records: u64,
     /// Values replaced across all records. At least `redacted_records` whenever
@@ -233,6 +236,7 @@ mod tests {
             source_digest: "a".into(),
             archived_bytes: 10,
             archived_digest: "a".into(),
+            versioned_copy: false,
             redacted_records: 0,
             redacted_values,
         };

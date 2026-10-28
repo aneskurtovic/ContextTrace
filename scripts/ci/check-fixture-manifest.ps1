@@ -137,8 +137,25 @@ foreach ($entry in $entries) {
     }
 
     $observedVersion = $null
+    # stdout does not always report a binary version. A reviewed capture must
+    # retain its version-command receipt; synthetic contracts name a pinned ref.
+    if ($surface -in @('codex-exec', 'codex-app-server')) {
+        $basis = Get-PropertyValue $entry 'version_basis'
+        $evidence = Get-PropertyValue $entry 'version_evidence'
+        if ($basis -eq 'capture-command' -and $provenance -eq 'reviewed-local-capture' -and $evidence -eq "codex-cli $producerVersion") {
+            $observedVersion = $producerVersion
+        }
+        elseif ($basis -eq 'pinned-upstream' -and $provenance -eq 'synthetic' -and $evidence -match "^rust-v$([regex]::Escape($producerVersion))@[0-9a-f]{40}$") {
+            $observedVersion = $producerVersion
+        }
+        else { throw "Stream fixture has no valid producer-version receipt: $relativePath" }
+    }
     foreach ($record in $records) {
-        if ($agent -eq 'codex') {
+        if (-not [string]::IsNullOrWhiteSpace($observedVersion)) { break }
+        if ($surface -eq 'claude-stream') {
+            $observedVersion = Get-PropertyValue $record 'claude_code_version'
+        }
+        elseif ($agent -eq 'codex') {
             $payload = Get-PropertyValue $record 'payload'
             if ($null -ne $payload) {
                 $observedVersion = Get-PropertyValue $payload 'cli_version'

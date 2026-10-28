@@ -25,6 +25,14 @@ feed they write is a desktop artefact.
 | Instructions changed | A recorded instruction artefact drifted | Delivery only |
 | Session cost budget crossed | Estimated session cost passed a budget | Budget amount |
 
+Instruction drift compares repeated signatures of the same recorded instruction
+artifact (base instructions, repository memory or a skill). Prompt snapshots,
+ordinary files, reminders and tool listings do not count as instruction changes.
+The comparison uses labels and character lengths, not instruction-body equality.
+Only changes in newly completed turns may notify; historical findings are not
+replayed when a log grows or monitoring resumes. To silence this rule immediately
+in an older installed app, set **Instructions changed** to **Feed only**.
+
 Two rules share one label on the wire: duplicate and low-information findings
 both report as `contextWaste`, because they are the same complaint about the
 same turn measured two ways.
@@ -68,11 +76,11 @@ to `feed`.
 
 ## Following a finding
 
-Selecting a finding opens the session it came from. Rules that name a specific
-record -- a secret, a run of failing tools -- open the conversation, load
-pages until that record is reached, expand it and ring it. Compactions instead
-open the turn view, which has a purpose-built inspector for their replacement
-history.
+Selecting a finding opens Conversation in its session, regardless of the
+currently selected tab. Findings that name a log line load pages until that
+record is reached, expand it and highlight it. Findings that name only a turn
+load and highlight the first conversation record for that turn. A finding
+without either destination opens the session overview.
 
 The record header stays in view after expansion and full-text loading. If a
 named log line is absent from the conversation, the view says so rather than
@@ -82,6 +90,17 @@ reopens and scrolls to its record.
 The ring sits on the whole record rather than on the matched text. Secret
 findings deliberately carry no offsets and no matched value, so the record is
 the smallest unit the interface is allowed to point at.
+
+New Windows toasts carry a `contexttrace://notification/<id>` destination.
+Clicking restores the running window or launches the installed app, then follows
+the same navigation as the in-app feed. Startup activations wait until the
+frontend is ready. If the notification has expired from local history, the app
+opens the feed with an explanation. The test notification opens the feed.
+
+The protocol is registered by the updated Windows installer; an existing
+installation must be upgraded to receive that registration. Portable and
+development builds do not register a protocol at runtime. Toasts created by
+older builds retain their original behavior.
 
 ## Where the feed lives
 
@@ -95,10 +114,22 @@ is the live check; the drawer is the log.
 
 ## Known limits
 
-**Clicking a Windows toast does nothing.** The toast is sent without an
-activation handler registered, so the click has no action to invoke and never
-reaches the app. Open the drawer inside the app instead.
-
 **Nothing is sent while the app is closed.** The rules run in the desktop
 process. A session that crosses a threshold overnight is found on next start,
 and arrives marked as catch-up rather than as something that just happened.
+
+Live session observation runs every 2.5 seconds independently of notification
+preferences. Turning off notifications leaves Follow live and cache invalidation
+active, without parsing sessions for notification rules. The observer tracks
+agent-qualified descriptor fingerprints, coalesces changes, and detects
+rotation/deletion on successful discovery. A failed agent discovery preserves
+its previous inventory; other agents still refresh. Failed UI emissions retry.
+Notification baselining and catch-up use separate persisted checkpoints.
+
+Notification deduplication uses versioned agent/session identities, including
+when two agents share a session ID. Format drift deliberately deduplicates
+across sessions of the same agent. Retained legacy feed records are qualified
+from their recorded locations on read; clearing history retains the qualified
+keys. Old tombstones without a retained record cannot be assigned an agent
+reliably, so they remain stored but do not suppress another agent. Persisted
+session checkpoints continue to prevent historical event replay.

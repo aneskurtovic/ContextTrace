@@ -169,7 +169,7 @@ export const demoNotificationStatus: NotificationStatus = {
   // must not imply otherwise -- the whole point of labelling demo data is that
   // it never poses as a working local install.
   deliverability: { state: 'unsupported' },
-  obstacle: 'OS notifications are supported on Windows only.',
+  obstacle: 'OS notifications are supported on Windows and macOS only.',
 };
 
 export const demoNotificationPage: NotificationPage = {
@@ -942,11 +942,12 @@ export function demoCost(id: string, forecastTurns: number): CostReport {
     sessionId: id,
     pricingVersion: "demo",
     pricingSource: "synthetic demo table",
-    warning: "Demo data; no local pricing file was read.",
+    warning: "Synthetic demo prices; no public pricing request was made.",
     categories: [category],
     total: category.cost,
-    turns: [],
+    turns: [{ turn: 1, model: "demo-model", priced: true, categories: [category], total: category.cost }],
     unpriced: [],
+    cacheUsage: { freshInputTokens: 48_000, cacheReadTokens: 0, cacheWriteTokens: null, cacheReadShare: 0, completeTurns: 1, totalTurns: 1, multiCallTurns: 0 },
     forecast: forecastTurns > 0
       ? {
           additionalTurns: forecastTurns,

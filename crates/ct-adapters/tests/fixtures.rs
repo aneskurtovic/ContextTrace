@@ -1,9 +1,8 @@
 //! Adapter tests against committed synthetic session files.
 //!
-//! These fixtures are hand-authored, never captured. Real session logs contain
-//! source code, prompts, terminal output and potentially secrets, so they stay
-//! out of the repository entirely -- the corpus smoke test reads them locally
-//! and gitignored.
+//! Fixture provenance is declared in tests/fixtures/compatibility.json. Most
+//! contracts are hand-authored; reviewed captures retain only redacted shapes.
+//! Private session logs stay out of the repository.
 //!
 //! Each fixture is built to encode a specific way the real formats can mislead a
 //! reader, so a regression shows up as a named failing test rather than as a
@@ -69,6 +68,131 @@ fn codex() -> (CodexAdapter, AgentSession) {
     );
     let session = adapter.load(&d).expect("the fixture must parse");
     (adapter, session)
+}
+
+#[test]
+fn codex_161_upstream_contract_keeps_context_and_control_records_distinct() {
+    let adapter = CodexAdapter::new();
+    let session = adapter
+        .load(&descriptor(
+            fixture("codex", "upstream-0.161.0.jsonl"),
+            AgentKind::Codex,
+            "synthetic-codex-161",
+        ))
+        .unwrap();
+    assert_eq!(session.unrecognised_total(), 0);
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ContextInjection { mechanism, char_len, .. }
+        if mechanism == "additional_tools" && *char_len > 0)));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ToolCall { tool, char_len, .. } if tool == "tool_search" && *char_len > 0)));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::Compacted(facts) if !facts.replacement_recorded)));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ToolResult { tool: Some(tool), .. } if tool == "image_generation")));
+    assert!(session.events().iter().any(|event| matches!(&event.kind,
+        EventKind::ContextInjection { mechanism, .. } if mechanism == "context_compaction")));
+}
+
+#[test]
+fn real_current_captures_preserve_versions_usage_and_source_positions() {
+    for (agent, name, version) in [
+        (AgentKind::Codex, "current-0.161.0.jsonl", "0.161.0"),
+        (AgentKind::ClaudeCode, "current-2.1.293.jsonl", "2.1.293"),
+    ] {
+        let adapter: Box<dyn AgentAdapter> = if agent == AgentKind::Codex {
+            Box::new(CodexAdapter::new())
+        } else {
+            Box::new(ClaudeCodeAdapter::new())
+        };
+        let path = fixture(
+            if agent == AgentKind::Codex {
+                "codex"
+            } else {
+                "claude_code"
+            },
+            name,
+        );
+        let session = adapter
+            .load(&descriptor(path.clone(), agent, "current-capture"))
+            .unwrap();
+        assert_eq!(session.metadata().agent_version.as_deref(), Some(version));
+        assert_eq!(session.unrecognised_total(), 0);
+        assert_eq!(session.turn_count(), 1);
+        assert!(session.peak_prompt_tokens().unwrap() > 0);
+        assert!(session
+            .events()
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::Message { .. })));
+        let raw = std::fs::read(path).unwrap();
+        for e in session.events() {
+            let start = e.source.byte_offset as usize;
+            assert!(serde_json::from_slice::<serde_json::Value>(
+                &raw[start..start + e.source.byte_len as usize]
+            )
+            .is_ok());
+        }
+    }
+}
+
+#[test]
+fn opaque_context_compaction_keeps_history_until_a_recorded_replacement_boundary() {
+    let path = std::env::temp_dir().join(format!(
+        "ct-context-compaction-{}.jsonl",
+        std::process::id()
+    ));
+    let records = [
+        serde_json::json!({"type":"session_meta","payload":{"id":"opaque-compaction","cli_version":"0.161.0"}}),
+        serde_json::json!({"type":"turn_context","payload":{"model":"synthetic-model"}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"keep this message"}]}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"context_compaction","encrypted_content":"opaque"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":5}}}}),
+        serde_json::json!({"type":"compacted","payload":{"replacement_history":[]}}),
+        serde_json::json!({"type":"turn_context","payload":{"model":"synthetic-model"}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"output_tokens":5}}}}),
+    ];
+    std::fs::write(
+        &path,
+        records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let adapter = CodexAdapter::new();
+    let session = adapter
+        .load(&descriptor(
+            path.clone(),
+            AgentKind::Codex,
+            "opaque-compaction",
+        ))
+        .unwrap();
+    let before = adapter
+        .reconstruct(
+            &session,
+            TurnNumber::new(1).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
+        .unwrap();
+    assert!(before
+        .items
+        .iter()
+        .any(|i| i.provenance.source == Some(session.events()[2].source)));
+    assert!(before.preceding_compaction.is_none());
+    let after = adapter
+        .reconstruct(
+            &session,
+            TurnNumber::new(2).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
+        .unwrap();
+    assert!(!after
+        .items
+        .iter()
+        .any(|i| i.provenance.source == Some(session.events()[2].source)));
+    assert!(after.preceding_compaction.is_some());
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -262,6 +386,102 @@ fn content_measurements_are_opt_in_to_the_analyses_that_use_them() {
 // ---------------------------------------------------------------------------
 // Claude Code
 // ---------------------------------------------------------------------------
+
+#[test]
+fn claude_presentation_notices_preserve_text_and_source_without_context_weight() {
+    let adapter = ClaudeCodeAdapter::new();
+    let path = fixture("claude_code", "presentation-notices-2.1.239.jsonl");
+    let session = adapter
+        .load(&descriptor(
+            path.clone(),
+            AgentKind::ClaudeCode,
+            "claude-notices",
+        ))
+        .unwrap();
+    assert_eq!(session.metadata().agent_version.as_deref(), Some("2.1.239"));
+    assert_eq!(session.unrecognised_total(), 0);
+    assert_eq!(session.turn_count(), 0, "notices are not model requests");
+    let raw = std::fs::read_to_string(path).unwrap();
+    assert_eq!(session.events().len(), 2);
+    for (event, subtype) in session
+        .events()
+        .iter()
+        .zip(["away_summary", "bridge_status"])
+    {
+        assert!(
+            matches!(&event.kind, EventKind::SessionEvent { subtype: actual } if actual == subtype)
+        );
+        assert!(!event.occupies_context());
+        assert_eq!(event.char_len(), None);
+        let start = event.source.byte_offset as usize;
+        let line = &raw[start..start + event.source.byte_len as usize];
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            adapter.transcript_text(line).as_deref(),
+            record["content"].as_str()
+        );
+        assert_eq!(event.links.uuid.as_deref(), record["uuid"].as_str());
+        assert_eq!(
+            event.links.parent_uuid.as_deref(),
+            record["parentUuid"].as_str()
+        );
+    }
+
+    // A synthetic chain through both captured shapes must retain the original
+    // prompt, while neither notice becomes model context or a compaction.
+    let path = std::env::temp_dir().join(format!("ct-claude-notices-{}.jsonl", std::process::id()));
+    let mut records = vec![serde_json::json!({
+        "type":"user", "uuid":"prompt", "parentUuid":null,
+        "message":{"role":"user", "content":"Keep this original prompt."}
+    })];
+    let mut parent = "prompt".to_string();
+    for line in raw.lines() {
+        let mut record: serde_json::Value = serde_json::from_str(line).unwrap();
+        record["parentUuid"] = parent.into();
+        parent = record["uuid"].as_str().unwrap().to_string();
+        records.push(record);
+    }
+    records.push(serde_json::json!({
+        "type":"assistant", "uuid":"answer", "parentUuid":parent, "requestId":"request",
+        "message":{"role":"assistant", "content":[{"type":"text", "text":"Done."}],
+            "usage":{"input_tokens":20,"output_tokens":2}}
+    }));
+    std::fs::write(
+        &path,
+        records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let session = adapter
+        .load(&descriptor(
+            path.clone(),
+            AgentKind::ClaudeCode,
+            "notice-chain",
+        ))
+        .unwrap();
+    let _ = std::fs::remove_file(path);
+    let context = adapter
+        .reconstruct(
+            &session,
+            TurnNumber::new(1).unwrap(),
+            &HeuristicEstimator::for_code(),
+        )
+        .unwrap();
+    assert_eq!(session.unrecognised_total(), 0);
+    assert_eq!(session.turn_count(), 1);
+    assert!(context.preceding_compaction.is_none());
+    assert!(context
+        .items
+        .iter()
+        .any(|item| item.preview.as_deref() == Some("Keep this original prompt.")));
+    assert!(context
+        .items
+        .iter()
+        .all(|item| ![2, 3].contains(&item.provenance.source.unwrap().line_no)));
+}
 
 #[test]
 fn claude_2_1_268_capture_classifies_current_sidecar_state() {
@@ -634,4 +854,49 @@ fn a_codex_compaction_replaces_the_item_list() {
             .any(|i| i.category == ContextCategory::Summaries),
         "replacement_history should appear as the summary that replaced the history"
     );
+}
+
+#[test]
+fn claude_request_input_excludes_all_current_response_blocks_and_retains_previous_outputs() {
+    let (adapter, session) = claude();
+    for (number, expected_lines) in [
+        (1, vec![1, 2, 3]),
+        (2, vec![1, 2, 3, 4, 5, 6]),
+        (3, vec![12]),
+    ] {
+        let context = adapter
+            .reconstruct(
+                &session,
+                TurnNumber::new(number).unwrap(),
+                &HeuristicEstimator::for_code(),
+            )
+            .unwrap();
+        let lines: Vec<_> = context
+            .items
+            .iter()
+            .map(|item| item.provenance.source.unwrap().line_no)
+            .collect();
+        assert_eq!(
+            lines, expected_lines,
+            "request {number} input includes only its retained ancestors"
+        );
+    }
+}
+
+#[test]
+fn codex_request_input_excludes_current_reasoning_calls_and_their_later_results() {
+    let (adapter, session) = codex();
+    let context = adapter
+        .reconstruct(&session, TurnNumber::FIRST, &HeuristicEstimator::for_code())
+        .unwrap();
+    let lines: Vec<_> = context
+        .items
+        .iter()
+        .map(|item| item.provenance.source.unwrap().line_no)
+        .collect();
+    assert_eq!(lines, vec![1, 3]);
+    assert!(context
+        .items
+        .iter()
+        .all(|item| item.provenance.confidence == ct_domain::Confidence::Estimated));
 }

@@ -21,7 +21,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter};
 
+pub mod local_files;
 pub mod notifications;
+mod observation;
+mod projects;
+pub mod resume;
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 200;
 const MAX_SESSION_PAGE_SIZE: usize = 1_000;
@@ -148,6 +152,7 @@ pub struct AppState {
         Option<(
             Vec<ct_domain::SessionFingerprint>,
             ct_application::CorpusReport,
+            std::time::Instant,
         )>,
     >,
 }
@@ -229,7 +234,7 @@ impl AppState {
 
     /// Invalidate only the session whose source file changed.
     ///
-    /// The notification monitor watches every live descriptor. Clearing the
+    /// The independent session observer watches every live descriptor. Clearing the
     /// whole cache on each 2.5-second poll would make an unrelated session the
     /// user is inspecting cold whenever any agent log grows. The agent-qualified
     /// key is the same identity used by both caches, so the parsed session and
@@ -370,6 +375,10 @@ impl AppState {
             .filter(|descriptor| match project {
                 None => true,
                 Some(ProjectFilter::Unrecorded) => descriptor.project.is_none(),
+                Some(ProjectFilter::Temporary) => descriptor
+                    .project
+                    .as_deref()
+                    .is_some_and(projects::is_temporary),
                 Some(ProjectFilter::Path(path)) => {
                     descriptor.project.as_deref() == Some(path.as_str())
                 }
@@ -397,6 +406,8 @@ impl AppState {
         let mut projects: Vec<ProjectSummary> = counts
             .into_iter()
             .map(|(path, count)| ProjectSummary {
+                temporary: path.as_deref().is_some_and(projects::is_temporary),
+                directory_state: projects::directory_state(path.as_deref()),
                 label: match &path {
                     Some(path) => leaf_name(path),
                     // Not "unknown project": the log recorded no folder, which
@@ -564,7 +575,9 @@ impl AppState {
             total_output_tokens: session.total_output_tokens(),
             peak_turn,
             peak_prompt_tokens: session.peak_prompt_tokens(),
-            context_window: metadata.context_window,
+            context_window: session
+                .peak_turn()
+                .and_then(|number| session.context_window_at(number)),
             fidelity: session.fidelity(),
             unrecognised_events: session.unrecognised_total(),
             unplaced_compactions: growth.unplaced_compactions,
@@ -635,6 +648,7 @@ impl AppState {
             .iter()
             .map(|item| (&item.id, item))
             .collect();
+        let file_targets = local_files::TargetIndex::new(&cached.session, snapshot.items());
         let items = snapshot
             .largest_contributors(usize::MAX)
             .into_iter()
@@ -650,6 +664,7 @@ impl AppState {
                     confidence: item.confidence,
                     first_seen_turn: body.and_then(|body| body.first_seen_turn).map(|t| t.get()),
                     preview: body.and_then(|body| body.preview.clone()),
+                    file_target: body.and_then(|body| file_targets.target(body)),
                 }
             })
             .collect();
@@ -901,7 +916,11 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .as_ref()
-                .filter(|(seen, _)| *seen == fingerprint)
+                .filter(|(seen, report, when)| {
+                    *seen == fingerprint
+                        && when.elapsed().as_secs()
+                            < if report.unpriced_turns > 0 { 60 } else { 3600 }
+                })
             {
                 return Ok(CorpusSummary::from_cached(&cached.1, true));
             }
@@ -913,7 +932,8 @@ impl AppState {
                 *self
                     .corpus
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    Some((fingerprint, report, std::time::Instant::now()));
                 return Ok(summary);
             }
         }
@@ -929,7 +949,8 @@ impl AppState {
         *self
             .corpus
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((fingerprint, report));
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((fingerprint, report, std::time::Instant::now()));
         Ok(summary)
     }
 
@@ -941,7 +962,7 @@ impl AppState {
     /// real sweep reconcile behind them. It is offered as last time's answer
     /// -- `cached` is true -- and never as a claim about now.
     fn corpus_remembered(&self) -> Option<CorpusSummary> {
-        if let Some((_, report)) = self
+        if let Some((_, report, _)) = self
             .corpus
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1118,7 +1139,11 @@ impl AppState {
         let cached = self.cached_session(agent, id, true)?;
         let hasher = ct_runtime::content_hasher();
         Ok(InstructionFileReportSummary::from(
-            ct_application::compare_instruction_files(&cached.session, &hasher),
+            ct_application::compare_instruction_files(
+                &cached.session,
+                &hasher,
+                &ct_runtime::instruction_file_reader(),
+            ),
         ))
     }
 
@@ -1133,16 +1158,14 @@ impl AppState {
         let pricing = pricing_path
             .map(ct_application::PricingOverrides::from_path)
             .transpose()?;
-        Ok(CostReportSummary::from(
-            ct_application::project_cost_scenario(
-                &cached.session,
-                &ct_application::CostScenario {
-                    forecast_turns,
-                    pricing,
-                    ..Default::default()
-                },
-            ),
-        ))
+        Ok(CostReportSummary::from(self.app.project_cost(
+            &cached.session,
+            &ct_application::CostScenario {
+                forecast_turns,
+                pricing,
+                ..Default::default()
+            },
+        )))
     }
 
     fn temporal_ghost(
@@ -1848,13 +1871,13 @@ impl From<ThreadRole> for ThreadRoleSummary {
 
 /// Which project a session listing is narrowed to.
 ///
-/// Three states, because `Option<String>` can only express two and the third
-/// is real: a Codex rollout whose log never recorded a `cwd` has no folder to
-/// name, and "every project" must not be confused with "the ones with none".
+/// Exact path, unrecorded folder, or the temporary-workspace group. `None` at
+/// the command boundary means all projects, including sessions without a cwd.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProjectFilter {
     Unrecorded,
+    Temporary,
     Path(String),
 }
 
@@ -1862,6 +1885,8 @@ pub enum ProjectFilter {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
+    pub temporary: bool,
+    pub directory_state: projects::DirectoryState,
     /// The full path, which is what the filter matches on. `None` is the entry
     /// for sessions whose log recorded no folder.
     pub path: Option<String>,
@@ -2234,6 +2259,7 @@ pub struct ContributorSummary {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextItemSummary {
+    file_target: Option<local_files::FileTargetDto>,
     id: String,
     label: String,
     category: String,
@@ -2828,6 +2854,8 @@ impl From<CostCategory> for CostCategorySummary {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CostTurnSummary {
+    pricing_version: String,
+    pricing_source: String,
     turn: u32,
     model: Option<String>,
     priced: bool,
@@ -2838,6 +2866,8 @@ pub struct CostTurnSummary {
 impl From<CostTurn> for CostTurnSummary {
     fn from(value: CostTurn) -> Self {
         Self {
+            pricing_version: value.pricing_version,
+            pricing_source: value.pricing_source,
             turn: value.turn,
             model: value.model,
             priced: value.priced,
@@ -2918,6 +2948,7 @@ pub struct CostReportSummary {
     turns: Vec<CostTurnSummary>,
     unpriced: Vec<UnpricedTurnSummary>,
     forecast: Option<CostForecastSummary>,
+    cache_usage: ct_application::cost::CacheUsageReport,
 }
 
 impl From<CostReport> for CostReportSummary {
@@ -2940,6 +2971,7 @@ impl From<CostReport> for CostReportSummary {
                 .map(UnpricedTurnSummary::from)
                 .collect(),
             forecast: value.forecast.map(CostForecastSummary::from),
+            cache_usage: value.cache_usage,
         }
     }
 }
@@ -3153,7 +3185,19 @@ fn read_corpus_cache(
     fingerprint: &[ct_domain::SessionFingerprint],
 ) -> Option<ct_application::CorpusReport> {
     let cached = read_corpus_cache_file()?;
-    (cached.fingerprint == fingerprint).then_some(cached.report)
+    let age = fs::metadata(ct_runtime::corpus_cache_path())
+        .ok()?
+        .modified()
+        .ok()?
+        .elapsed()
+        .ok()?
+        .as_secs();
+    let ttl = if cached.report.unpriced_turns > 0 {
+        60
+    } else {
+        3600
+    };
+    (cached.fingerprint == fingerprint && age < ttl).then_some(cached.report)
 }
 
 /// Remember this sweep for the next launch. Best effort, by design.
@@ -3503,6 +3547,67 @@ mod tests {
             .sessions
     }
 
+    #[test]
+    fn composition_keeps_exact_file_targets_on_calls_and_results_and_rechecks_missing_files() {
+        let homes = FixtureHomes::new();
+        let directory = homes
+            .root
+            .join(format!("{}end", "long directory ".repeat(7)));
+        fs::create_dir_all(&directory).unwrap();
+        let image = directory.join("image  one.png");
+        fs::write(&image, b"fixture image bytes").unwrap();
+        let exact_path = image.display().to_string();
+        assert!(exact_path.chars().count() > 180);
+        let session_path = homes
+            .claude_home
+            .join("projects/C--repos-demo/fixture-claude.jsonl");
+        let body = fs::read_to_string(&session_path).unwrap();
+        let lines: Vec<_> = body
+            .lines()
+            .map(|line| {
+                let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                if value["uuid"] == "m2" {
+                    value["message"]["content"][0]["input"]["file_path"] =
+                        exact_path.clone().into();
+                }
+                value.to_string()
+            })
+            .collect();
+        let abandoned = serde_json::json!({
+            "type": "assistant", "uuid": "other-branch", "parentUuid": "u2", "requestId": "other-request",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1",
+                "name": "Read", "input": {"file_path": "C:/wrong-branch.png"}}]}
+        });
+        fs::write(
+            &session_path,
+            format!("{}\n{abandoned}\n", lines.join("\n")),
+        )
+        .unwrap();
+        let state = homes.state();
+        let id = session_id(&all_sessions(&state), "claude-code");
+        let context = state.context(AgentKind::ClaudeCode, &id, Some(2)).unwrap();
+        for id in ["claude:5", "claude:6"] {
+            let item = context.items.iter().find(|item| item.id == id).unwrap();
+            assert!(item.label.ends_with('…'), "{id}: {}", item.label);
+            let target = item.file_target.as_ref().unwrap();
+            assert_eq!(target.path, exact_path);
+            assert_eq!(target.status, "file");
+            assert!(target.can_open);
+        }
+        fs::remove_file(&image).unwrap();
+        let context = state.context(AgentKind::ClaudeCode, &id, Some(2)).unwrap();
+        let target = context
+            .items
+            .iter()
+            .find(|item| item.id == "claude:6")
+            .unwrap()
+            .file_target
+            .as_ref()
+            .unwrap();
+        assert_eq!(target.status, "missing");
+        assert!(!target.can_open);
+    }
+
     /// An estimator that leaves `chars_per_token` at the port's default
     /// `None` -- what a real tokenizer reports, unlike every
     /// `HeuristicEstimator` this file otherwise wires. Exists only so an
@@ -3638,7 +3743,7 @@ mod tests {
         (state, homes, id.to_string())
     }
 
-    fn catalog_descriptor(index: usize, project: &str) -> SessionDescriptor {
+    pub(super) fn catalog_descriptor(index: usize, project: &str) -> SessionDescriptor {
         SessionDescriptor {
             id: ct_domain::SessionId::new(format!("catalog-{index:04}")).unwrap(),
             agent: AgentKind::Codex,
@@ -3903,6 +4008,7 @@ mod tests {
             usage: Default::default(),
             event_indices: Vec::new(),
             anchor_index: None,
+            response_start_index: None,
         };
         let session = ct_domain::AgentSession::new(
             ct_domain::SessionId::new("model-usage").unwrap(),
@@ -3978,6 +4084,58 @@ mod tests {
         let json = serde_json::to_value(&summary).expect("session summary serializes for IPC");
         assert_eq!(json["threadRole"]["kind"], "subagent");
         assert_eq!(json["threadRole"]["parent"], "root-id");
+    }
+
+    #[test]
+    fn unmeasured_fixture_sessions_keep_metadata_and_readable_transcripts() {
+        let homes = FixtureHomes::new();
+        let claude_path = homes
+            .claude_home
+            .join("projects/C--repos-demo/fixture-claude.jsonl");
+        for path in [&homes.codex_session, &claude_path] {
+            let input = fs::read_to_string(path).unwrap();
+            let lines: Vec<String> = input
+                .lines()
+                .filter_map(|line| {
+                    let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    if value
+                        .get("payload")
+                        .and_then(|payload| payload.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("token_count")
+                    {
+                        return None;
+                    }
+                    if let Some(message) = value
+                        .get_mut("message")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        message.remove("usage");
+                    }
+                    Some(serde_json::to_string(&value).unwrap())
+                })
+                .collect();
+            fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+        }
+        let state = homes.state();
+        let sessions = all_sessions(&state);
+        assert_eq!(sessions.len(), 2);
+        for (agent, name) in [
+            (AgentKind::Codex, "codex"),
+            (AgentKind::ClaudeCode, "claude-code"),
+        ] {
+            let id = session_id(&sessions, name);
+            let detail = state.inspect_session(agent, &id).unwrap();
+            assert_eq!(detail.peak_prompt_tokens, None);
+            assert_eq!(detail.peak_turn, None);
+            assert!(detail.event_count > 0);
+            assert_eq!(
+                state.context(agent, &id, None).err().unwrap(),
+                "this session has no turn with prompt usage"
+            );
+            let transcript = state.transcript(agent, &id, None, None).unwrap();
+            assert!(!transcript.entries.is_empty());
+        }
     }
 
     #[test]
@@ -4129,12 +4287,54 @@ mod tests {
         assert_eq!(
             projects,
             vec![ProjectSummary {
+                temporary: false,
+                directory_state: projects::directory_state(Some("C:/repos/alpha")),
                 label: "alpha".to_string(),
                 path: Some("C:/repos/alpha".to_string()),
                 count: 1,
             }],
             "only the alpha project should survive the query, with its \
              subagent-excluded count of 1, not the unfiltered catalog"
+        );
+    }
+
+    #[test]
+    fn temporary_group_uses_the_same_catalog_and_preserves_all_sessions() {
+        let mut temporary = catalog_descriptor(0, "C:/Users/me/AppData/Local/Temp/.tmp123");
+        temporary.agent = AgentKind::Codex;
+        let ordinary = catalog_descriptor(1, "C:/repos/tmp-project");
+        let state = catalog_state(vec![temporary, ordinary]);
+        let projects = state.list_projects(None, None, None).unwrap();
+        assert_eq!(
+            projects.iter().map(|project| project.count).sum::<usize>(),
+            2
+        );
+        assert_eq!(
+            projects.iter().filter(|project| project.temporary).count(),
+            1
+        );
+        let group = state
+            .search_sessions(
+                None,
+                None,
+                Some(ProjectFilter::Temporary),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(group.total, 1);
+        assert_eq!(
+            group.sessions[0].project.as_deref(),
+            Some("C:/Users/me/AppData/Local/Temp/.tmp123")
+        );
+        assert_eq!(
+            state
+                .search_sessions(None, None, None, None, None, None, None)
+                .unwrap()
+                .total,
+            2
         );
     }
 

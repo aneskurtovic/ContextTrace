@@ -1,11 +1,13 @@
 //! Estimated request costs from the token usage the agent recorded.
 //!
-//! Prices are deliberately local data, not a claim that ContextTrace can know
-//! a user's contract. A model that is absent from the table remains unpriced;
-//! zero would be a false measurement.
+//! Prices come from an injected third-party provider. Missing rates stay
+//! unpriced; optional contract overrides remain an advanced CLI facility.
 
-use ct_domain::{AgentSession, TokenUsage};
+pub use ct_domain::pricing::ModelRate;
+use ct_domain::pricing::{PriceQuote, PricingProvider, UnavailablePricing};
+use ct_domain::{AgentKind, AgentSession, TokenUsage};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -17,14 +19,6 @@ impl MoneyMicros {
     pub fn usd(self) -> f64 {
         self.0 as f64 / 1_000_000.0
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelRate {
-    pub input_per_million: u64,
-    pub cache_read_per_million: u64,
-    pub cache_write_per_million: u64,
-    pub output_per_million: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,106 +74,6 @@ impl PricingOverrides {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct PricingMatch {
-    pub model_prefix: &'static str,
-    pub rate: ModelRate,
-}
-
-/// The embedded price table. Prices are USD per million tokens, stored as
-/// microdollars. Update this table deliberately when provider list prices move.
-#[derive(Debug, Clone, Copy)]
-pub struct PricingCatalog {
-    pub version: &'static str,
-    pub source: &'static str,
-    pub warning: &'static str,
-}
-
-impl PricingCatalog {
-    pub const BUNDLED: Self = Self {
-        version: "2026-08-11",
-        source: "bundled local pricing table; provider list prices may differ",
-        warning: "This is an estimate based on a local table that can go stale.",
-    };
-
-    pub fn match_model(self, model: &str) -> Option<PricingMatch> {
-        let model = model.to_ascii_lowercase();
-        BUNDLED_RATES
-            .iter()
-            .filter(|candidate| model.starts_with(candidate.model_prefix))
-            .max_by_key(|candidate| candidate.model_prefix.len())
-            .copied()
-    }
-}
-
-// Values are USD/M tokens converted to microdollars. Cache writes use the
-// documented five-minute cache rate where the provider publishes one.
-const BUNDLED_RATES: &[PricingMatch] = &[
-    PricingMatch {
-        model_prefix: "gpt-5.6-sol",
-        rate: ModelRate {
-            input_per_million: 5_000_000,
-            cache_read_per_million: 500_000,
-            cache_write_per_million: 5_000_000,
-            output_per_million: 30_000_000,
-        },
-    },
-    PricingMatch {
-        model_prefix: "gpt-5.6-terra",
-        rate: ModelRate {
-            input_per_million: 2_500_000,
-            cache_read_per_million: 250_000,
-            cache_write_per_million: 2_500_000,
-            output_per_million: 15_000_000,
-        },
-    },
-    PricingMatch {
-        model_prefix: "gpt-5.6-luna",
-        rate: ModelRate {
-            input_per_million: 1_000_000,
-            cache_read_per_million: 100_000,
-            cache_write_per_million: 1_000_000,
-            output_per_million: 6_000_000,
-        },
-    },
-    PricingMatch {
-        model_prefix: "gpt-4.1",
-        rate: ModelRate {
-            input_per_million: 2_000_000,
-            cache_read_per_million: 500_000,
-            cache_write_per_million: 2_000_000,
-            output_per_million: 8_000_000,
-        },
-    },
-    PricingMatch {
-        model_prefix: "claude-opus-4-5",
-        rate: ModelRate {
-            input_per_million: 5_000_000,
-            cache_read_per_million: 500_000,
-            cache_write_per_million: 6_250_000,
-            output_per_million: 25_000_000,
-        },
-    },
-    PricingMatch {
-        model_prefix: "claude-sonnet-4",
-        rate: ModelRate {
-            input_per_million: 3_000_000,
-            cache_read_per_million: 300_000,
-            cache_write_per_million: 3_750_000,
-            output_per_million: 15_000_000,
-        },
-    },
-    PricingMatch {
-        model_prefix: "claude-haiku-4-5",
-        rate: ModelRate {
-            input_per_million: 1_000_000,
-            cache_read_per_million: 100_000,
-            cache_write_per_million: 1_250_000,
-            output_per_million: 5_000_000,
-        },
-    },
-];
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CostCategory {
     pub name: &'static str,
@@ -190,6 +84,8 @@ pub struct CostCategory {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CostTurn {
+    pub pricing_version: String,
+    pub pricing_source: String,
     pub turn: u32,
     pub model: Option<String>,
     pub priced: bool,
@@ -201,10 +97,10 @@ pub struct CostTurn {
 pub struct UnpricedTurn {
     pub turn: u32,
     pub model: Option<String>,
-    pub reason: &'static str,
+    pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CostReport {
     pub session_id: String,
     pub pricing_version: String,
@@ -215,6 +111,69 @@ pub struct CostReport {
     pub turns: Vec<CostTurn>,
     pub unpriced: Vec<UnpricedTurn>,
     pub forecast: Option<CostForecast>,
+    pub cache_usage: CacheUsageReport,
+}
+
+/// Recorded token buckets, independent of price availability. These describe
+/// the request retained for each turn, not cache lookup attempts or invoices.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheUsageReport {
+    pub fresh_input_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub cache_read_share: Option<f64>,
+    pub complete_turns: usize,
+    pub total_turns: usize,
+    pub multi_call_turns: usize,
+}
+
+fn cache_usage(session: &AgentSession) -> CacheUsageReport {
+    let mut report = CacheUsageReport {
+        fresh_input_tokens: None,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        cache_read_share: None,
+        complete_turns: 0,
+        total_turns: session.turn_count(),
+        multi_call_turns: 0,
+    };
+    let mut complete_input = 0u64;
+    let mut complete_reads = 0u64;
+    for turn in session.turns() {
+        let usage = turn.usage;
+        for (total, tokens) in [
+            (
+                &mut report.fresh_input_tokens,
+                usage
+                    .input
+                    .filter(|_| session.agent() != AgentKind::Codex || usage.cache_read.is_some()),
+            ),
+            (&mut report.cache_read_tokens, usage.cache_read),
+            (&mut report.cache_write_tokens, usage.cache_creation),
+        ] {
+            if let Some(tokens) = tokens {
+                *total = Some(total.unwrap_or(0).saturating_add(u64::from(tokens)));
+            }
+        }
+        if usage.api_calls.is_some_and(|calls| calls > 1) {
+            report.multi_call_turns += 1;
+        }
+        if let (Some(input), Some(read)) = (usage.input, usage.cache_read) {
+            if usage.prompt_tokens().is_some()
+                && (session.agent() == AgentKind::Codex || usage.cache_creation.is_some())
+            {
+                report.complete_turns += 1;
+                complete_reads += u64::from(read);
+                complete_input += u64::from(input)
+                    + u64::from(read)
+                    + u64::from(usage.cache_creation.unwrap_or(0));
+            }
+        }
+    }
+    report.cache_read_share =
+        (complete_input > 0).then(|| complete_reads as f64 / complete_input as f64);
+    report
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -235,7 +194,7 @@ pub struct CostScenario {
     pub pricing: Option<PricingOverrides>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CostComparison {
     pub baseline: CostReport,
     pub hypothetical: CostReport,
@@ -244,7 +203,7 @@ pub struct CostComparison {
 }
 
 /// Project the recorded request usage for every turn that has a usable model
-/// and a matching local rate. Reasoning is intentionally not a separate bill:
+/// and a matching published rate. Reasoning is intentionally not a separate bill:
 /// providers charge it as output, so adding it again would double-count.
 pub fn project(session: &AgentSession) -> CostReport {
     project_scenario(session, &CostScenario::default())
@@ -261,8 +220,16 @@ pub fn project_with(session: &AgentSession, pricing: Option<&PricingOverrides>) 
 }
 
 pub fn compare(session: &AgentSession, scenario: &CostScenario) -> CostComparison {
-    let baseline = project(session);
-    let hypothetical = project_scenario(session, scenario);
+    compare_with_provider(session, scenario, &UnavailablePricing)
+}
+
+pub fn compare_with_provider(
+    session: &AgentSession,
+    scenario: &CostScenario,
+    provider: &dyn PricingProvider,
+) -> CostComparison {
+    let baseline = project_scenario_with_provider(session, &CostScenario::default(), provider);
+    let hypothetical = project_scenario_with_provider(session, scenario, provider);
     let savings = MoneyMicros(baseline.total.0.saturating_sub(hypothetical.total.0));
     let mut assumptions = vec![
         "This is a token-policy estimate; it does not simulate future agent behavior or cache invalidation.".into(),
@@ -290,71 +257,119 @@ pub fn compare(session: &AgentSession, scenario: &CostScenario) -> CostCompariso
 }
 
 pub fn project_scenario(session: &AgentSession, scenario: &CostScenario) -> CostReport {
-    let catalog = PricingCatalog::BUNDLED;
-    let pricing_version = scenario
-        .pricing
-        .as_ref()
-        .map(|pricing| pricing.version.clone())
-        .unwrap_or_else(|| catalog.version.to_string());
-    let pricing_source = scenario
-        .pricing
-        .as_ref()
-        .map(|pricing| pricing.source.clone())
-        .unwrap_or_else(|| catalog.source.to_string());
-    let warning = scenario
-        .pricing
-        .as_ref()
-        .map(|_| {
-            "This is an estimate based on a local override table; verify it against your contract."
-                .to_string()
-        })
-        .unwrap_or_else(|| catalog.warning.to_string());
+    project_scenario_with_provider(session, scenario, &UnavailablePricing)
+}
+
+pub fn project_scenario_with_provider(
+    session: &AgentSession,
+    scenario: &CostScenario,
+    provider: &dyn PricingProvider,
+) -> CostReport {
     let mut categories = category_totals();
     let mut turns = Vec::new();
+    let mut future_turns = Vec::new();
     let mut unpriced = Vec::new();
-
+    let mut versions = BTreeSet::new();
+    let mut warnings = BTreeSet::new();
     for turn in session.turns() {
         let model = scenario.model_override.clone().or_else(|| {
             turn.model
                 .clone()
                 .or_else(|| session.metadata().model.clone())
         });
-        let Some(model_name) = model.clone() else {
+        let Some(model_name) = model.as_deref() else {
             unpriced.push(UnpricedTurn {
                 turn: turn.number.get(),
                 model,
-                reason: "the log did not record a model",
-            });
-            continue;
-        };
-        let rate = scenario
-            .pricing
-            .as_ref()
-            .and_then(|pricing| pricing.match_model(&model_name))
-            .or_else(|| catalog.match_model(&model_name).map(|matched| matched.rate));
-        let Some(rate) = rate else {
-            unpriced.push(UnpricedTurn {
-                turn: turn.number.get(),
-                model,
-                reason: "no bundled rate matches this model",
+                reason: "the log did not record a model".into(),
             });
             continue;
         };
         let mut usage = turn.usage;
+        if usage.input.is_none() || usage.output.is_none() {
+            unpriced.push(UnpricedTurn {
+                turn: turn.number.get(),
+                model,
+                reason: "the log did not record complete input and output token usage".into(),
+            });
+            continue;
+        }
+        let missing_split = usage.cache_read.is_none()
+            || (session.agent() == AgentKind::ClaudeCode && usage.cache_creation.is_none());
+        if missing_split || usage.api_calls.is_some_and(|calls| calls > 1) {
+            unpriced.push(UnpricedTurn {
+                turn: turn.number.get(),
+                model,
+                reason: if missing_split {
+                    "the log did not record a complete cache split; uncached pricing would be misleading"
+                } else {
+                    "multiple API calls were logged together; retained input is the largest request, not billable input across all calls"
+                }.into(),
+            });
+            continue;
+        }
         if let Some(cap) = scenario.cap_input_tokens {
             usage.input = Some(usage.input.unwrap_or(0).min(cap));
         }
         if let Some(cap) = scenario.cap_output_tokens {
             usage.output = Some(usage.output.unwrap_or(0).min(cap));
         }
-        let priced = usage_cost(usage, rate);
+        let quote = |at| -> Result<PriceQuote, String> {
+            if let Some(pricing) = &scenario.pricing {
+                if let Some(rate) = pricing.match_model(model_name) {
+                    return Ok(PriceQuote {
+                        rate,
+                        version: pricing.version.clone(),
+                        source: pricing.source.clone(),
+                        warning: "Explicit contract override; verify against your agreement."
+                            .into(),
+                    });
+                }
+            }
+            provider.quote(model_name, at, usage)
+        };
+        // A session start is not evidence of when a particular request ran.
+        let matched = match quote(turn.timestamp) {
+            Ok(matched) => matched,
+            Err(reason) => {
+                unpriced.push(UnpricedTurn {
+                    turn: turn.number.get(),
+                    model,
+                    reason,
+                });
+                continue;
+            }
+        };
+        versions.insert(matched.version.clone());
+        warnings.insert(matched.warning.clone());
+        let priced = usage_cost(usage, matched.rate);
         for category in &priced {
             if let Some(total) = categories
                 .iter_mut()
                 .find(|total| total.name == category.name)
             {
-                total.tokens += category.tokens;
-                total.cost.0 += category.cost.0;
+                total.tokens = total.tokens.saturating_add(category.tokens);
+                total.cost.0 = total.cost.0.saturating_add(category.cost.0);
+            }
+        }
+        if scenario.forecast_turns.is_some_and(|count| count > 0) {
+            match quote(None) {
+                Ok(current) => {
+                    warnings.insert(current.warning.replace("Current list-price estimate; the request has no timestamp, so historical pricing cannot be established.", "Forecast uses current list prices."));
+                    let categories = usage_cost(usage, current.rate);
+                    future_turns.push(CostTurn {
+                        turn: turn.number.get(),
+                        model: model.clone(),
+                        priced: true,
+                        total: MoneyMicros(categories.iter().map(|category| category.cost.0).sum()),
+                        categories,
+                        pricing_version: current.version,
+                        pricing_source: current.source,
+                    });
+                }
+                Err(reason) => {
+                    warnings.insert(format!("Forecast unavailable: {reason}"));
+                }
             }
         }
         turns.push(CostTurn {
@@ -363,24 +378,45 @@ pub fn project_scenario(session: &AgentSession, scenario: &CostScenario) -> Cost
             priced: true,
             total: MoneyMicros(priced.iter().map(|category| category.cost.0).sum()),
             categories: priced,
+            pricing_version: matched.version,
+            pricing_source: matched.source,
         });
     }
-
     let total = MoneyMicros(categories.iter().map(|category| category.cost.0).sum());
     let forecast = scenario
         .forecast_turns
-        .filter(|turns| *turns > 0)
-        .and_then(|additional_turns| build_forecast(&turns, additional_turns, total));
+        .filter(|count| *count > 0)
+        .filter(|_| unpriced.is_empty() && future_turns.len() == turns.len())
+        .and_then(|count| build_forecast(&future_turns, count, total));
+    if !unpriced.is_empty() {
+        warnings.insert(format!("Partial estimate: {} turn(s) are unpriced and excluded from totals. Forecast is unavailable with incomplete pricing.", unpriced.len()));
+    }
     CostReport {
         session_id: session.id().to_string(),
-        pricing_version,
-        pricing_source,
-        warning,
+        pricing_version: match versions.len() {
+            0 => "unavailable".into(),
+            1 => versions.into_iter().next().unwrap(),
+            count => format!("{count} pricing revisions"),
+        },
+        pricing_source: scenario
+            .pricing
+            .as_ref()
+            .map(|p| {
+                format!(
+                    "{}; automatic third-party rates for unmatched models",
+                    p.source
+                )
+            })
+            .unwrap_or_else(|| {
+                "LiteLLM public pricing catalog; revision sources are recorded per turn".into()
+            }),
+        warning: warnings.into_iter().collect::<Vec<_>>().join(" "),
         categories,
         total,
         turns,
         unpriced,
         forecast,
+        cache_usage: cache_usage(session),
     }
 }
 
@@ -415,7 +451,8 @@ fn build_forecast(
         projected_additional,
         projected_total: MoneyMicros(observed_total.0.saturating_add(projected_additional.0)),
         assumptions: vec![
-            "Future turns use the average priced turn in this session.".into(),
+            "Future turns use the average recorded token usage repriced at current list prices."
+                .into(),
             "Future model choice, cache state, and agent behavior are not observed.".into(),
             format!("The forecast covers {additional_turns} additional turn(s)."),
         ],
@@ -472,6 +509,112 @@ mod tests {
     use super::*;
     use ct_domain::{AgentKind, SessionId, SessionMetadata, Turn, TurnNumber};
 
+    struct DatedPrices;
+    impl PricingProvider for DatedPrices {
+        fn quote(
+            &self,
+            model: &str,
+            at: Option<chrono::DateTime<chrono::Utc>>,
+            _usage: TokenUsage,
+        ) -> Result<PriceQuote, String> {
+            if model == "unknown" {
+                return Err("no historical match".into());
+            }
+            Ok(PriceQuote {
+                rate: ModelRate {
+                    input_per_million: if at.is_some() { 1_000_000 } else { 2_000_000 },
+                    output_per_million: 0,
+                    cache_read_per_million: 0,
+                    cache_write_per_million: 0,
+                },
+                version: if at.is_some() {
+                    "historical"
+                } else {
+                    "current"
+                }
+                .into(),
+                source: "test catalog revision".into(),
+                warning: "test list-price estimate".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn historical_spend_and_current_forecast_use_different_quotes() {
+        let session = priced_session("known");
+        let report = project_scenario_with_provider(
+            &session,
+            &CostScenario {
+                forecast_turns: Some(3),
+                ..Default::default()
+            },
+            &DatedPrices,
+        );
+        assert_eq!(report.total.0, 1_000_000);
+        assert_eq!(report.turns[0].pricing_version, "historical");
+        let forecast = report.forecast.unwrap();
+        assert_eq!(forecast.projected_additional.0, 6_000_000);
+        assert_eq!(forecast.projected_total.0, 7_000_000);
+    }
+
+    #[test]
+    fn unavailable_history_disables_forecast_and_missing_time_is_explicitly_current() {
+        let report = project_scenario_with_provider(
+            &priced_session("unknown"),
+            &CostScenario {
+                forecast_turns: Some(3),
+                ..Default::default()
+            },
+            &DatedPrices,
+        );
+        assert_eq!(report.unpriced[0].reason, "no historical match");
+        assert!(report.turns.is_empty());
+        assert!(report.forecast.is_none());
+        let session = priced_session("known");
+        let mut turns = session.turns().to_vec();
+        turns[0].timestamp = None;
+        let untimed = AgentSession::new(
+            session.id().clone(),
+            session.agent(),
+            session.metadata().clone(),
+            vec![],
+            turns,
+            vec![],
+        );
+        let report =
+            project_scenario_with_provider(&untimed, &CostScenario::default(), &DatedPrices);
+        assert_eq!(report.total.0, 2_000_000);
+        assert_eq!(report.turns[0].pricing_version, "current");
+    }
+
+    fn priced_session(model: &str) -> AgentSession {
+        AgentSession::new(
+            SessionId::new("pricing-test").unwrap(),
+            AgentKind::Codex,
+            SessionMetadata::default(),
+            vec![],
+            vec![Turn {
+                number: TurnNumber::FIRST,
+                model: Some(model.into()),
+                timestamp: Some(
+                    chrono::DateTime::parse_from_rfc3339("2020-01-02T12:00:00Z")
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                ),
+                usage: TokenUsage {
+                    input: Some(1_000_000),
+                    cache_read: Some(0),
+                    output: Some(0),
+                    ..Default::default()
+                },
+                event_indices: vec![],
+                anchor_index: None,
+                response_start_index: None,
+            }],
+            vec![],
+        )
+    }
+
     #[test]
     fn prices_each_usage_category_without_double_counting_reasoning() {
         let categories = usage_cost(
@@ -509,9 +652,73 @@ mod tests {
 
     #[test]
     fn unknown_models_are_not_reported_as_free() {
-        assert!(PricingCatalog::BUNDLED
-            .match_model("future-model")
-            .is_none());
+        assert!(UnavailablePricing
+            .quote("future-model", None, TokenUsage::default())
+            .is_err());
+    }
+
+    #[test]
+    fn cache_statistics_survive_unpriced_models_and_preserve_unknown_buckets() {
+        let original = priced_session("unknown");
+        let mut turns = original.turns().to_vec();
+        turns[0].usage.input = Some(200);
+        turns[0].usage.cache_read = Some(800);
+        let session = AgentSession::new(
+            original.id().clone(),
+            original.agent(),
+            original.metadata().clone(),
+            vec![],
+            turns.clone(),
+            vec![],
+        );
+        let report = project(&session);
+        assert_eq!(report.cache_usage.fresh_input_tokens, Some(200));
+        assert_eq!(report.cache_usage.cache_read_tokens, Some(800));
+        assert_eq!(report.cache_usage.cache_write_tokens, None);
+        assert_eq!(report.cache_usage.cache_read_share, Some(0.8));
+        assert_eq!(report.cache_usage.complete_turns, 1);
+        assert!(report.turns.is_empty());
+        turns[0].usage.cache_read = None;
+        let session = AgentSession::new(
+            original.id().clone(),
+            original.agent(),
+            original.metadata().clone(),
+            vec![],
+            turns,
+            vec![],
+        );
+        let report = project(&session);
+        assert_eq!(report.cache_usage.cache_read_tokens, None);
+        assert_eq!(report.cache_usage.fresh_input_tokens, None);
+        assert_eq!(report.cache_usage.cache_read_share, None);
+        assert!(report.unpriced[0].reason.contains("complete cache split"));
+    }
+
+    #[test]
+    fn multi_call_context_samples_are_not_priced_as_complete_billing_usage() {
+        let original = priced_session("known");
+        let mut turns = original.turns().to_vec();
+        turns[0].usage.api_calls = Some(2);
+        let session = AgentSession::new(
+            original.id().clone(),
+            original.agent(),
+            original.metadata().clone(),
+            vec![],
+            turns,
+            vec![],
+        );
+        let report = project_scenario_with_provider(
+            &session,
+            &CostScenario {
+                forecast_turns: Some(3),
+                ..Default::default()
+            },
+            &DatedPrices,
+        );
+        assert!(report.turns.is_empty());
+        assert!(report.forecast.is_none());
+        assert_eq!(report.cache_usage.multi_call_turns, 1);
+        assert!(report.unpriced[0].reason.contains("multiple API calls"));
     }
 
     #[test]
@@ -530,11 +737,13 @@ mod tests {
                 model: None,
                 usage: TokenUsage {
                     input: Some(1_000_000),
+                    cache_read: Some(0),
                     output: Some(1_000_000),
                     ..Default::default()
                 },
                 event_indices: vec![],
                 anchor_index: None,
+                response_start_index: None,
             }],
             vec![],
         );
@@ -562,5 +771,86 @@ mod tests {
         assert_eq!(report.pricing_version, "test");
         assert_eq!(report.total.0, 3_000_000);
         assert_eq!(report.forecast.unwrap().additional_turns, 3);
+    }
+    #[test]
+    fn billing_completeness_distinguishes_unknown_buckets_from_known_zero_for_both_agents() {
+        let base = priced_session("known");
+        for agent in [AgentKind::Codex, AgentKind::ClaudeCode] {
+            for bits in 0u8..16 {
+                let mut turns = base.turns().to_vec();
+                turns[0].usage = TokenUsage {
+                    input: (bits & 1 != 0).then_some(0),
+                    output: (bits & 2 != 0).then_some(0),
+                    cache_read: (bits & 4 != 0).then_some(0),
+                    cache_creation: (bits & 8 != 0).then_some(0),
+                    ..Default::default()
+                };
+                let session = AgentSession::new(
+                    base.id().clone(),
+                    agent,
+                    base.metadata().clone(),
+                    vec![],
+                    turns,
+                    vec![],
+                );
+                let scenario = CostScenario {
+                    forecast_turns: Some(3),
+                    cap_input_tokens: Some(0),
+                    cap_output_tokens: Some(0),
+                    ..Default::default()
+                };
+                let report = project_scenario_with_provider(&session, &scenario, &DatedPrices);
+                let complete = bits & 7 == 7 && (agent == AgentKind::Codex || bits & 8 != 0);
+                assert_eq!(
+                    report.unpriced.is_empty(),
+                    complete,
+                    "{agent}, bucket bits {bits}"
+                );
+                assert_eq!(report.turns.len(), usize::from(complete));
+                assert_eq!(report.forecast.is_some(), complete);
+                assert_eq!(report.total.0, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn input_only_and_output_only_usage_are_unpriced_and_never_forecast() {
+        let base = priced_session("known");
+        for usage in [
+            TokenUsage {
+                input: Some(100),
+                cache_read: Some(0),
+                ..Default::default()
+            },
+            TokenUsage {
+                output: Some(50),
+                ..Default::default()
+            },
+        ] {
+            let mut turns = base.turns().to_vec();
+            turns[0].usage = usage;
+            let session = AgentSession::new(
+                base.id().clone(),
+                base.agent(),
+                base.metadata().clone(),
+                vec![],
+                turns,
+                vec![],
+            );
+            let report = project_scenario_with_provider(
+                &session,
+                &CostScenario {
+                    forecast_turns: Some(3),
+                    ..Default::default()
+                },
+                &DatedPrices,
+            );
+            assert!(report.turns.is_empty());
+            assert_eq!(report.unpriced.len(), 1);
+            assert!(report.unpriced[0]
+                .reason
+                .contains("complete input and output"));
+            assert!(report.forecast.is_none());
+        }
     }
 }

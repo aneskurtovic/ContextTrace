@@ -291,11 +291,10 @@ fn translate(
     let mut extras = LineExtras::default();
 
     let kind = match value {
-        // Oversized or unparseable records remain diagnostic session events;
-        // Claude Code has no lexical oversized-content recovery path yet.
-        None => EventKind::SessionEvent {
-            subtype: raw_type.clone(),
-        },
+        // Neither malformed JSON nor a skipped oversized record proves that
+        // the content was harmless metadata. Keep the loss visible to doctor
+        // and reconstruction fidelity rather than reporting a clean parse.
+        None => EventKind::Unrecognised,
         Some(v) => {
             absorb_metadata(v, metadata, timestamp);
             match raw_type.as_str() {
@@ -343,6 +342,16 @@ fn translate(
         }
     };
 
+    let raw_type = if matches!(kind, EventKind::Unrecognised) && raw_type == "system" {
+        format!(
+            "system/{}",
+            value
+                .and_then(|v| str_field(v, "subtype"))
+                .unwrap_or_else(|| "missing-subtype".into())
+        )
+    } else {
+        raw_type
+    };
     let content_measurement = include_content_analysis
         .then(|| value.and_then(|value| content_measurement(value, &kind)))
         .flatten();
@@ -359,6 +368,7 @@ fn translate(
         raw_type,
         turn: None,
         links,
+        tool_operations: value.map(tool_operations).unwrap_or_default(),
         content_measurement,
     };
 
@@ -449,6 +459,42 @@ fn value_has_content(value: &Value) -> bool {
     }
 }
 
+/// Preserve operations without splitting a line's identity or usage record.
+fn tool_operations(value: &Value) -> Vec<EventKind> {
+    let Some(blocks) = value
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let role = value.get("type").and_then(Value::as_str);
+    blocks
+        .iter()
+        .filter_map(|block| match (role, block_type(block)) {
+            (Some("assistant"), Some("tool_use")) => Some(EventKind::ToolCall {
+                tool: str_field(block, "name").unwrap_or_else(|| "unknown".into()),
+                call_id: str_field(block, "id"),
+                char_len: content_chars(std::slice::from_ref(block)),
+                target: block.get("input").and_then(crate::tool_target::describe),
+                file_target: block.get("input").and_then(|input| {
+                    crate::tool_target::file_target(input, value.get("cwd").and_then(Value::as_str))
+                }),
+            }),
+            (Some("user"), Some("tool_result")) => Some(EventKind::ToolResult {
+                tool: None,
+                call_id: str_field(block, "tool_use_id"),
+                char_len: content_chars(std::slice::from_ref(block)),
+                is_error: block
+                    .get("is_error")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Classify an `assistant` line.
 ///
 /// One line holds one *content block group* of a response. Priority order
@@ -466,6 +512,9 @@ fn assistant_kind(v: &Value) -> EventKind {
                 call_id: str_field(tool, "id"),
                 char_len,
                 target: tool.get("input").and_then(crate::tool_target::describe),
+                file_target: tool.get("input").and_then(|input| {
+                    crate::tool_target::file_target(input, v.get("cwd").and_then(Value::as_str))
+                }),
             };
         }
         let has_thinking = blocks.iter().any(|b| block_type(b) == Some("thinking"));
@@ -567,11 +616,27 @@ fn attachment_label(attachment: &Value, mechanism: &str) -> String {
     }
 }
 
-/// Classify a `system` line. The one that matters is `compact_boundary`.
+/// Classify a `system` line. Only `compact_boundary` changes replay history.
 fn system_kind(v: &Value) -> EventKind {
     let subtype = str_field(v, "subtype").unwrap_or_else(|| "system".into());
     if subtype != "compact_boundary" {
-        return EventKind::SessionEvent { subtype };
+        return if matches!(
+            subtype.as_str(),
+            "turn_duration"
+                | "stop_hook_summary"
+                | "api_error"
+                | "local_command"
+                | "informational"
+                // User-facing recaps and remote-control notices, not model
+                // messages. Preserve source references and text extraction
+                // without adding context weight or an eviction boundary.
+                | "away_summary"
+                | "bridge_status"
+        ) {
+            EventKind::SessionEvent { subtype }
+        } else {
+            EventKind::Unrecognised
+        };
     }
 
     let meta = v.get("compactMetadata").unwrap_or(&Value::Null);
@@ -657,6 +722,14 @@ fn derive_turns(events: &mut [Event], extras: &[LineExtras]) -> Vec<Turn> {
         for &i in &indices {
             events[i].turn = Some(turn_number);
         }
+        let response_start_index = indices
+            .iter()
+            .copied()
+            .find(|&i| {
+                events[i].raw_type == "assistant"
+                    && (i == index || (request.is_some() && extras[i].request_id == request))
+            })
+            .unwrap_or(index);
         turns.push(Turn {
             number: turn_number,
             timestamp: events[index].timestamp,
@@ -664,6 +737,7 @@ fn derive_turns(events: &mut [Event], extras: &[LineExtras]) -> Vec<Turn> {
             usage,
             event_indices: indices,
             anchor_index: Some(index),
+            response_start_index: Some(response_start_index),
         });
         current_request = request;
         number += 1;
@@ -942,6 +1016,12 @@ pub(crate) fn transcript_blocks(line: &str) -> Vec<ct_domain::ports::TranscriptB
                     call_id: str_field(block, "id"),
                     char_len,
                     target: block.get("input").and_then(crate::tool_target::describe),
+                    file_target: block.get("input").and_then(|input| {
+                        crate::tool_target::file_target(
+                            input,
+                            value.get("cwd").and_then(Value::as_str),
+                        )
+                    }),
                 },
                 Some("tool_result") => EventKind::ToolResult {
                     tool: None,
@@ -1100,7 +1180,65 @@ fn prompt_sum(v: &Value) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn response_boundary_includes_blocks_without_usage_before_the_report() {
+        let mut metadata = SessionMetadata::default();
+        let values = [
+            json!({"type":"user","uuid":"u","message":{"role":"user","content":"input"}}),
+            json!({"type":"assistant","uuid":"a","parentUuid":"u","requestId":"r","message":{"role":"assistant","content":[{"type":"thinking","thinking":"current reasoning"}]}}),
+            json!({"type":"assistant","uuid":"b","parentUuid":"a","requestId":"r","message":{"role":"assistant","content":[{"type":"text","text":"current output"}],"usage":{"input_tokens":10,"output_tokens":10}}}),
+        ];
+        let mut events = Vec::new();
+        let mut extras = Vec::new();
+        for (index, value) in values.into_iter().enumerate() {
+            let record = LineRecord {
+                line_no: index as u32 + 1,
+                offset: 0,
+                len: 100,
+                value: Some(value),
+                oversized: false,
+                truncated: false,
+                sniffed_type: None,
+            };
+            let (event, extra) = translate(&record, &mut metadata, false);
+            events.push(event);
+            extras.push(extra);
+        }
+        let turns = derive_turns(&mut events, &extras);
+        assert_eq!(turns[0].anchor_index, Some(2));
+        assert_eq!(turns[0].response_start_index, Some(1));
+    }
+
+    #[test]
+    fn novel_system_subtypes_are_reported_as_drift() {
+        assert!(matches!(
+            system_kind(&serde_json::json!({"type":"system","subtype":"future_context_injection"})),
+            EventKind::Unrecognised
+        ));
+        assert!(matches!(
+            system_kind(&serde_json::json!({"type":"system"})),
+            EventKind::Unrecognised
+        ));
+    }
     use serde_json::json;
+
+    #[test]
+    fn skipped_or_malformed_records_are_visible_fidelity_losses() {
+        for oversized in [false, true] {
+            let record = LineRecord {
+                offset: 42,
+                len: 100,
+                line_no: 3,
+                value: None,
+                oversized,
+                truncated: false,
+                sniffed_type: oversized.then(|| "assistant".into()),
+            };
+            let (event, _) = translate(&record, &mut SessionMetadata::default(), false);
+            assert!(matches!(event.kind, EventKind::Unrecognised));
+            assert_eq!(event.source.byte_offset, 42);
+        }
+    }
 
     #[test]
     fn prompt_size_includes_cache_fields() {

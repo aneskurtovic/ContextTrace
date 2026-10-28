@@ -1,14 +1,5 @@
 mod commands;
 
-fn focus_main_window(app: &tauri::AppHandle) {
-    use tauri::Manager;
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
-}
-
 #[tauri::command]
 fn is_installed_build() -> bool {
     #[cfg(target_os = "windows")]
@@ -79,14 +70,20 @@ pub fn run() {
         // whether this process should keep running at all, so every other
         // plugin's setup would otherwise happen in a process we are about to
         // hand off to and exit.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            focus_main_window(app);
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            commands::notifications::activation::focus(app);
+            commands::notifications::activation::receive(app, argv);
         }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(commands::notifications::activation::ActivationState::default())
         .manage(commands::AppState::new())
         .manage(commands::notifications::NotificationState::new())
         .setup(|app| {
+            // Startup arguments are queued until the webview has subscribed.
+            commands::notifications::activation::receive(app.handle(), std::env::args());
             commands::notifications::start_monitor(app.handle().clone());
             Ok(())
         })
@@ -96,9 +93,13 @@ pub fn run() {
             commands::get_startup,
             commands::search_sessions,
             commands::list_projects,
+            commands::resume::prepare_resume,
+            commands::resume::resume_session,
             commands::search_memory,
             commands::inspect_session,
             commands::get_context,
+            commands::local_files::open_context_file,
+            commands::notifications::activation::take_notification_activations,
             commands::get_corpus,
             commands::get_corpus_cached,
             commands::get_transcript,
@@ -129,7 +130,7 @@ pub fn run() {
         .run(|_app, _event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
-                focus_main_window(_app);
+                commands::notifications::activation::focus(_app);
             }
         });
 }

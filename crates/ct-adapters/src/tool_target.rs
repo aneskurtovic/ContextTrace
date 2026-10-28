@@ -20,7 +20,39 @@
 //! field of its arguments would be inventing a label, and a wrong filename is
 //! worse than no filename.
 
+use ct_domain::model::event::FileTarget;
 use serde_json::Value;
+
+/// Keep only explicitly named filesystem arguments, without label normalization.
+pub fn file_target(input: &Value, cwd: Option<&str>) -> Option<FileTarget> {
+    let object = input.as_object()?;
+    // A path used as a search scope is still a directory, but commands, URLs,
+    // queries and prompts must never become filesystem actions.
+    let path = ["file_path", "notebook_path", "path", "file"]
+        .iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str))?;
+    if path.is_empty()
+        || path.len() > 32768
+        || path.chars().any(char::is_control)
+        || path.contains("://")
+    {
+        return None;
+    }
+    let working_directory = object
+        .get("workdir")
+        .or_else(|| object.get("cwd"))
+        .and_then(Value::as_str)
+        .or(cwd)
+        .map(str::to_owned);
+    Some(FileTarget {
+        path: path.to_owned(),
+        working_directory,
+    })
+}
+
+pub fn file_target_encoded(arguments: &str) -> Option<FileTarget> {
+    file_target(&serde_json::from_str::<Value>(arguments).ok()?, None)
+}
 
 /// Argument names that identify what a call acted on, most specific first.
 ///
@@ -137,6 +169,33 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn exact_file_targets_survive_label_shortening_and_whitespace_normalization() {
+        let path = format!("C:/work/{}/image  one.png", "folder/".repeat(30));
+        let input = json!({"file_path": path, "workdir": "C:/work"});
+        assert!(describe(&input).unwrap().ends_with('…'));
+        let target = file_target(&input, None).unwrap();
+        assert_eq!(target.path, path);
+        assert_eq!(target.working_directory.as_deref(), Some("C:/work"));
+        assert_eq!(file_target_encoded(&input.to_string()), Some(target));
+        assert!(file_target(&json!({"path": "relative.png"}), Some("C:/recorded")).is_some());
+    }
+
+    #[test]
+    fn prose_commands_queries_and_urls_are_not_file_targets() {
+        for input in [
+            json!({"command": "cat C:/a.png"}),
+            json!({"query": "C:/a.png"}),
+            json!({"url": "https://example.com/a.png"}),
+            json!({"path": "https://example.com/a.png"}),
+            json!({"file_path": "bad\npath"}),
+            json!({"file_path": ""}),
+        ] {
+            assert_eq!(file_target(&input, None), None, "{input}");
+        }
+        assert_eq!(file_target_encoded("cat C:/a.png"), None);
+    }
 
     #[test]
     fn a_file_read_is_named_by_its_path() {

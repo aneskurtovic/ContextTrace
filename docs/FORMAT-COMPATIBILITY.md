@@ -1,5 +1,8 @@
 # JSONL format compatibility
 
+The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records producer
+versions as of that audit, parser fixes, sampled corpus evidence and remaining coverage limits.
+
 ContextTrace supports the persisted, on-disk session formats written by:
 
 - **Codex CLI** under `sessions` and `archived_sessions`;
@@ -59,7 +62,21 @@ The current fixtures are deliberately synthetic and therefore provide
 captures derived from real local JSONL and contain no prompts, source, tool
 output, identifiers or credentials.
 
-The current local evidence is:
+The 2026-10-07 evidence adds a synthetic upstream contract for Codex **0.161.0**
+and a local corpus sweep of 229 sessions / 100,651 events. The only remaining
+unrecognised event was one malformed Claude line. Recent Codex files included
+0.161.0; recent Claude files reached 2.1.292. The [2026-10-08 follow-up](FORMAT-FOLLOWUP-2026-10-08.md) subsequently added
+reviewed persisted/stdout captures for Codex **0.161.0** and Claude **2.1.293**.
+Rare Codex shapes still lack feature-matched real captures.
+
+Upstream was rechecked on 2026-10-08 for v0.1.13: the
+[Codex stable release](https://github.com/openai/codex/releases/tag/rust-v0.161.0)
+is still **0.161.0**; the [Claude changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
+now lists **2.1.294**. No version-matched 2.1.294 capture or real-agent resume
+acceptance was added in this patch; it remains unverified. These observations
+do not certify every feature of either producer.
+
+The historical reviewed-capture evidence is:
 
 - Codex CLI **0.156.1**: a redacted persisted-rollout shape capture covering
   `token_usage_record` and `response_item/compaction`.
@@ -69,16 +86,42 @@ The current local evidence is:
 - Claude Code **2.1.268** remains as a historical local capture covering the
   artifact-ledger sidecars.
 
-The installed version is now backed by a reviewed persisted capture. A release
+The versions listed above are backed by reviewed persisted captures; they are
+historical evidence, not the latest installed versions. A release
 may claim a producer version only when a redacted persisted capture or an
 equivalent reviewed local corpus is available.
 
-The adapters are intentionally tolerant of known outer envelopes. For example,
-an unrecognised `event_msg` subtype or Claude `system` subtype may still be
-classified as a generic session event when its envelope is known. That keeps
-the session readable, but it does not always reduce the fidelity score. This is
-a known limitation of the current drift signal and is why semantic fixture
-tests, versioned captures and manual release review remain necessary.
+Unknown Codex `event_msg` and Claude `system` subtypes produce fidelity
+warnings even when their outer envelopes are known. Only explicitly supported
+subtypes are classified as session metadata.
+
+### Claude presentation notices (v0.1.10)
+
+`system/away_summary` and `system/bridge_status` are now recognised as session
+events. The former is a user-facing recap; the latter is a remote-control
+notice. Original byte ranges and adapter text extraction are preserved for
+raw inspection. The conversation view continues to include model-context
+records and compactions. Neither notice contributes model-context tokens,
+starts a model request, or establishes a compaction boundary.
+
+The minimal reviewed fixture contains redacted, nonadjacent records from one
+Claude **2.1.239** persisted transcript; parent links to omitted records remain
+external. A separate synthetic-chain regression verifies that replay traverses
+these notices without dropping the original prompt or counting notice text.
+Unknown future subtypes and malformed JSON still warn.
+
+Classification was checked against the installed Claude **2.1.294** executable
+(SHA-256 `1f6471eb5a1c21a1f8b54a7827329d64433424dcce51717a54e837adb542163a`).
+Its `j6o` and `$6o` constructors create these presentation records; `S_` excludes
+system records other than `local_command`, and the request converter skips
+them. This is local producer-code evidence, not a complete version certification.
+The fixture catalog records the persisted capture's own producer version.
+
+The updated development CLI scanned 43 local Claude sessions / 21,574 events:
+one unrecognised event (the existing malformed JSON line), no unreadable files,
+and no remaining `away_summary` or `bridge_status` warnings. Doctor still exits
+1 for the malformed record. This is local parser verification; the change is
+included in v0.1.10 and was absent from v0.1.9.
 
 ## Update procedure
 
@@ -103,10 +146,15 @@ corpus local.
 
 | Input surface | Current commitment |
 |---|---|
-| Codex persisted rollout JSONL | Supported by the Codex adapter and fixture contracts; latest-version certification is a release gate. |
-| Claude Code persisted transcript JSONL | Supported by the Claude adapter and fixture contracts; latest-version certification is a release gate. |
+| Codex persisted rollout JSONL | Supported by the Codex adapter and fixture contracts; version-specific claims require reviewed capture evidence. |
+| Claude Code persisted transcript JSONL | Supported by the Claude adapter and fixture contracts; version-specific claims require reviewed capture evidence. |
 | Known historical format families | Retained and regression-tested when a fixture exists. |
 | Unknown/future producer versions | Best-effort parse with visible fidelity limits; no completeness guarantee. |
-| Codex stdout/app-server JSONL | Not the persisted-transcript adapter surface. |
-| Claude `stream-json` stdout | Not the persisted-transcript adapter surface. |
+| Codex stdout/app-server JSONL | Separate explicit timeline importer; no context reconstruction. See [stream imports](STREAM-IMPORTS.md). |
+| Claude `stream-json` stdout | Separate explicit timeline importer; no context reconstruction. |
 
+
+The [audit follow-up](FORMAT-FOLLOWUP-2026-10-08.md) adds reviewed persisted
+Codex 0.161.0 and Claude 2.1.293 captures, bounded input handling, nested drift
+diagnostics, and separately catalogued stream contracts. Rare new Codex shapes
+remain synthetic-only evidence.

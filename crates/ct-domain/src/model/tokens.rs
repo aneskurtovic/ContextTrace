@@ -102,7 +102,9 @@ impl fmt::Display for TokenCount {
 /// as zero.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
-    /// Fresh (uncached) input tokens.
+    /// Fresh (uncached) input tokens when the cache split is known. Codex logs
+    /// without a valid split retain inclusive input for context sizing only;
+    /// pricing and fresh-input statistics must refuse that ambiguous bucket.
     pub input: Option<u32>,
     /// Tokens written into the prompt cache by this request. Anthropic only.
     pub cache_creation: Option<u32>,

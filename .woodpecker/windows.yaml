@@ -75,6 +75,12 @@ variables:
     npm_config_cache: C:/woodpecker-cache/contexttrace/npm
 
 steps:
+  - name: release-notes
+    image: *shell
+    environment: *windows_env
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/test-release-notes.ps1
+
   - name: clippy
     image: *shell
     environment: *windows_env

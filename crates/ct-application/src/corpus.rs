@@ -195,6 +195,15 @@ impl Corpus {
 
     /// Fold one parsed session into the totals.
     pub fn add(&mut self, descriptor: &SessionDescriptor, session: &AgentSession) {
+        self.add_with_pricing(descriptor, session, &ct_domain::pricing::UnavailablePricing);
+    }
+
+    pub fn add_with_pricing(
+        &mut self,
+        descriptor: &SessionDescriptor,
+        session: &AgentSession,
+        pricing: &dyn ct_domain::pricing::PricingProvider,
+    ) {
         let agent = descriptor.agent;
         let turns = session.turn_count();
         let output = u64::from(session.total_output_tokens());
@@ -217,7 +226,8 @@ impl Corpus {
         agent_totals.events += session.events().len();
         agent_totals.output_tokens += output;
 
-        let report = cost::project(session);
+        let report =
+            cost::project_scenario_with_provider(session, &cost::CostScenario::default(), pricing);
         self.report.cost_micros += report.total.0;
         self.report.unpriced_turns += report.unpriced.len();
 
@@ -288,19 +298,27 @@ impl Corpus {
         // means resolving a result back to its call: both agents put the tool
         // name on the call and only sometimes on the result.
         let mut called: BTreeMap<&str, &str> = BTreeMap::new();
-        for event in session.events() {
+        for kind in session
+            .events()
+            .iter()
+            .flat_map(|event| event.tool_operations())
+        {
             if let EventKind::ToolCall {
                 tool,
                 call_id: Some(id),
                 ..
-            } = &event.kind
+            } = kind
             {
                 called.insert(id.as_str(), tool.as_str());
             }
         }
 
-        for event in session.events() {
-            match &event.kind {
+        for kind in session.events().iter().flat_map(|event| {
+            event.tool_operations().chain(
+                std::iter::once(&event.kind).filter(|kind| matches!(kind, EventKind::Compacted(_))),
+            )
+        }) {
+            match kind {
                 EventKind::ToolCall { tool, .. } => {
                     self.report.tool_calls += 1;
                     self.tools
@@ -435,9 +453,19 @@ impl Corpus {
 /// caller can report a sweep that takes seconds rather than appearing to hang.
 /// One unreadable session never stops it: finding out that four hundred
 /// sessions are fine and one is not is the point of running it.
-pub fn sweep_adapter(
+pub fn sweep_adapter(adapter: &dyn AgentAdapter, corpus: &mut Corpus, progress: impl FnMut(usize)) {
+    sweep_adapter_with_pricing(
+        adapter,
+        corpus,
+        &ct_domain::pricing::UnavailablePricing,
+        progress,
+    );
+}
+
+pub fn sweep_adapter_with_pricing(
     adapter: &dyn AgentAdapter,
     corpus: &mut Corpus,
+    pricing: &dyn ct_domain::pricing::PricingProvider,
     mut progress: impl FnMut(usize),
 ) {
     let Ok(descriptors) = adapter.discover() else {
@@ -445,7 +473,7 @@ pub fn sweep_adapter(
     };
     for (done, descriptor) in descriptors.into_iter().enumerate() {
         match adapter.load(&descriptor) {
-            Ok(session) => corpus.add(&descriptor, &session),
+            Ok(session) => corpus.add_with_pricing(&descriptor, &session, pricing),
             Err(_) => corpus.add_unreadable(),
         }
         progress(done + 1);
@@ -486,6 +514,7 @@ mod tests {
             raw_type: "test".into(),
             turn: None,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }
@@ -506,6 +535,7 @@ mod tests {
             },
             event_indices: Vec::new(),
             anchor_index: None,
+            response_start_index: None,
         }
     }
 
@@ -521,6 +551,24 @@ mod tests {
             turns,
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn legacy_serialized_tool_events_keep_accounting_without_block_facts() {
+        let event = event(
+            0,
+            EventKind::ToolResult {
+                tool: None,
+                call_id: None,
+                char_len: 20,
+                is_error: true,
+            },
+        );
+        let mut value = serde_json::to_value(&event).unwrap();
+        value.as_object_mut().unwrap().remove("tool_operations");
+        let restored: Event = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.tool_operations().count(), 1);
+        assert_eq!(restored.char_len(), Some(20));
     }
 
     #[test]
@@ -542,6 +590,7 @@ mod tests {
                             call_id: Some("c1".into()),
                             char_len: 20,
                             target: None,
+                            file_target: None,
                         },
                     ),
                     // No tool name on the result: it must still be attributed

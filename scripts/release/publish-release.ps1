@@ -14,6 +14,8 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 }
 
 $version = $Tag.Substring(1)
+. (Join-Path $PSScriptRoot 'release-notes.ps1')
+$releaseNotes = Get-ReleaseNotes -Tag $Tag
 $assetPrefix = "ContextTrace-$version-windows-x64"
 $installerName = "$assetPrefix-setup.exe"
 $macMode = if ($env:CONTEXTTRACE_MACOS_RELEASE -eq '1') { '1' } elseif ([string]::IsNullOrEmpty($env:CONTEXTTRACE_MACOS_RELEASE) -or $env:CONTEXTTRACE_MACOS_RELEASE -eq '0') { '0' } else { throw 'CONTEXTTRACE_MACOS_RELEASE must be 0 or 1.' }
@@ -93,11 +95,14 @@ if ($existingRelease.Count -gt 0) {
         tag_name = $Tag
         target_commitish = $targetCommit
         name = "ContextTrace $Tag"
-        body = "ContextTrace release. Woodpecker validation, packaging and asset integrity checks passed."
+        body = $releaseNotes
         draft = $false
         prerelease = $true
         generate_release_notes = $false
     } | ConvertTo-Json
+    if (($releaseBody | ConvertFrom-Json).body -isnot [string]) {
+        throw 'Release notes must serialize as a JSON string.'
+    }
     try {
         $release = Invoke-RestMethod -Method Post -Uri "$apiRoot/releases" -Headers $headers -ContentType 'application/json' -Body $releaseBody
     } catch {

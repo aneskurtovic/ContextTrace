@@ -89,13 +89,14 @@ impl FileNotificationStore {
                 path: path.display().to_string(),
                 detail: error.to_string(),
             })?;
-        for key in state
-            .records
-            .iter()
-            .map(|record| &record.candidate.dedupe_key)
-        {
-            if !state.dedupe_keys.contains(key) {
-                state.dedupe_keys.push(key.clone());
+        // Old feed records retain the provenance needed to qualify their keys.
+        // Keep old tombstones too, but never use an unqualified key to suppress
+        // another agent/session. Existing checkpoints still govern replay.
+        for record in &mut state.records {
+            let key = record.candidate.qualified_dedupe_key();
+            record.candidate.dedupe_key = key.clone();
+            if !state.dedupe_keys.contains(&key) {
+                state.dedupe_keys.push(key);
             }
         }
         state.next_id = state.next_id.max(
@@ -208,6 +209,8 @@ impl NotificationStore for FileNotificationStore {
         detected_at_ms: u64,
         catch_up: bool,
     ) -> PortResult<Option<NotificationRecord>> {
+        let mut candidate = candidate.clone();
+        candidate.dedupe_key = candidate.qualified_dedupe_key();
         self.mutate(|state| {
             if state.dedupe_keys.contains(&candidate.dedupe_key) {
                 return Ok(None);
@@ -375,6 +378,55 @@ mod tests {
 
         let reopened = FileNotificationStore::at(&scratch.0);
         assert_eq!(reopened.records(None, 10).unwrap(), vec![first]);
+    }
+
+    #[test]
+    fn compound_identity_survives_restart_and_clear_with_identical_rule_keys() {
+        let scratch = Scratch::new();
+        let store = FileNotificationStore::at(&scratch.0);
+        let now = now_ms();
+        let codex = candidate("compaction:session:8");
+        let mut claude = codex.clone();
+        claude.location.agent = AgentKind::ClaudeCode;
+        let mut other_session = codex.clone();
+        other_session.location.session_id = SessionId::new("other").unwrap();
+        for item in [&codex, &claude, &other_session] {
+            assert!(store.insert(item, now, false).unwrap().is_some());
+        }
+        let reopened = FileNotificationStore::at(&scratch.0);
+        assert_eq!(reopened.records(None, 10).unwrap().len(), 3);
+        reopened.clear_history().unwrap();
+        let reopened = FileNotificationStore::at(&scratch.0);
+        for item in [&codex, &claude, &other_session] {
+            assert!(reopened.insert(item, now, false).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_record_migrates_without_suppressing_same_id_in_other_agent() {
+        let scratch = Scratch::new();
+        let store = FileNotificationStore::at(&scratch.0);
+        let now = now_ms();
+        let codex = candidate("compaction:session:8");
+        store.insert(&codex, now, false).unwrap().unwrap();
+        // Stage the old on-disk representation without modifying user history.
+        store
+            .mutate(|state| {
+                state.records[0].candidate.dedupe_key = codex.dedupe_key.clone();
+                state.dedupe_keys = vec![codex.dedupe_key.clone()];
+                Ok(())
+            })
+            .unwrap();
+        let reopened = FileNotificationStore::at(&scratch.0);
+        assert!(reopened.insert(&codex, now, true).unwrap().is_none());
+        let mut claude = codex.clone();
+        claude.location.agent = AgentKind::ClaudeCode;
+        assert!(reopened.insert(&claude, now, true).unwrap().is_some());
+        reopened.clear_history().unwrap();
+        assert!(FileNotificationStore::at(&scratch.0)
+            .insert(&codex, now, true)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

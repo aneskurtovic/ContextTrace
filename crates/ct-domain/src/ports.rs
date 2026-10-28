@@ -298,6 +298,40 @@ pub trait TokenEstimator: Send + Sync {
     }
 }
 
+/// Refusals are distinct from missing/unreadable files and never treated as drift.
+#[derive(Debug)]
+pub enum InstructionReadError {
+    UnsafePath,
+    TooLarge,
+    NotRegular,
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for InstructionReadError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl std::fmt::Display for InstructionReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsafePath => write!(f, "path is not an ordinary local file"),
+            Self::TooLarge => write!(f, "instruction file exceeds the configured byte limit"),
+            Self::NotRegular => write!(f, "instruction file is not a regular file"),
+            Self::Io(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for InstructionReadError {}
+
+/// Read only bounded regular local instruction files. Implementations must
+/// enforce locality before I/O, not trust evidence-derived path labels.
+pub trait InstructionFileReader: Send + Sync {
+    fn read(&self, path: &std::path::Path) -> Result<Vec<u8>, InstructionReadError>;
+}
+
 /// A fixed-size content measurement supplied by the edge that knows the
 /// fingerprint algorithm. The application can compare a recorded payload
 /// with a current file without retaining either body or learning a hash

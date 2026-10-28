@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import * as api from "./api";
 import {
@@ -37,6 +38,8 @@ vi.mock("./api", () => ({
   getStartup: vi.fn(),
   searchSessions: vi.fn(),
   listProjects: vi.fn(),
+  prepareResume: vi.fn(),
+  resumeSession: vi.fn(),
   inspectSession: vi.fn(),
   getContext: vi.fn(),
   getCorpus: vi.fn(),
@@ -65,6 +68,9 @@ vi.mock("./api", () => ({
   dismissNotification: vi.fn(),
   clearNotificationHistory: vi.fn(),
   listenForNotificationUpdates: vi.fn(),
+  listenForNotificationActivations: vi.fn(),
+  takeNotificationActivations: vi.fn(),
+  openContextFile: vi.fn(),
   listenForSessionUpdates: vi.fn(),
   searchMemory: vi.fn(),
 }));
@@ -92,10 +98,12 @@ function sessionPage(
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 /** Open the first session from the all-sessions landing page. */
@@ -168,6 +176,9 @@ beforeEach(() => {
   mockedApi.dismissNotification.mockResolvedValue(undefined);
   mockedApi.clearNotificationHistory.mockResolvedValue(undefined);
   mockedApi.listenForNotificationUpdates.mockResolvedValue(() => undefined);
+  mockedApi.listenForNotificationActivations.mockResolvedValue(() => undefined);
+  mockedApi.takeNotificationActivations.mockResolvedValue([]);
+  mockedApi.openContextFile.mockResolvedValue(undefined);
   mockedApi.listenForSessionUpdates.mockResolvedValue(() => undefined);
 });
 
@@ -179,6 +190,47 @@ afterEach(() => {
 afterEach(() => window.localStorage.clear());
 
 describe("desktop accessibility and state handling", () => {
+  it.each(['codex', 'claude-code'] as const)('prepares and launches %s without selecting the row or sending a prompt', async (agent) => {
+    const session = demoSessions.find((session) => session.agent === agent && session.threadRole.kind === 'root')!;
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    mockedApi.prepareResume.mockResolvedValue({ agent, id: session.id, project: session.project, directory: session.project, command: `${agent === 'codex' ? 'codex resume' : 'claude --resume'} ${session.id}`, canLaunch: true, reason: null, isParent: false });
+    mockedApi.resumeSession.mockResolvedValue(undefined);
+    render(<App />);
+    const button = await screen.findByRole('button', { name: /^Resume .* conversation:/ });
+    button.focus();
+    fireEvent.click(button);
+    const dialog = await screen.findByRole('dialog', { name: /^Resume .* session$/ });
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: 'Open terminal' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(mockedApi.prepareResume).toHaveBeenCalledWith(agent, session.id, undefined);
+    expect(mockedApi.inspectSession).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open terminal' }));
+    await waitFor(() => expect(mockedApi.resumeSession).toHaveBeenCalledWith(agent, session.id, undefined));
+    expect(await within(dialog).findByText(/Terminal opened/)).not.toBeNull();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Resume .* session$/ })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(button));
+  });
+
+  it('requires a valid replacement folder and explains parent-session resume', async () => {
+    const session = { ...demoSessions[0], project: 'C:/Temp/gone', threadRole: { kind: 'subagent' as const, parent: 'parent' } };
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    mockedApi.prepareResume.mockImplementation(async (_agent, _id, directory) => ({
+      agent: session.agent, id: 'parent', project: session.project, directory: directory ?? session.project,
+      command: 'codex resume parent', canLaunch: directory === 'C:/work',
+      reason: directory === 'C:/work' ? null : 'The working folder is missing. Enter an existing folder.', isParent: true,
+    }));
+    mockedApi.resumeSession.mockRejectedValue(new Error('The agent CLI is unavailable.'));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Resume parent of/ }));
+    const dialog = await screen.findByRole('dialog', { name: /^Resume .* session$/ });
+    expect(await within(dialog).findByText(/This is a subagent transcript/)).not.toBeNull();
+    expect((within(dialog).getByRole('button', { name: 'Open terminal' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Working folder'), { target: { value: 'C:/work' } });
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: 'Open terminal' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open terminal' }));
+    expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'The agent CLI is unavailable.');
+  });
+
   it("shows the models used in both Overview and Chat", async () => {
     const detail = demoDetail(demoSessions[0].id);
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
@@ -228,6 +280,28 @@ describe("desktop accessibility and state handling", () => {
     ).toBe("false");
   });
 
+  it("loads third-party prices automatically without a pricing file field", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    expect(await screen.findByText("Automatic prices from LiteLLM")).not.toBeNull();
+    expect(screen.queryByLabelText("Pricing file path")).toBeNull();
+    await waitFor(() => expect(mockedApi.getCost).toHaveBeenCalledWith(demoSessions[0].agent, demoSessions[0].id, null, 10));
+  });
+
+  it("shows unavailable pricing and the reason instead of a complete zero estimate", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getCost.mockResolvedValue({ ...demoCost(demoSessions[0].id, 0), total: 0, turns: [],
+      unpriced: [{ turn: 1, model: "unknown-model", reason: "No historical price is available" }], forecast: null });
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    expect(await screen.findByText("Partial spend estimate")).not.toBeNull();
+    expect(screen.getByText(/unknown-model: No historical price is available/)).not.toBeNull();
+    expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
+  });
+
   it("reports an API failure in an alert that can be dismissed", async () => {
     mockedApi.searchSessions.mockRejectedValueOnce(new Error("invalid response from session list"));
 
@@ -239,6 +313,51 @@ describe("desktop accessibility and state handling", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("keeps conversation and save controls available before and after an optional context failure", async () => {
+    const session = demoSessions[0];
+    const pending = deferred<ContextDetail>();
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    mockedApi.inspectSession.mockResolvedValue({ ...demoDetail(session.id), turnCount: 0, peakTurn: null, peakPromptTokens: null, contextWindow: null, growth: [] });
+    mockedApi.getContext.mockReturnValue(pending.promise);
+    render(<App />);
+    await openView("Conversation");
+    await waitFor(() => expect(mockedApi.getTranscript).toHaveBeenCalledWith(session.agent, session.id, 0));
+    // Inspection renders independently even while context is still pending.
+    await openView("Save & export");
+    expect(await screen.findByRole("button", { name: /to the archive$/ })).not.toBeNull();
+    pending.reject(new Error("this session has no turn with prompt usage"));
+    await openView("Context");
+    expect(await screen.findByText(/Context unavailable: this session has no turn with prompt usage/)).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await openView("Conversation");
+    expect(screen.getByRole("tab", { name: "Conversation" }).hasAttribute("disabled")).toBe(false);
+    await openView("Save & export");
+    fireEvent.click(await screen.findByRole("button", { name: /Add .* to the archive/ }));
+    await waitFor(() => expect(mockedApi.archiveSession).toHaveBeenCalledWith(session.agent, session.id, false));
+  });
+
+  it("refreshes a followed conversation even when context becomes unavailable", async () => {
+    let update: ((event: SessionUpdatedEvent) => void) | undefined;
+    mockedApi.listenForSessionUpdates.mockImplementation(async callback => { update = callback; return () => undefined; });
+    const session = demoSessions[0];
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([session]));
+    const initialContext = deferred<ContextDetail>();
+    mockedApi.getContext.mockReturnValueOnce(initialContext.promise);
+    render(<App />);
+    await openView("Overview");
+    fireEvent.click(await screen.findByRole("button", { name: "Follow live" }));
+    await waitFor(() => expect(update).toBeDefined());
+    mockedApi.inspectSession.mockResolvedValue({ ...demoDetail(session.id), eventCount: 987 });
+    mockedApi.getContext.mockRejectedValue(new Error("this session has no turn with prompt usage"));
+    update!({ agent: session.agent, sessionId: session.id });
+    expect(await screen.findByText("987 events")).not.toBeNull();
+    await openView("Context");
+    expect(await screen.findByText(/Context unavailable: this session has no turn with prompt usage/)).not.toBeNull();
+    await act(async () => { initialContext.resolve(demoContext()); await initialContext.promise; });
+    expect(screen.getByText(/Context unavailable: this session has no turn with prompt usage/)).not.toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("labels an empty but valid context response instead of leaving blank panels", async () => {
@@ -814,7 +933,7 @@ describe("desktop accessibility and state handling", () => {
     );
 
     // A different session is a new question, even though Turns is already open.
-    const secondRow = await screen.findByRole("button", { name: new RegExp(second.title!.text) });
+    const secondRow = await screen.findByRole("button", { name: new RegExp(`^Claude Code session: ${second.title!.text}`) });
     fireEvent.click(secondRow);
     await openView("Context");
     await waitFor(() =>
@@ -938,7 +1057,7 @@ describe("corpus overview", () => {
     // A cost total without its unpriced count reads as complete when it is a
     // floor, and a corpus with no measured compaction is not a corpus where
     // compaction freed nothing. Both caveats have to be on screen.
-    expect(screen.getByText(/2,046 turns had no local rate/)).not.toBeNull();
+    expect(screen.getByText(/2,046 turns had no published rate/)).not.toBeNull();
     expect(screen.getByText(/no before\/after sizes recorded/i)).not.toBeNull();
     expect(
       screen.getByText(/53 of 134 sessions never recorded both a prompt size/),
@@ -972,6 +1091,34 @@ describe("conversation", () => {
     render(<App />);
     await openView('Conversation');
     expect(await screen.findByText(/The original text is unavailable; only a saved preview/)).toBeTruthy();
+  });
+
+  it("shows cache tokens even when prices are unavailable", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getCost.mockResolvedValue({ ...demoCost(demoSessions[0].id, 0),
+      cacheUsage: { freshInputTokens: 200, cacheReadTokens: 800, cacheWriteTokens: null,
+        cacheReadShare: 0.8, completeTurns: 1, totalTurns: 2, multiCallTurns: 0 },
+      turns: [], forecast: null });
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    const cache = await screen.findByLabelText("Recorded cache usage");
+    expect(cache.textContent).toContain("800");
+    expect(cache.textContent).toContain("80%");
+    expect(cache.textContent).toContain("1 / 2 turns have a complete split");
+    expect(cache.textContent).toContain("Not reported");
+  });
+
+  it("shows context tokens used and total without inventing an unknown window", async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    mockedApi.getContext.mockResolvedValue({ ...demoContext(), totalTokens: 61_240,
+      contextWindow: null, utilisation: null });
+    render(<App />);
+    await leaveCorpus();
+    await openView("Context");
+    const summary = await screen.findByLabelText("Selected turn summary");
+    expect(summary.textContent).toContain("61,240 tokens used / window not reported");
+    expect(summary.textContent).not.toContain("0%");
   });
 
   it('reloads a cached conversation to include newly appended records', async () => {
@@ -1180,6 +1327,88 @@ describe("conversation", () => {
 });
 
 describe('notifications', () => {
+  it.each(['Overview', 'Context', 'Compare', 'Save & export'] as const)(
+    'opens a finding at its conversation line from %s', async (view) => {
+      mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+      const entry = { index: 0, line: 191, text: 'linked notification record', kind: 'toolResult' as const,
+        turn: 25, label: null, truncated: false, chars: 26, sidechain: false, error: false, collapsed: true };
+      mockedApi.getTranscript.mockResolvedValue({ entries: [entry], total: 1, offset: 0, hasMore: false });
+      // Compaction used to bypass Conversation even when it named a record.
+      mockedApi.listNotifications.mockResolvedValue({ ...demoNotificationPage, notifications: [{
+        ...demoNotificationPage.notifications[1], location: { ...demoNotificationPage.notifications[1].location, sourceLine: 191 },
+      }] });
+      render(<App />);
+      await openView(view);
+      fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+      const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+      fireEvent.click(drawer.querySelector('.notification-card')!);
+      await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+      await waitFor(() => {
+        const row = screen.getByText('linked notification record').closest<HTMLElement>('.transcript-entry')!;
+        expect(row?.classList.contains('highlighted')).toBe(true);
+        expect(within(row).getByRole('button', { name: 'Collapse' })).toBeTruthy();
+      });
+    },
+  );
+
+  it('queues startup toast navigation until the selected session loads', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const detail = deferred<SessionDetail>();
+    mockedApi.inspectSession.mockReturnValue(detail.promise);
+    const entry = { index: 0, line: 191, text: 'cold start linked record', kind: 'toolResult' as const,
+      turn: 25, label: null, truncated: false, chars: 24, sidechain: false, error: false, collapsed: true };
+    mockedApi.getTranscript.mockResolvedValue({ entries: [entry], total: 1, offset: 0, hasMore: false });
+    mockedApi.takeNotificationActivations.mockResolvedValueOnce([{ unavailable: false, notification: {
+      ...demoNotificationPage.notifications[1], location: { ...demoNotificationPage.notifications[1].location, sourceLine: 191 },
+    } }]);
+    render(<StrictMode><App /></StrictMode>);
+    await waitFor(() => expect(mockedApi.inspectSession).toHaveBeenCalled());
+    expect(mockedApi.getTranscript).not.toHaveBeenCalled();
+    detail.resolve(demoDetail(demoSessions[0].id));
+    await waitFor(() => {
+      expect(screen.getByText('cold start linked record').closest('.transcript-entry')?.classList.contains('highlighted')).toBe(true);
+    });
+    expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('handles a live toast activation while another tab is active', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    let activate!: () => void;
+    mockedApi.listenForNotificationActivations.mockImplementation(async (callback) => { activate = callback; return () => undefined; });
+    render(<App />);
+    await openView('Overview');
+    await waitFor(() => expect(mockedApi.takeNotificationActivations).toHaveBeenCalled());
+    mockedApi.takeNotificationActivations.mockResolvedValueOnce([{ unavailable: false, notification: {
+      ...demoNotificationPage.notifications[1], location: { ...demoNotificationPage.notifications[1].location, sourceLine: 191 },
+    } }]);
+    activate();
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+  });
+
+  it('explains an expired toast and opens the feed instead of silently doing nothing', async () => {
+    mockedApi.takeNotificationActivations.mockResolvedValueOnce([{ notification: null, unavailable: true }]);
+    render(<App />);
+    const drawer = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(within(drawer).getByRole('alert').textContent).toContain('no longer in local history');
+  });
+
+  it('opens Conversation and pages to findings that name a turn without a source line', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const turn = demoNotificationPage.notifications[0].location.turn!;
+    const entry = (index: number, turn: number, text: string) => ({ index, line: 100 + index, turn, text,
+      kind: 'toolResult' as const, label: null, truncated: false, chars: text.length, sidechain: false, error: false, collapsed: true });
+    mockedApi.getTranscript.mockImplementation(async (_agent, _id, offset = 0) => offset === 0
+      ? { entries: [entry(0, 1, 'earlier turn')], total: 2, offset: 0, hasMore: true }
+      : { entries: [entry(1, turn, 'turn-linked notification record')], total: 2, offset: 1, hasMore: false });
+    render(<App />);
+    await openView('Compare');
+    fireEvent.click(await screen.findByRole('button', { name: /^Notifications/ }));
+    fireEvent.click((await screen.findByRole('dialog', { name: 'Notifications' })).querySelector('.notification-card')!);
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+    await waitFor(() => expect(screen.getByText('turn-linked notification record').closest('.transcript-entry')?.classList.contains('highlighted')).toBe(true));
+    expect(mockedApi.getTranscript).toHaveBeenCalledWith('codex', demoSessions[0].id, 1);
+  });
+
   it('contains keyboard focus in the drawer and restores it to the opener', async () => {
     render(<App />);
     const bell = await screen.findByRole('button', { name: /^Notifications/ });
@@ -1200,7 +1429,7 @@ describe('notifications', () => {
     expect(document.activeElement).toBe(bell);
   });
 
-  it('opens the feed, marks a finding read, and navigates to its session turn', async () => {
+  it('opens the feed, marks a finding read, and switches to its conversation record', async () => {
     mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
     render(<App />);
 
@@ -1211,7 +1440,8 @@ describe('notifications', () => {
 
     fireEvent.click(drawer.querySelectorAll('.notification-card')[1]);
     await waitFor(() => expect(mockedApi.markNotificationsRead).toHaveBeenCalledWith(['demo-notification-compaction']));
-    await waitFor(() => expect(mockedApi.getContext).toHaveBeenCalledWith('codex', demoSessions[0].id, 18));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Conversation' }).getAttribute('aria-selected')).toBe('true'));
+    await waitFor(() => expect(mockedApi.getTranscript).toHaveBeenCalledWith('codex', demoSessions[0].id, 0));
     expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
   });
 
@@ -1535,7 +1765,13 @@ describe('notifications', () => {
     expect(drawer.querySelectorAll('.notification-rule')).toHaveLength(11);
   });
 
-  it('refreshes a followed session only after its matching backend event', async () => {
+  it.each([true, false])('refreshes a followed session with notifications enabled=%s', async (enabled) => {
+    mockedApi.getNotificationSettings.mockResolvedValue({
+      ...demoNotificationSettings, enabled, onboardingComplete: true,
+      rules: enabled ? demoNotificationSettings.rules : Object.fromEntries(
+        Object.entries(demoNotificationSettings.rules).map(([key, rule]) => [key, { ...rule, delivery: 'off' }]),
+      ) as typeof demoNotificationSettings.rules,
+    });
     let update: ((event: SessionUpdatedEvent) => void) | undefined;
     mockedApi.listenForSessionUpdates.mockImplementation(async (callback) => {
       update = callback;
@@ -1724,6 +1960,34 @@ describe("comparing turns across two sessions", () => {
 });
 
 describe("composition items and drill-down", () => {
+  it('opens exact file targets by item identity and leaves other labels as text', async () => {
+    mockedApi.searchSessions.mockResolvedValue(sessionPage([demoSessions[0]]));
+    const context = demoContext();
+    const base = context.items.find((item) => item.category === 'tool-outputs')!;
+    const path = `C:/work/${'long folder/'.repeat(20)}image  one.png`;
+    context.items = [
+      { ...base, id: 'local-image', label: 'Read C:/work/long folder/…', fileTarget: { path, resolvedPath: path, status: 'file', canOpen: true } },
+      { ...base, id: 'removed-image', label: 'Read C:/temp/gone.png', fileTarget: { path: 'C:/temp/gone.png', resolvedPath: 'C:/temp/gone.png', status: 'missing', canOpen: false } },
+      { ...base, id: 'query', label: 'Search C:/work/image.png' },
+    ];
+    mockedApi.getContext.mockResolvedValue(context);
+    mockedApi.openContextFile.mockRejectedValueOnce(new Error('File no longer available.'));
+    render(<App />);
+    await openView('Context');
+    fireEvent.click(await screen.findByTitle('Show the items behind Tool outputs'));
+    const items = within(document.querySelector('.composition-items')! as HTMLElement);
+    const link = items.getByRole('button', { name: 'Read C:/work/long folder/…' });
+    expect(link.title).toBe(path);
+    fireEvent.click(link);
+    await waitFor(() => expect(mockedApi.openContextFile).toHaveBeenCalledWith('codex', demoSessions[0].id, context.turn, 'local-image', 'open'));
+    expect((await items.findByRole('alert')).textContent).toContain('File no longer available');
+    fireEvent.click(items.getByRole('button', { name: 'Show in folder' }));
+    await waitFor(() => expect(mockedApi.openContextFile).toHaveBeenLastCalledWith('codex', demoSessions[0].id, context.turn, 'local-image', 'reveal'));
+    expect(items.queryByRole('button', { name: 'Read C:/temp/gone.png' })).toBeNull();
+    expect(items.queryByRole('button', { name: 'Search C:/work/image.png' })).toBeNull();
+    expect(items.getByText('File no longer available')).toBeTruthy();
+  });
+
   it("expands and collapses category rows, showing items on expand and hiding on collapse", async () => {
     mockedApi.searchSessions.mockResolvedValueOnce(sessionPage([demoSessions[0]]));
 

@@ -1,0 +1,5 @@
+{"method":"thread/started","params":{"thread":{"id":"synthetic-thread"}}}
+{"method":"item/agentMessage/delta","params":{"threadId":"synthetic-thread","itemId":"msg1","delta":"partial"}}
+{"method":"item/completed","params":{"threadId":"synthetic-thread","turnId":"turn1","item":{"type":"agentMessage","id":"msg1","text":"Synthetic answer"}}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"synthetic-thread","turnId":"turn1","tokenUsage":{"total":{"inputTokens":500,"outputTokens":40},"last":{"inputTokens":100,"outputTokens":10},"modelContextWindow":200000}}}
+{"method":"turn/completed","params":{"threadId":"synthetic-thread","turn":{"id":"turn1","status":"completed"}}}

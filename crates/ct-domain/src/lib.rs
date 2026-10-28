@@ -23,8 +23,10 @@
 //! inconsistent breakdown is not something a future adapter can forget to
 //! prevent -- it is unrepresentable.
 
+pub mod local_paths;
 pub mod model;
 pub mod ports;
+pub mod pricing;
 pub mod services;
 
 pub use model::analysis::ContentMeasurement;

@@ -44,7 +44,10 @@ pub fn build() -> Runtime {
             Box::new(HeuristicEstimator::for_code()),
         ),
         AgentBinding::new(Box::new(CodexAdapter::new()), codex_estimator),
-    ]);
+    ])
+    .with_pricing(Box::new(ct_adapters::pricing::LiteLlmPricing::new(
+        Path::new(&archive_store().root()).join("pricing"),
+    )));
 
     Runtime { app, warnings }
 }
@@ -88,6 +91,11 @@ pub fn content_hasher() -> impl ct_domain::ports::ContentHasher {
     Sha256ContentHasher
 }
 
+/// Bounded local instruction reader shared by desktop, CLI and MCP.
+pub fn instruction_file_reader() -> impl ct_domain::ports::InstructionFileReader {
+    ct_adapters::instruction_files::LocalInstructionFileReader
+}
+
 /// The one store ContextTrace writes session copies to.
 ///
 /// Here rather than at each call site because "where does this tool write"
@@ -119,7 +127,7 @@ pub fn notification_store() -> FileNotificationStore {
 pub fn corpus_cache_path() -> PathBuf {
     Path::new(&archive_store().root())
         .join("corpus")
-        .join("report.json")
+        .join("report-v2-auto-pricing.json")
 }
 
 /// Where an exported session is written, given the archive root.

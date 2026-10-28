@@ -9,10 +9,12 @@ import {
   type MutableRefObject,
 } from "react";
 import * as api from "./api";
+import ProjectPicker from './ProjectPicker';
 import {
   errorMessage,
   formatActivity,
   formatBytes,
+  formatContextUsage,
   formatPercent,
   formatTokens,
   projectName,
@@ -50,6 +52,7 @@ import type {
   NotificationStatus,
   ProjectFilter,
   ProjectOption,
+  ResumePlan,
   ResidualPoint,
   ResidualReport,
   ResidualStep,
@@ -261,16 +264,19 @@ function SessionListItem({
   session,
   selected,
   onSelect,
+  onResume,
 }: {
   session: SessionSummary;
   selected: boolean;
   onSelect: () => void;
+  onResume: () => void;
 }) {
   // Narrowed through the value itself rather than a boolean alias, so the
   // union tells the compiler `parent` is a string in this branch.
   const role = session.threadRole;
   const name = sessionName(session);
   return (
+    <div className="session-list-entry">
     <button
       className={`session-row ${selected ? "selected" : ""}`}
       onClick={onSelect}
@@ -302,7 +308,75 @@ function SessionListItem({
       </span>
       <span className="session-activity">{formatActivity(session.lastActivity)}</span>
     </button>
+    <button type="button" className="session-resume" onClick={onResume} aria-haspopup="dialog"
+      aria-label={`${role.kind === 'subagent' ? 'Resume parent of' : 'Resume'} ${agentLabel(session.agent)} conversation: ${name}`}
+      title={role.kind === 'subagent' ? 'Resume the parent session in a terminal' : 'Resume this session in a terminal'}>
+      {role.kind === 'subagent' ? 'Resume parent' : 'Resume'}
+    </button>
+    </div>
   );
+}
+
+function ResumeDialog({ session, onClose }: { session: SessionSummary; onClose: () => void }) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [directory, setDirectory] = useState<string | undefined>(undefined);
+  const [plan, setPlan] = useState<ResumePlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useModalFocusTrap(true, ref, () => { if (!busy) onClose(); });
+  useEffect(() => {
+    let active = true;
+    setPlan(null); setError(null); setStatus(null);
+    const timer = window.setTimeout(() => {
+      api.prepareResume(session.agent, session.id, directory)
+        .then((value) => { if (active) setPlan(value); })
+        .catch((cause) => { if (active) setError(errorMessage(cause)); });
+    }, directory === undefined ? 0 : 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [session.agent, session.id, directory, retry]);
+
+  async function launch() {
+    if (!plan?.canLaunch || busy) return;
+    setBusy(true); setError(null); setStatus(null);
+    try {
+      await api.resumeSession(session.agent, session.id, directory);
+      setStatus('Terminal opened. Check the agent CLI for session restoration or errors.');
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="resume-backdrop" onClick={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section ref={ref} className="resume-dialog" role="dialog" aria-modal="true" aria-labelledby="resume-title" tabIndex={-1}>
+      <h2 id="resume-title">Resume {agentLabel(session.agent)} session</h2>
+      <p className="resume-session-name">{sessionName(session)}</p>
+      {plan?.isParent && <p>This is a subagent transcript. Resume will open its parent session: <code>{plan.id}</code>.</p>}
+      <p>Continue the saved conversation, including any compaction state saved by the agent. To summarize its context, use <code>/compact</code> inside the resumed session.</p>
+      <label>Working folder
+        <input data-modal-initial-focus value={directory ?? plan?.directory ?? session.project ?? ''}
+          disabled={busy} placeholder="Enter an existing absolute folder path"
+          onChange={(event) => { setPlan(null); setDirectory(event.target.value); }} />
+      </label>
+      {plan?.project && <p className="resume-recorded-folder">Recorded folder: {plan.project}</p>}
+      {plan ? <>
+        <label>PowerShell command<textarea readOnly value={plan.command} rows={3} /></label>
+        {plan.reason && <p role="status">{plan.reason}</p>}
+        <p>The terminal runs with your agent's configured permissions and may connect to its service. No prompt is sent automatically.</p>
+      </> : !error && <Spinner label="Preparing native resume…" />}
+      {error && <p role="alert">{error}</p>}
+      {status && <p role="status">{status}</p>}
+      <div className="resume-actions">
+        <button type="button" onClick={onClose} disabled={busy}>Close</button>
+        <button type="button" disabled={busy} onClick={() => setRetry((value) => value + 1)}>Retry checks</button>
+        <button type="button" disabled={!plan || busy} onClick={async () => {
+          try { await navigator.clipboard.writeText(plan!.command); setStatus('Resume command copied.'); }
+          catch (cause) { setError(`Could not copy the command: ${errorMessage(cause)}`); }
+        }}>Copy command</button>
+        <button type="button" disabled={!plan?.canLaunch || busy} onClick={() => void launch()}>{busy ? 'Opening…' : 'Open terminal'}</button>
+      </div>
+    </section>
+  </div>;
 }
 
 function MemorySearchResults({
@@ -1125,12 +1199,47 @@ const COMPOSITION_ITEM_PREVIEW_LIMIT = 8;
  * reported total precisely because it is *not* attributable to logged items,
  * so "no items found" would state the opposite of what the row measures.
  */
+function CompositionFile({ item, session, turn }: { item: ContextItemSummary; session: SessionSummary; turn: number }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const target = item.fileTarget;
+  if (!target) return <strong className="composition-item-label" title={item.label}>{item.label}</strong>;
+  const available = target.status === "file" || target.status === "directory";
+  const act = async (action: "open" | "reveal") => {
+    setError(null); setBusy(true);
+    try { await api.openContextFile(session.agent, session.id, turn, item.id, action); }
+    catch (problem) { setError(errorMessage(problem)); }
+    finally { setBusy(false); }
+  };
+  return <div className="composition-file">
+    {target.canOpen ? <button type="button" className="composition-item-label file-link" title={target.resolvedPath ?? target.path}
+      disabled={busy} onClick={() => void act("open")}>{item.label}</button>
+      : <strong className="composition-item-label" title={target.path}>{item.label}</strong>}
+    <div className="composition-file-actions">
+      {available && <button type="button" disabled={busy} onClick={() => void act("reveal")}>Show in folder</button>}
+      <button type="button" onClick={() => {
+        setError(null);
+        Promise.resolve().then(() => {
+          if (!navigator.clipboard) throw new Error("Clipboard is unavailable. Copy the path from the tooltip.");
+          return navigator.clipboard.writeText(target.resolvedPath ?? target.path);
+        }).catch((problem) => setError(errorMessage(problem)));
+      }}>Copy path</button>
+      {!available && <span>{target.status === "missing" ? "File no longer available" : target.status === "unresolved" ? "Path unavailable locally" : "File could not be accessed"}</span>}
+    </div>
+    {error && <p className="composition-file-error" role="alert">{error}</p>}
+  </div>;
+}
+
 function CompositionItems({
   category,
   items,
+  session,
+  turn,
 }: {
   category: CategorySummary;
   items: ContextItemSummary[];
+  session: SessionSummary;
+  turn: number;
 }) {
   const shown = items.slice(0, COMPOSITION_ITEM_PREVIEW_LIMIT);
   const remaining = items.length - shown.length;
@@ -1140,9 +1249,7 @@ function CompositionItems({
         <>
           {shown.map((item) => (
             <div className="composition-item" key={item.id}>
-              <strong className="composition-item-label" title={item.label}>
-                {item.label}
-              </strong>
+              <CompositionFile item={item} session={session} turn={turn} />
               <span className="composition-item-number">
                 {formatTokens(item.tokens)} · {formatPercent(item.share)}
               </span>
@@ -1169,7 +1276,7 @@ function CompositionItems({
   );
 }
 
-function ContextComposition({ context }: { context: ContextDetail }) {
+function ContextComposition({ context, session }: { context: ContextDetail; session: SessionSummary }) {
   const categories = Array.isArray(context.categories) ? context.categories : [];
   const items = Array.isArray(context.items) ? context.items : [];
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -1218,6 +1325,8 @@ function ContextComposition({ context }: { context: ContextDetail }) {
                 {open && (
                   <CompositionItems
                     category={category}
+                    session={session}
+                    turn={context.turn}
                     items={items.filter((item) => item.category === category.category)}
                   />
                 )}
@@ -1399,8 +1508,8 @@ function LiveMonitor({
   live: boolean;
   onLive: (live: boolean) => void;
 }) {
-  const utilisation = context?.utilisation ?? (detail.peakPromptTokens && detail.contextWindow ? detail.peakPromptTokens / detail.contextWindow : 0);
-  const tone = utilisation >= .9 ? "critical" : utilisation >= .75 ? "elevated" : "steady";
+  const utilisation = context ? context.utilisation : (detail.peakPromptTokens && detail.contextWindow ? detail.peakPromptTokens / detail.contextWindow : null);
+  const tone = (utilisation ?? 0) >= .9 ? "critical" : (utilisation ?? 0) >= .75 ? "elevated" : "steady";
   return (
     <section className={`live-monitor ${live ? "following" : ""} ${context || detail.peakPromptTokens ? "measured" : "unmeasured"}`} aria-label="Session context monitor">
       <div className="live-monitor-heading">
@@ -1408,13 +1517,13 @@ function LiveMonitor({
         <button type="button" onClick={() => onLive(!live)}>{live ? "Stop follow" : "Follow live"}</button>
       </div>
       <div className="live-gauge-wrap">
-        <div className="live-gauge" style={{ "--gauge": `${Math.min(100, utilisation * 100)}%` } as CSSProperties}>
+        <div className="live-gauge" style={{ "--gauge": `${Math.min(100, (utilisation ?? 0) * 100)}%` } as CSSProperties}>
           <span>{formatPercent(utilisation)}</span>
         </div>
-        <div><strong>{context ? `Selected turn ${context.turn}` : detail.peakTurn ? `Session peak · turn ${detail.peakTurn}` : "No measured turn"}</strong><p>{context ? `${formatTokens(context.totalTokens)} / ${formatTokens(context.contextWindow ?? detail.contextWindow ?? 0)}` : detail.peakPromptTokens ? `${formatTokens(detail.peakPromptTokens)} / ${formatTokens(detail.contextWindow ?? 0)}` : "No prompt size recorded"}</p></div>
+        <div><strong>{context ? `Selected turn ${context.turn} · ${context.model ?? "model not recorded"}` : detail.peakTurn ? `Session peak · turn ${detail.peakTurn}` : "No measured turn"}</strong><p>{context ? formatContextUsage(context.totalTokens, context.contextWindow) : formatContextUsage(detail.peakPromptTokens, detail.contextWindow)}</p></div>
       </div>
       <small>{live ? "Refreshes local session evidence every 2.5s · use Ctrl+C in the agent terminal to stop the run." : "This is the selected-turn snapshot or recorded session peak. Follow mode reads the local log as it grows; it never controls the agent. Follow pauses when you leave Overview."}</small>
-      <div className={`live-headroom ${tone}`}><span style={{ width: `${Math.min(100, utilisation * 100)}%` }} /></div>
+      <div className={`live-headroom ${tone}`}><span style={{ width: `${Math.min(100, (utilisation ?? 0) * 100)}%` }} /></div>
     </section>
   );
 }
@@ -1495,15 +1604,31 @@ function SecurityDashboard({ doctor, loading, onScan }: { doctor: DoctorReport |
   );
 }
 
-function SpendDashboard({ cost, loading, onRun }: { cost: CostReport | null; loading: boolean; onRun: (pricing: string | null, turns: number | null) => void }) {
-  const [pricingPath, setPricingPath] = useState("");
+function SpendDashboard({ cost, loading, enabled, onRun }: { cost: CostReport | null; loading: boolean; enabled: boolean; onRun: (pricing: string | null, turns: number | null) => void }) {
   const [forecastTurns, setForecastTurns] = useState("10");
-  const burn = cost?.forecast?.averageTokensPerTurn.reduce((sum, category) => sum + category.cost, 0) ?? cost?.total ?? 0;
+  useEffect(() => { if (enabled && !cost) onRun(null, 10); }, [enabled, cost, onRun]);
+  const burn = cost?.forecast?.averageTokensPerTurn.reduce((sum, category) => sum + category.cost, 0);
   return (
     <section className="panel spend-dashboard" id="spend" aria-labelledby="spend-heading">
-      <div className="panel-heading"><div><span className="eyebrow">Cost forecast</span><h2 id="spend-heading">Spend dashboard</h2></div><span className="pricing-chip">{cost?.pricingVersion ?? "pricing not loaded"}</span></div>
-      <div className="spend-controls"><input value={pricingPath} onChange={(event) => setPricingPath(event.target.value)} placeholder="Optional pricing.json path" aria-label="Pricing file path" /><input value={forecastTurns} onChange={(event) => setForecastTurns(event.target.value)} inputMode="numeric" aria-label="Forecast turns" /><button type="button" onClick={() => onRun(pricingPath.trim() || null, Number(forecastTurns) || null)} disabled={loading}>{loading ? "Forecasting…" : "Refresh forecast"}</button></div>
-      {cost ? <><div className="spend-hero"><div><span>Burn rate</span><strong>${(burn / 1_000_000).toFixed(4)}</strong><small>per modeled turn</small></div><div><span>Projected session</span><strong>${((cost.forecast?.projectedTotal ?? cost.total) / 1_000_000).toFixed(4)}</strong><small>{cost.forecast ? `${cost.forecast.additionalTurns} additional turns` : "current evidence"}</small></div><div><span>Observed spend</span><strong>${(cost.total / 1_000_000).toFixed(4)}</strong><small>{cost.pricingSource}</small></div></div><div className="spend-bars" aria-label="Spend by context category">{cost.categories.map((category) => <div className="spend-bar-row" key={category.name}><span>{category.name}</span><div><i style={{ width: `${Math.max(3, Math.min(100, category.cost / Math.max(1, burn) * 100))}%` }} /></div><strong>${(category.cost / 1_000_000).toFixed(4)}</strong></div>)}</div>{cost.warning && <p className="spend-note">{cost.warning}</p>}</> : <div className="spend-empty"><strong>Cost telemetry is ready when you are.</strong><p>Load built-in rates or point ContextTrace at a local pricing JSON to model the burn before the next turn.</p></div>}
+      <div className="panel-heading"><div><span className="eyebrow">Cost forecast</span><h2 id="spend-heading">Spend dashboard</h2></div><span className="pricing-chip">{cost?.pricingVersion ?? "Loading automatic prices"}</span></div>
+      <div className="spend-controls"><span>Automatic prices from LiteLLM</span><input value={forecastTurns} onChange={(event) => setForecastTurns(event.target.value)} inputMode="numeric" aria-label="Forecast turns" /><button type="button" onClick={() => onRun(null, Number(forecastTurns) || null)} disabled={loading}>{loading ? "Forecasting…" : "Refresh forecast"}</button></div>
+      {cost ? <>
+        <div className="spend-hero cache-usage-grid" aria-label="Recorded cache usage">
+          <div><span>Fresh input</span><strong>{cost.cacheUsage.freshInputTokens?.toLocaleString() ?? "Not reported"}</strong><small>uncached tokens</small></div>
+          <div><span>Cache reads</span><strong>{cost.cacheUsage.cacheReadTokens?.toLocaleString() ?? "Not reported"}</strong><small>tokens served from cache</small></div>
+          <div><span>Cache writes</span><strong>{cost.cacheUsage.cacheWriteTokens?.toLocaleString() ?? "Not reported"}</strong><small>tokens stored in cache</small></div>
+          <div><span>Cache read share</span><strong>{formatPercent(cost.cacheUsage.cacheReadShare)}</strong><small>{cost.cacheUsage.completeTurns} / {cost.cacheUsage.totalTurns} turns have a complete split</small></div>
+        </div>
+        <p className="spend-note">Recorded request tokens, including unpriced turns. Read share is cached reads / total input for turns with a complete split; fresh input and writes are not cache lookup misses. Lookup hit/miss counts and unreported cache writes are unavailable.{cost.cacheUsage.multiCallTurns > 0 ? ` ${cost.cacheUsage.multiCallTurns} multi-call turn(s) retain only the largest request's input; these are excluded from spend.` : ""}</p>
+        <div className="spend-hero">
+          <div><span>Burn rate</span><strong>{burn === undefined ? "Unavailable" : "$" + (burn / 1_000_000).toFixed(4)}</strong><small>per modeled turn at current rates</small></div>
+          <div><span>Projected session</span><strong>{cost.forecast ? "$" + (cost.forecast.projectedTotal / 1_000_000).toFixed(4) : "Unavailable"}</strong><small>{cost.forecast ? cost.forecast.additionalTurns + " additional turns" : "Forecast needs complete pricing"}</small></div>
+          <div><span>{cost.unpriced.length ? "Partial spend estimate" : "Estimated spend"}</span><strong>{cost.turns.length ? "$" + (cost.total / 1_000_000).toFixed(4) : "Unavailable"}</strong><small>{cost.pricingSource}</small></div>
+        </div>
+        <div className="spend-bars" aria-label="Spend by context category">{cost.categories.map((category) => <div className="spend-bar-row" key={category.name}><span>{category.name}</span><div><i style={{ width: Math.max(0, Math.min(100, category.cost / Math.max(1, cost.total) * 100)) + "%" }} /></div><strong>{"$" + (category.cost / 1_000_000).toFixed(4)}</strong></div>)}</div>
+        {cost.unpriced.length > 0 && <div className="spend-note" role="status"><strong>{cost.unpriced.length} unpriced turn(s)</strong><ul>{cost.unpriced.map((turn) => <li key={turn.turn}>Turn {turn.turn} · {turn.model ?? "Unknown model"}: {turn.reason}</li>)}</ul></div>}
+        {cost.warning && <p className="spend-note">{cost.warning}</p>}
+      </> : <div className="spend-empty"><strong>{loading ? "Loading current and historical rates…" : "Automatic pricing is available."}</strong><p>Model rates come from LiteLLM and are cached locally. No price entry or API key is needed.</p></div>}
     </section>
   );
 }
@@ -2767,7 +2892,7 @@ function CorpusPanel({
           <strong>${(report.costMicros / 1_000_000).toFixed(2)}</strong>
           <small>
             {report.unpricedTurns
-              ? `A floor · ${report.unpricedTurns.toLocaleString()} turns had no local rate`
+              ? `A floor · ${report.unpricedTurns.toLocaleString()} turns had no published rate`
               : "Every turn priced"}
           </small>
         </div>
@@ -2793,9 +2918,9 @@ function CorpusPanel({
         </div>
       </section>
 
-      {projectFilter.kind === "path" && (
+      {projectFilter.kind !== "any" && (
         <div className="corpus-filter-notice" role="status">
-          <span>Session list filter: <strong title={projectFilter.path}>{projectName(projectFilter.path)}</strong>. The dashboard totals and charts still cover all local sessions.</span>
+          <span>Session list filter: <strong title={projectFilter.kind === 'path' ? projectFilter.path : undefined}>{projectFilter.kind === 'path' ? projectName(projectFilter.path) : projectFilter.kind === 'temporary' ? 'Temporary workspaces' : 'No recorded folder'}</strong>. The dashboard totals and charts still cover all local sessions.</span>
           <button type="button" onClick={onClearProjectFilter}>Clear filter</button>
         </div>
       )}
@@ -3102,6 +3227,7 @@ function TranscriptPanel({
   enabled,
   onTurn,
   highlightLine,
+  highlightTurn,
   highlightRequest,
 }: {
   session: SessionSummary;
@@ -3110,6 +3236,7 @@ function TranscriptPanel({
   enabled: boolean;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
+  highlightTurn: number | null;
   highlightRequest: number;
 }) {
   const [page, setPage] = useState<TranscriptPage | null>(null);
@@ -3176,14 +3303,17 @@ function TranscriptPanel({
   // fetched cannot be scrolled to. Keep pulling pages until the line arrives
   // or the transcript runs out; landing the reader at the top of a long
   // conversation with nothing highlighted is the failure this avoids.
+  const targetLine = highlightLine ?? (highlightTurn == null ? null : entries.find((entry) => entry.turn === highlightTurn)?.line ?? null);
+  const highlightRequested = highlightLine != null || highlightTurn != null;
+  const targetDescription = highlightLine != null ? `Log line ${highlightLine}` : `Turn ${highlightTurn}`;
   const highlightLoaded =
-    highlightLine != null && entries.some((entry) => entry.line === highlightLine);
+    targetLine != null && entries.some((entry) => entry.line === targetLine);
   useEffect(() => {
-    if (!enabled || highlightLine == null || highlightLoaded || loading || error || !page?.hasMore) return;
+    if (!enabled || !highlightRequested || highlightLoaded || loading || error || !page?.hasMore) return;
     loadMore();
     // loadMore is redefined on every render; depending on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, error, highlightLine, highlightLoaded, loading, page?.hasMore]);
+  }, [enabled, error, highlightRequested, highlightTurn, targetLine, highlightLoaded, loading, page?.hasMore]);
 
   const needle = searchText.trim().toLocaleLowerCase();
   const matchesTranscriptFilters = (entry: TranscriptEntry) =>
@@ -3192,13 +3322,13 @@ function TranscriptPanel({
   const rows = entries.flatMap<{ entry: TranscriptEntry; partIndex: number | undefined }>((entry) => entry.parts?.length
     ? entry.parts.map((part, partIndex) => ({ entry: { ...entry, ...part }, partIndex }))
     : [{ entry, partIndex: undefined }]);
-  const highlightedEntryHiddenByFilters = highlightLine != null && rows.some(
-    ({ entry }) => entry.line === highlightLine && !matchesTranscriptFilters(entry),
+  const highlightedEntryHiddenByFilters = targetLine != null && rows.some(
+    ({ entry }) => entry.line === targetLine && !matchesTranscriptFilters(entry),
   );
   const visibleEntries = rows.filter(({ entry }) =>
-    matchesTranscriptFilters(entry) || entry.line === highlightLine,
+    matchesTranscriptFilters(entry) || entry.line === targetLine,
   );
-  const firstHighlightedRow = visibleEntries.findIndex(({ entry }) => entry.line === highlightLine);
+  const firstHighlightedRow = visibleEntries.findIndex(({ entry }) => entry.line === targetLine);
 
   if (loading && !entries.length) return <Spinner label="Reading the conversation…" />;
   if (error && !entries.length) {
@@ -3250,11 +3380,11 @@ function TranscriptPanel({
           <button type="button" onClick={retryTranscript}>Retry</button>
         </p>
       )}
-      {highlightLine != null && !highlightLoaded && (
+      {highlightRequested && !highlightLoaded && (
         <p className="callout" role="status">
           {page?.hasMore
-            ? `Loading the linked record at log line ${highlightLine}…`
-            : `Log line ${highlightLine} is not available in this conversation. The session may have changed, or the finding may refer to session metadata.`}
+            ? `Loading the linked record for ${targetDescription.toLowerCase()}…`
+            : `${targetDescription} is not available in this conversation. The session may have changed, or the finding may refer to session metadata.`}
         </p>
       )}
       {visibleEntries.length ? <ol className="transcript-list">
@@ -3264,7 +3394,7 @@ function TranscriptPanel({
             entry={entry}
             session={session}
             onTurn={onTurn}
-            highlighted={enabled && highlightLine != null && entry.line === highlightLine}
+            highlighted={enabled && targetLine != null && entry.line === targetLine}
             scrollTarget={position === firstHighlightedRow}
             highlightRequest={highlightRequest}
             partIndex={partIndex}
@@ -3290,6 +3420,7 @@ function TranscriptCache({
   enabled,
   onTurn,
   highlightLine,
+  highlightTurn,
   highlightRequest,
 }: {
   session: SessionSummary | null;
@@ -3298,6 +3429,7 @@ function TranscriptCache({
   enabled: boolean;
   onTurn: (turn: number) => void;
   highlightLine: number | null;
+  highlightTurn: number | null;
   highlightRequest: number;
 }) {
   const [visits, setVisits] = useState<TranscriptVisit[]>([]);
@@ -3325,6 +3457,7 @@ function TranscriptCache({
               enabled={enabled && isCurrent}
               onTurn={onTurn}
               highlightLine={isCurrent ? highlightLine : null}
+              highlightTurn={isCurrent ? highlightTurn : null}
               highlightRequest={highlightRequest}
             />
           </div>
@@ -3339,6 +3472,7 @@ function SessionWorkspace({
   detail,
   context,
   contextLoading,
+  contextError,
   doctor,
   doctorLoading,
   lifecycle,
@@ -3409,6 +3543,7 @@ function SessionWorkspace({
   detail: SessionDetail;
   context: ContextDetail | null;
   contextLoading: boolean;
+  contextError: string | null;
   doctor: DoctorReport | null;
   doctorLoading: boolean;
   lifecycle: LifecycleReport | null;
@@ -3563,9 +3698,7 @@ function SessionWorkspace({
           label="Context used"
           value={formatPercent(peakUtilisation)}
           note={
-            detail.contextWindow
-              ? `${formatTokens(detail.contextWindow)} token window`
-              : "Window not reported"
+            `${formatContextUsage(detail.peakPromptTokens, detail.contextWindow)} · session peak`
           }
         />
         <Metric
@@ -3694,11 +3827,11 @@ function SessionWorkspace({
         <>
           <section className="panel selected-turn-summary" aria-label="Selected turn summary">
             <div><span className="eyebrow">Context · selected turn</span><strong>Turn {context.turn}</strong></div>
-            <span>{formatTokens(context.totalTokens)} measured tokens · {formatPercent(context.utilisation)} of the reported window</span>
+            <span>{formatContextUsage(context.totalTokens, context.contextWindow)} · {formatPercent(context.utilisation)} · {context.model ?? "model not recorded"}</span>
             <button type="button" className="quiet-action" onClick={onReturnToChat}>Return to conversation{transcriptHighlightLine != null ? ` · line ${transcriptHighlightLine}` : ""}</button>
           </section>
           <div className={contextLoading ? "context-grid refreshing" : "context-grid"}>
-            <ContextComposition context={context} />
+            <ContextComposition context={context} session={detail.session} />
             <Contributors
               context={context}
               selectedItem={lifecycleItem}
@@ -3744,10 +3877,10 @@ function SessionWorkspace({
             budgetShare={budgetShare}
             onBudgetShare={setBudgetShare}
           />
-          <SpendDashboard cost={cost} loading={costLoading} onRun={onRunCost} />
+          <SpendDashboard cost={cost} loading={costLoading} enabled={activeView === "turns"} onRun={onRunCost} />
         </>
       ) : (
-        <p className="empty-inline">This session has no reconstructable prompt turn.</p>
+        <p className="empty-inline">Context unavailable: {contextError ?? "This session has no reconstructable prompt turn."}</p>
       )}
       </div>
 
@@ -4081,7 +4214,7 @@ function NotificationOnboarding({
         <ul>
           <li>Existing sessions are baselined silently.</li>
           <li>Notification text never includes prompts, tool output, secrets, or full paths.</li>
-          <li>No network service is used.</li>
+          <li>Cost alerts download public model prices; session contents stay local.</li>
         </ul>
         <div>
           <button type='button' className='primary' data-modal-initial-focus onClick={() => onDecision(true)}>Enable monitoring</button>
@@ -4168,6 +4301,7 @@ export default function App() {
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>({ kind: "any" });
   const [showSubagents, setShowSubagents] = useState(false);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [resumeTarget, setResumeTarget] = useState<SessionSummary | null>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [memoryHits, setMemoryHits] = useState<MemoryHit[]>([]);
@@ -4177,6 +4311,7 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [loadingDoctor, setLoadingDoctor] = useState(false);
   const [lifecycle, setLifecycle] = useState<LifecycleReport | null>(null);
@@ -4236,13 +4371,12 @@ export default function App() {
   const [notificationPage, setNotificationPage] = useState<NotificationPage | null>(null);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState<string | null>(null);
-  const [pendingNotificationTurn, setPendingNotificationTurn] = useState<number | null>(null);
   // The line is meaningless without the session it was found in: line 191 of
   // another conversation is a different record, and a highlight left pointing
   // at it would send the transcript paging through a session nobody asked
   // about. Keeping the two together lets the render gate on identity.
   const [notificationHighlight, setNotificationHighlight] = useState<
-    { agent: Agent; id: string; line: number; request: number } | null
+    { agent: Agent; id: string; line: number | null; turn?: number | null; request: number } | null
   >(null);
   const recordNavigationRequest = useRef(0);
   const sessionRequest = useRef(0);
@@ -4273,7 +4407,7 @@ export default function App() {
   const paletteWasOpen = useRef(false);
   const appContentRef = useRef<HTMLDivElement | null>(null);
   const onboardingOpen = notificationSettings != null && !notificationSettings.onboardingComplete;
-  const modalOpen = onboardingOpen || notificationDrawerOpen || paletteOpen;
+  const modalOpen = onboardingOpen || notificationDrawerOpen || paletteOpen || resumeTarget != null;
 
   useEffect(() => {
     if (!mobileSidebarOpen) {
@@ -4365,6 +4499,7 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (resumeTarget) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !notificationDrawerOpen && !onboardingOpen) {
         event.preventDefault();
         openPalette();
@@ -4388,7 +4523,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closePalette, corpusOpen, detailFor, notificationDrawerOpen, onboardingOpen, openPalette, paletteOpen, selected]);
+  }, [closePalette, corpusOpen, detailFor, notificationDrawerOpen, onboardingOpen, openPalette, paletteOpen, selected, resumeTarget]);
 
   // Recomputed when the agent, subagent, or search filter changes, so the
   // count beside an option always describes what selecting it would actually
@@ -4661,6 +4796,7 @@ export default function App() {
       setDetail(null);
       setDetailFor(null);
       setContext(null);
+      setContextError(null);
       setFocusComposition(false);
       setDoctor(null);
       setLifecycle(null);
@@ -4704,6 +4840,7 @@ export default function App() {
     setDetail(null);
     setDetailFor(null);
     setContext(null);
+    setContextError(null);
     setFocusComposition(false);
     setDoctor(null);
     setLifecycle(null);
@@ -4739,21 +4876,34 @@ export default function App() {
     setExportError(null);
     setExporting(false);
     setError(null);
-    Promise.all([
-      api.inspectSession(selected.agent, selected.id),
-      api.getContext(selected.agent, selected.id),
-    ])
-      .then(([nextDetail, nextContext]) => {
+    // Browsing is available as soon as inspection succeeds; context is optional.
+    const contextRequest = turnRequest.current;
+    setLoadingContext(true);
+    api.inspectSession(selected.agent, selected.id)
+      .then((nextDetail) => {
         if (request !== sessionRequest.current) return;
         setDetail(nextDetail);
         setDetailFor(selected);
-        setContext(nextContext);
       })
       .catch((loadError) => {
         if (request === sessionRequest.current) setError(errorMessage(loadError));
       })
       .finally(() => {
         if (request === sessionRequest.current) setLoadingDetail(false);
+      });
+    api.getContext(selected.agent, selected.id)
+      .then((nextContext) => {
+        if (request !== sessionRequest.current || contextRequest !== turnRequest.current) return;
+        setContext(nextContext);
+        setContextError(null);
+      })
+      .catch((loadError) => {
+        if (request === sessionRequest.current && contextRequest === turnRequest.current) {
+          setContextError(errorMessage(loadError));
+        }
+      })
+      .finally(() => {
+        if (request === sessionRequest.current && contextRequest === turnRequest.current) setLoadingContext(false);
       });
   }, [selected]);
 
@@ -4762,20 +4912,34 @@ export default function App() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     const session = selected;
-    const follow = async () => {
-      try {
-        const [nextDetail, nextContext] = await Promise.all([
-          api.inspectSession(session.agent, session.id),
-          api.getContext(session.agent, session.id),
-        ]);
-        if (!cancelled) {
+    let refreshRequest = 0;
+    const follow = () => {
+      const request = ++refreshRequest;
+      const contextRequest = ++turnRequest.current;
+      setLoadingContext(true);
+      const current = () => !cancelled && request === refreshRequest;
+      void api.inspectSession(session.agent, session.id)
+        .then((nextDetail) => {
+          if (!current()) return;
           setDetail(nextDetail);
           setDetailFor(session);
+        })
+        .catch((loadError) => { if (current()) setError(errorMessage(loadError)); });
+      void api.getContext(session.agent, session.id)
+        .then((nextContext) => {
+          if (!current() || contextRequest !== turnRequest.current) return;
           setContext(nextContext);
-        }
-      } catch (loadError) {
-        if (!cancelled) setError(errorMessage(loadError));
-      }
+          setContextError(null);
+        })
+        .catch((loadError) => {
+          if (current() && contextRequest === turnRequest.current) {
+            setContext(null);
+            setContextError(errorMessage(loadError));
+          }
+        })
+        .finally(() => {
+          if (current() && contextRequest === turnRequest.current) setLoadingContext(false);
+        });
     };
     if (typeof api.listenForSessionUpdates === 'function') {
       api.listenForSessionUpdates((event) => {
@@ -4826,6 +4990,7 @@ export default function App() {
       setGhostLoading(false);
       const session = selected;
       setContext(null);
+      setContextError(null);
       setDoctor(null);
       setLifecycle(null);
       setLifecycleItem(null);
@@ -4885,7 +5050,6 @@ export default function App() {
       setSidebarCollapsed(true);
       pendingSessionFocus.current = `${destination.agent}:${destination.id}`;
     }
-    setPendingNotificationTurn(null);
     setNotificationHighlight({ ...destination, line: hit.line, request: ++recordNavigationRequest.current });
     setActiveView("chat");
     setSelected((current) => (sameSession(current, destination) ? current : destination));
@@ -4906,37 +5070,47 @@ export default function App() {
     const destination = { agent: notification.location.agent, id: notification.location.sessionId };
     setCorpusOpen(false);
     setSelected((current) => sameSession(current, destination) ? current : destination);
-    setPendingNotificationTurn(null);
-    // A compaction also names a line, but it already has a destination: the
-    // turn view opens its replacement-history inspector on that line. Only the
-    // rules that point at the *content* of one record -- a secret, a run of
-    // failing tools -- have nowhere better to land than the conversation.
-    const recordRoute =
-      notification.location.sourceLine != null &&
-      (notification.ruleId === 'secretExposure' || notification.ruleId === 'toolErrorStreak');
+    // Any finding naming a record lands in Conversation, from every tab.
+    const recordRoute = notification.location.sourceLine != null || notification.location.turn != null;
     setNotificationHighlight(
       recordRoute
-        ? { ...destination, line: notification.location.sourceLine!, request: ++recordNavigationRequest.current }
+        ? { ...destination, line: notification.location.sourceLine, turn: notification.location.turn, request: ++recordNavigationRequest.current }
         : null,
     );
     if (recordRoute) {
       setActiveView('chat');
-    } else if (notification.location.turn != null) {
-      setActiveView('turns');
-      setPendingNotificationTurn(notification.location.turn);
+    } else {
+      setActiveView('overview');
     }
   }, []);
 
   useEffect(() => {
-    if (
-      pendingNotificationTurn == null ||
-      !selected ||
-      !sameSession(detailFor, selected)
-    ) return;
-    const turn = pendingNotificationTurn;
-    setPendingNotificationTurn(null);
-    void selectTurn(turn);
-  }, [detailFor, pendingNotificationTurn, selectTurn, selected]);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let pending = Promise.resolve();
+    const drain = () => {
+      pending = pending.then(async () => {
+        if (disposed) return;
+        const requests = await api.takeNotificationActivations();
+        if (disposed) return;
+        for (const request of requests) {
+          if (request.notification) openFeedNotification(request.notification);
+          else {
+            setNotificationDrawerOpen(true);
+            setNotificationSettingsOpen(false);
+            if (request.unavailable) setNotificationError("This notification is no longer in local history.");
+          }
+        }
+      }).catch((problem) => { if (!disposed) setNotificationError(errorMessage(problem)); });
+    };
+    // Subscribe before draining: activations arriving during startup stay queued.
+    api.listenForNotificationActivations(drain).then((stop) => {
+      if (disposed) { stop(); return; }
+      unlisten = stop;
+      drain();
+    }).catch((problem) => { if (!disposed) setNotificationError(errorMessage(problem)); });
+    return () => { disposed = true; unlisten?.(); };
+  }, [openFeedNotification]);
 
   const runDoctor = useCallback(async () => {
     if (!selected || !context) return;
@@ -5384,6 +5558,7 @@ export default function App() {
       data-theme={theme}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
+      {resumeTarget && <ResumeDialog key={`${resumeTarget.agent}:${resumeTarget.id}`} session={resumeTarget} onClose={() => setResumeTarget(null)} />}
       {notificationSettings && (
         <NotificationOnboarding
           settings={notificationSettings}
@@ -5587,30 +5762,7 @@ export default function App() {
         </div>
 
         <div className="filter-row secondary">
-          <select
-            aria-label="Filter sessions by project"
-            value={projectFilter.kind === "path" ? projectFilter.path : projectFilter.kind}
-            onChange={(event) => {
-              const chosen = event.target.value;
-              setProjectFilter(
-                chosen === "any"
-                  ? { kind: "any" }
-                  : chosen === "unrecorded"
-                    ? { kind: "unrecorded" }
-                    : { kind: "path", path: chosen },
-              );
-            }}
-          >
-            <option value="any">All projects</option>
-            {projectFilter.kind === "path" && !projectOptions.some((option) => option.path === projectFilter.path) && (
-              <option value={projectFilter.path}>{projectName(projectFilter.path)} · no sessions for this agent</option>
-            )}
-            {projectOptions.map((option) => (
-              <option key={option.path ?? "unrecorded"} value={option.path ?? "unrecorded"}>
-                {option.label} · {option.count}
-              </option>
-            ))}
-          </select>
+          <ProjectPicker options={projectOptions} value={projectFilter} onChange={setProjectFilter} />
           <label className="subagent-toggle">
             <input
               type="checkbox"
@@ -5658,6 +5810,7 @@ export default function App() {
               session={visibleDetail.session}
               selected
               onSelect={() => selectSession(visibleDetail.session)}
+              onResume={() => setResumeTarget(visibleDetail.session)}
             />
           </div>
         )}
@@ -5673,6 +5826,7 @@ export default function App() {
                   session={session}
                   selected={selected?.agent === session.agent && selected?.id === session.id}
                   onSelect={() => selectSession({ agent: session.agent, id: session.id })}
+                  onResume={() => setResumeTarget(session)}
                 />
               ))}
               {hasMoreSessions && (
@@ -5707,7 +5861,7 @@ export default function App() {
               <small>
                 {demoData
                   ? "Fabricated fixtures. No local logs are being read."
-                  : "Reads local logs. No network."}
+                  : "Local logs. Public pricing downloads."}
               </small>
             </span>
             <span>{showRoots ? "⌃" : "⌄"}</span>
@@ -5905,6 +6059,7 @@ export default function App() {
             detail={visibleDetail}
             context={context}
             contextLoading={loadingContext}
+            contextError={contextError}
             doctor={doctor}
             doctorLoading={loadingDoctor}
             lifecycle={lifecycle}
@@ -5984,6 +6139,7 @@ export default function App() {
           enabled={!corpusOpen && activeView === "chat" && visibleDetail != null}
           onTurn={selectTranscriptTurn}
           highlightLine={visibleDetail && sameSession(notificationHighlight, visibleDetail.session) ? notificationHighlight!.line : null}
+          highlightTurn={visibleDetail && sameSession(notificationHighlight, visibleDetail.session) ? notificationHighlight?.turn ?? null : null}
           highlightRequest={notificationHighlight?.request ?? 0}
         />
       </div>

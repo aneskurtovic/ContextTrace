@@ -35,6 +35,10 @@ try {
         @{
             Name = 'stale review date'
             Mutate = { param($manifest) $manifest.last_reviewed = '2000-01-01' }
+        },
+        @{
+            Name = 'incorrect stdout producer receipt'
+            Mutate = { param($manifest) ($manifest.fixtures | Where-Object surface -eq 'codex-exec').version_evidence = 'codex-cli 0.0.0' }
         }
     )
 

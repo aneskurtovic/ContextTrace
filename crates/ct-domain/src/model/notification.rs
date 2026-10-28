@@ -264,6 +264,30 @@ pub struct NotificationCandidate {
     pub evidence: NotificationEvidence,
 }
 
+impl NotificationCandidate {
+    /// Versioned compound identity for global persistence. Length-prefix the
+    /// session ID so separator characters cannot collapse distinct identities.
+    pub fn qualified_dedupe_key(&self) -> String {
+        let prefix = if self.rule == NotificationRuleId::FormatDrift {
+            // A producer shape is agent-wide; preserve deliberate cross-session
+            // deduplication for this rule alone.
+            format!("v2:{}:global:", self.location.agent)
+        } else {
+            format!(
+                "v2:{}:{}:{}:",
+                self.location.agent,
+                self.location.session_id.as_str().len(),
+                self.location.session_id
+            )
+        };
+        if self.dedupe_key.starts_with(&prefix) {
+            self.dedupe_key.clone()
+        } else {
+            format!("{prefix}{}", self.dedupe_key)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum OsDeliveryStatus {

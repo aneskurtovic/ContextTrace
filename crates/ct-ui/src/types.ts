@@ -142,7 +142,7 @@ export interface CorpusReport {
   toolCalls: number;
   toolErrors: number;
   costMicros: number;
-  /** Turns no local rate could price, which makes every cost above a floor. */
+  /** Turns no published rate could price, which makes every cost above a floor. */
   unpricedTurns: number;
   pressure: PressureBands;
   byAgent: AgentTotals[];
@@ -295,7 +295,10 @@ export type InstructionFileStatus =
   | "changed"
   | "missing"
   | "unreadable"
-  | "recordedBodyUnavailable";
+  | "recordedBodyUnavailable"
+  | "unsafePath"
+  | "tooLarge"
+  | "notRegular";
 
 export interface InstructionFileComparison {
   path: string;
@@ -333,6 +336,8 @@ export interface CostForecast {
 }
 
 export interface CostTurn {
+  pricingVersion?: string;
+  pricingSource?: string;
   turn: number;
   model: string | null;
   priced: boolean;
@@ -365,6 +370,15 @@ export interface CostReport {
   turns: CostTurn[];
   unpriced: UnpricedTurn[];
   forecast: CostForecast | null;
+  cacheUsage: {
+    freshInputTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+    cacheReadShare: number | null;
+    completeTurns: number;
+    totalTurns: number;
+    multiCallTurns: number;
+  };
 }
 
 export interface GhostItem {
@@ -395,12 +409,14 @@ export type TemporalGhost =
 /**
  * Which project the session list is narrowed to.
  *
- * Three states rather than `string | null`, because the absence of a project
+ * Explicit states rather than `string | null`, because the absence of a project
  * is itself selectable: a Codex rollout whose log never recorded a `cwd` has
- * no folder to name, and "every project" is not the same request.
+ * no folder to name, and "every project" is not the same request. Temporary
+ * workspaces form a selectable group as well as retaining individual paths.
  */
 export type ProjectFilter =
   | { kind: 'any' }
+  | { kind: 'temporary' }
   | { kind: 'unrecorded' }
   | { kind: 'path'; path: string };
 
@@ -409,6 +425,19 @@ export interface ProjectOption {
   path: string | null;
   label: string;
   count: number;
+  temporary?: boolean;
+  directoryState?: 'available' | 'missing' | 'unknown';
+}
+
+export interface ResumePlan {
+  agent: Agent;
+  id: string;
+  project: string | null;
+  directory: string | null;
+  command: string;
+  canLaunch: boolean;
+  reason: string | null;
+  isParent: boolean;
 }
 
 export interface SessionPage {
@@ -610,7 +639,20 @@ export interface ContributorSummary {
  * from: three tool outputs do not account for 100% of the context, and the
  * rest of it is exactly what someone expanding the row needs to keep in view.
  */
+export interface FileTarget {
+  path: string;
+  resolvedPath: string | null;
+  status: "file" | "directory" | "missing" | "unresolved" | "unreadable";
+  canOpen: boolean;
+}
+
+export interface NotificationActivation {
+  notification: NotificationRecord | null;
+  unavailable: boolean;
+}
+
 export interface ContextItemSummary {
+  fileTarget?: FileTarget | null;
   id: string;
   label: string;
   category: string;

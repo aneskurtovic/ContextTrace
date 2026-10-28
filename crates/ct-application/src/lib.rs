@@ -44,8 +44,7 @@ pub use corpus::{
 pub use cost::{
     compare as compare_cost, project as project_cost, project_scenario as project_cost_scenario,
     project_with as project_cost_with, CostCategory, CostComparison, CostForecast, CostReport,
-    CostScenario, CostTurn, MoneyMicros, PricingCatalog, PricingOverrideRate, PricingOverrides,
-    UnpricedTurn,
+    CostScenario, CostTurn, MoneyMicros, PricingOverrideRate, PricingOverrides, UnpricedTurn,
 };
 pub use ct_domain::services::DerivedRatio as SessionRatio;
 pub use diagnostics::{Diagnostics, DriftReport, DriftType, ResidualSpike, UnreadableSession};
@@ -170,11 +169,28 @@ pub struct ResolvedSession {
 /// The application service. One instance wires every supported agent.
 pub struct ContextTrace {
     bindings: Vec<AgentBinding>,
+    pricing: Box<dyn ct_domain::pricing::PricingProvider>,
 }
 
 impl ContextTrace {
     pub fn new(bindings: Vec<AgentBinding>) -> Self {
-        Self { bindings }
+        Self {
+            bindings,
+            pricing: Box::new(ct_domain::pricing::UnavailablePricing),
+        }
+    }
+
+    pub fn with_pricing(mut self, pricing: Box<dyn ct_domain::pricing::PricingProvider>) -> Self {
+        self.pricing = pricing;
+        self
+    }
+
+    pub fn project_cost(&self, session: &AgentSession, scenario: &CostScenario) -> CostReport {
+        cost::project_scenario_with_provider(session, scenario, self.pricing.as_ref())
+    }
+
+    pub fn compare_cost(&self, session: &AgentSession, scenario: &CostScenario) -> CostComparison {
+        cost::compare_with_provider(session, scenario, self.pricing.as_ref())
     }
 
     /// Every local directory that will be read.
@@ -186,6 +202,20 @@ impl ContextTrace {
         self.bindings
             .iter()
             .map(|b| (b.adapter.agent(), b.adapter.roots()))
+            .collect()
+    }
+
+    /// Live observation needs per-agent failures preserved: an unreadable
+    /// source is not evidence that its previous sessions were deleted.
+    pub fn discover_live_sessions(
+        &self,
+    ) -> Vec<(
+        AgentKind,
+        ct_domain::ports::PortResult<Vec<SessionDescriptor>>,
+    )> {
+        self.bindings
+            .iter()
+            .map(|binding| (binding.adapter.agent(), binding.adapter.discover()))
             .collect()
     }
 
@@ -673,10 +703,15 @@ impl ContextTrace {
         let mut collected = corpus::Corpus::new();
         for binding in &self.bindings {
             let before = done;
-            corpus::sweep_adapter(binding.adapter.as_ref(), &mut collected, |completed| {
-                done = before + completed;
-                progress(done, total);
-            });
+            corpus::sweep_adapter_with_pricing(
+                binding.adapter.as_ref(),
+                &mut collected,
+                self.pricing.as_ref(),
+                |completed| {
+                    done = before + completed;
+                    progress(done, total);
+                },
+            );
         }
         collected.finish()
     }
@@ -1325,6 +1360,7 @@ mod tests {
                 raw_type: "x".into(),
                 turn: None,
                 links: EventLinks::default(),
+                tool_operations: Vec::new(),
                 content_measurement: None,
             })
             .collect();
@@ -1517,5 +1553,47 @@ mod tests {
             Box::new(CharProbe),
         )]);
         assert!(!empty.sweep_drift(None).matched_nothing());
+    }
+    #[test]
+    fn live_discovery_keeps_failed_and_successful_agent_results_separate() {
+        struct Unavailable;
+        impl AgentAdapter for Unavailable {
+            fn agent(&self) -> AgentKind {
+                AgentKind::ClaudeCode
+            }
+            fn roots(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn discover(&self) -> ct_domain::ports::PortResult<Vec<SessionDescriptor>> {
+                Err(PortError::Io("fixture source unavailable".into()))
+            }
+            fn load(&self, _: &SessionDescriptor) -> ct_domain::ports::PortResult<AgentSession> {
+                panic!("observation must not parse bodies")
+            }
+            fn reconstruct(
+                &self,
+                _: &AgentSession,
+                _: TurnNumber,
+                _: &dyn TokenEstimator,
+            ) -> ct_domain::ports::PortResult<ct_domain::ports::ReconstructedContext> {
+                panic!("observation must not calibrate")
+            }
+        }
+        let app = ContextTrace::new(vec![
+            AgentBinding::new(Box::new(Unavailable), Box::new(CharProbe)),
+            AgentBinding::new(
+                Box::new(FakeAdapter {
+                    agent: AgentKind::Codex,
+                    sessions: vec![(descriptor("live", AgentKind::Codex, "p", 1), Err(()))],
+                }),
+                Box::new(CharProbe),
+            ),
+        ]);
+        let batches = app.discover_live_sessions();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].0, AgentKind::ClaudeCode);
+        assert!(matches!(batches[0].1, Err(PortError::Io(_))));
+        assert_eq!(batches[1].0, AgentKind::Codex);
+        assert_eq!(batches[1].1.as_ref().unwrap()[0].id.as_str(), "live");
     }
 }

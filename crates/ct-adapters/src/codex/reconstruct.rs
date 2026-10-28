@@ -3,8 +3,9 @@
 //! Because `response_item` lines are the literal API items, "what was in
 //! context at turn N" is answered by folding those items forward from the start
 //! of the session to turn N's anchor. Membership is therefore
-//! [`Confidence::Observed`] -- we are not inferring that an item was present, we
-//! are reading the list that was sent.
+//! [`Confidence::Estimated`]: the persisted item order is evidence of history,
+//! but is not a captured API input list. Current response items are excluded
+//! using the separately inferred response boundary.
 //!
 //! The one place the fold is not a simple append is compaction: a `compacted`
 //! event replaces the accumulated history wholesale with its
@@ -42,7 +43,11 @@ pub fn reconstruct(
     let mut preceding_compaction: Option<CompactionEvent> = None;
 
     for (index, event) in session.events().iter().enumerate() {
-        if index > anchor {
+        if index > anchor
+            || turn_data
+                .response_start_index
+                .is_some_and(|start| index >= start)
+        {
             break;
         }
 
@@ -86,13 +91,15 @@ pub fn reconstruct(
         }
     }
 
+    // Persisted Codex item order does not prove the precise API input list.
+    // In particular a report can precede its response, or omit request markers.
+    for item in &mut live {
+        item.provenance.confidence = Confidence::Estimated;
+    }
     promote_current_prompt(&mut live);
 
     let observed_total = turn_data.prompt_tokens().map(TokenCount::observed);
-    let context_window = turn_data
-        .usage
-        .context_window
-        .or(session.metadata().context_window);
+    let context_window = session.context_window_at(turn);
 
     Ok(ReconstructedContext {
         items: live,
@@ -174,7 +181,11 @@ fn classify(
             (
                 ContextCategory::ToolOutputs,
                 ContextSource::ToolExecution { tool: name.clone() },
-                tool_target::label(&name, matched.and_then(|(_, t)| *t)),
+                if event.raw_type == "response_item/image_generation_call" {
+                    "Image generation [media tokens unmeasured]".into()
+                } else {
+                    tool_target::label(&name, matched.and_then(|(_, t)| *t))
+                },
             )
         }
         EventKind::OversizedToolResult {
@@ -211,6 +222,8 @@ fn classify(
         } => (
             if mechanism == "base_instructions" {
                 ContextCategory::SystemInstructions
+            } else if mechanism == "context_compaction" {
+                ContextCategory::Summaries
             } else {
                 ContextCategory::DeveloperInstructions
             },
@@ -300,6 +313,7 @@ mod tests {
             raw_type: "response_item".into(),
             turn,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }
@@ -328,6 +342,15 @@ mod tests {
             },
             event_indices: (0..events.len()).collect(),
             anchor_index: Some(anchor),
+            response_start_index: events
+                .get(anchor)
+                .filter(|e| matches!(e.kind, EventKind::TokenReport(_)))
+                .and_then(|_| {
+                    crate::codex::parse::response_start(
+                        &events,
+                        &(0..events.len().min(anchor + 1)).collect::<Vec<_>>(),
+                    )
+                }),
         };
         AgentSession::new(
             SessionId::new("codex-1").unwrap(),
@@ -340,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_includes_everything_up_to_the_anchor_and_nothing_after() {
+    fn replay_excludes_the_current_response_and_events_after_the_report() {
         let events = vec![
             message(1, MessageRole::User, 100),
             message(2, MessageRole::Assistant, 100),
@@ -350,17 +373,22 @@ mod tests {
         let s = session(events, 2, 5000);
         let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
 
-        assert_eq!(r.items.len(), 2, "the post-anchor message must not appear");
+        assert_eq!(
+            r.items.len(),
+            1,
+            "current output and post-report input must not appear"
+        );
+        assert_eq!(r.items[0].category, ContextCategory::CurrentPrompt);
         assert_eq!(r.observed_total.unwrap().tokens(), 5000);
         assert_eq!(r.context_window, Some(258_400));
     }
 
     #[test]
-    fn membership_is_observed_even_though_sizes_are_estimated() {
+    fn membership_is_estimated_when_api_request_membership_is_inferred() {
         let s = session(vec![message(1, MessageRole::User, 400)], 0, 1000);
         let r = reconstruct(&s, TurnNumber::FIRST, &HeuristicEstimator::for_prose()).unwrap();
         let item = &r.items[0];
-        assert_eq!(item.provenance.confidence, Confidence::Observed);
+        assert_eq!(item.provenance.confidence, Confidence::Estimated);
         assert_eq!(item.tokens.confidence(), Confidence::Estimated);
         // The combination is only as strong as its weakest part.
         assert_eq!(item.confidence(), Confidence::Estimated);
@@ -375,6 +403,7 @@ mod tests {
                     tool: "shell".into(),
                     call_id: Some("call-1".into()),
                     target: Some("cargo test".into()),
+                    file_target: None,
                     char_len: 20,
                 },
                 Some(TurnNumber::FIRST),

@@ -168,9 +168,13 @@ pub struct Turn {
     /// Indices rather than clones: a turn can span hundreds of events, and a
     /// session tens of thousands.
     pub event_indices: Vec<usize>,
-    /// The event that carried this turn's usage report -- the anchor from which
-    /// context reconstruction starts.
+    /// The event that carried this turn's usage report (completion boundary).
     pub anchor_index: Option<usize>,
+    /// First generated event of this request, excluded from its input snapshot.
+    /// Claude records request identity; Codex infers this from output ordering.
+    /// None means the input boundary was not captured; membership is uncertain.
+    #[serde(default)]
+    pub response_start_index: Option<usize>,
 }
 
 impl Turn {
@@ -244,6 +248,23 @@ impl AgentSession {
 
     pub fn turn(&self, number: TurnNumber) -> Option<&Turn> {
         self.turns.iter().find(|t| t.number == number)
+    }
+
+    /// Prefer the request's recorded limit. A session default is not evidence
+    /// for a request that explicitly switched to another model.
+    pub fn context_window_at(&self, number: TurnNumber) -> Option<u32> {
+        let turn = self.turn(number)?;
+        turn.usage
+            .context_window
+            .filter(|window| *window > 0)
+            .or_else(|| {
+                turn.model
+                    .as_deref()
+                    .is_none_or(|model| self.metadata.model.as_deref() == Some(model))
+                    .then_some(self.metadata.context_window)
+                    .flatten()
+                    .filter(|window| *window > 0)
+            })
     }
 
     pub fn event(&self, index: usize) -> Option<&Event> {
@@ -362,6 +383,7 @@ mod tests {
                 },
                 event_indices: vec![],
                 anchor_index: None,
+                response_start_index: None,
             })
             .collect();
         AgentSession::new(
@@ -372,6 +394,23 @@ mod tests {
             turns,
             vec![],
         )
+    }
+
+    #[test]
+    fn model_switch_does_not_inherit_another_models_context_window() {
+        let mut session = session_with_turns(&[100, 200, 300]);
+        session.metadata.model = Some("first-model".into());
+        session.metadata.context_window = Some(200_000);
+        session.turns[0].model = Some("first-model".into());
+        session.turns[1].model = Some("second-model".into());
+        session.turns[2].model = Some("second-model".into());
+        session.turns[2].usage.context_window = Some(1_000_000);
+        assert_eq!(session.context_window_at(TurnNumber::FIRST), Some(200_000));
+        assert_eq!(session.context_window_at(TurnNumber::new(2).unwrap()), None);
+        assert_eq!(
+            session.context_window_at(TurnNumber::new(3).unwrap()),
+            Some(1_000_000)
+        );
     }
 
     #[test]
@@ -417,6 +456,7 @@ mod tests {
                 raw_type: "x".into(),
                 turn: None,
                 links: Default::default(),
+                tool_operations: Vec::new(),
                 content_measurement: None,
             })
             .collect();

@@ -3,7 +3,8 @@
 ContextTrace reads persisted Codex CLI and Claude Code session JSONL. The
 descriptions here summarize the shapes supported by the committed fixtures and
 compatibility catalog; they do not promise support for every producer version
-or for live stdout/app-server streams. Examples and fixtures are synthetic or
+or for live stdout/app-server streams. Saved stream captures have a separate
+[explicit importer](STREAM-IMPORTS.md). Examples and fixtures are synthetic or
 redacted, not copied from a private session corpus.
 
 Back to the [README](../README.md) · see also
@@ -21,6 +22,14 @@ exact structural comparison when that evidence is available.
 Some payloads are encrypted, structured or image-bearing rather than ordinary
 text. Tokenizing a JSON serialization or encoded image would not measure what
 the model saw, so those items are not presented as exact text-token counts.
+
+The 0.161.0 schema contract additionally covers structured `tool_search_call`
+arguments, legacy `local_shell_call`, `additional_tools`, the
+`compaction_summary` alias and `configuration_update` controls. Known
+`retained_context` families are model-invisible host evidence and do not add
+another copy of their text to context. Audio URLs, file-based images and nested
+encrypted content remain opaque estimates. See the
+[dated audit](FORMAT-AUDIT-2026-10-07.md) for unhandled variants and evidence limits.
 
 ## Claude Code
 
@@ -41,3 +50,7 @@ Reasoning text may be redacted while an opaque signature remains, and a tool
 result persisted to disk may be larger than the content that was sent to the
 model. Such records require conservative size estimates and explicit
 measurement limits.
+
+Malformed JSON and skipped oversized Claude records are unrecognised events,
+so diagnostics expose the lost information instead of treating it as harmless
+session metadata. Parsing continues with subsequent records.

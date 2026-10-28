@@ -35,6 +35,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Import a saved stdout/app-server JSONL timeline without treating it as persisted history.
+    Import {
+        input: std::path::PathBuf,
+        #[arg(long, value_parser = ["codex-exec", "codex-app-server", "claude-stream"])]
+        surface: String,
+        /// Producer version recorded when capturing the stream.
+        #[arg(long)]
+        producer_version: String,
+    },
     /// Run a read-only MCP server over stdin/stdout.
     Mcp,
 
@@ -47,7 +56,7 @@ enum Command {
         json: bool,
     },
 
-    /// Estimate request cost from a bundled local pricing table.
+    /// Estimate request cost using automatic current and historical LiteLLM prices.
     Cost {
         /// Session id, or an unambiguous prefix
         id: String,
@@ -142,7 +151,7 @@ enum Command {
     /// Parses the whole corpus in one pass -- totals, per-project and per-day
     /// activity, context-pressure bands, the tools returning the most text,
     /// and the sessions that ran closest to their window. Cost is summed from
-    /// the turns a local rate could price, and the rest are reported as
+    /// the turns a published rate could price, and the rest are reported as
     /// unpriced rather than dropped.
     Stats {
         #[arg(long)]
@@ -565,6 +574,21 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let archive_store = ct_runtime::archive_store();
 
     match cli.command {
+        Command::Import {
+            input,
+            surface,
+            producer_version,
+        } => {
+            use ct_adapters::streams::{StreamAdapter, StreamSurface};
+            let adapter = StreamAdapter::new(
+                input.parent().unwrap_or(std::path::Path::new(".")),
+                StreamSurface::parse(&surface).unwrap(),
+                producer_version,
+            );
+            let report = adapter.import(&input)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(i32::from(report.session.unrecognised_total() != 0));
+        }
         Command::Mcp => mcp::serve(&app, &archive_store)?,
 
         Command::Families { agent, json } => {
@@ -610,17 +634,9 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 && scenario.cap_input_tokens.is_none()
                 && scenario.cap_output_tokens.is_none()
             {
-                render::cost(
-                    &ct_application::project_cost_scenario(&session, &scenario),
-                    &resolved,
-                    json,
-                );
+                render::cost(&app.project_cost(&session, &scenario), &resolved, json);
             } else {
-                render::cost_comparison(
-                    &ct_application::compare_cost(&session, &scenario),
-                    &resolved,
-                    json,
-                );
+                render::cost_comparison(&app.compare_cost(&session, &scenario), &resolved, json);
             }
         }
 
@@ -642,7 +658,11 @@ fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             let (session, _) = app.load_with_content_analysis_and_archive(&id, &archive_store)?;
             let hasher = ct_runtime::content_hasher();
             render::instruction_files(
-                &ct_application::compare_instruction_files(&session, &hasher),
+                &ct_application::compare_instruction_files(
+                    &session,
+                    &hasher,
+                    &ct_runtime::instruction_file_reader(),
+                ),
                 json,
             );
         }

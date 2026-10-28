@@ -75,7 +75,7 @@ impl NotificationEngine {
         evaluate_pressure(session, prior, settings, &mut checkpoint, &mut candidates);
         evaluate_spikes(session, prior, settings, &mut candidates);
         evaluate_events(session, prior, settings, &mut checkpoint, &mut candidates);
-        evaluate_deep(session, settings, inputs, &mut candidates);
+        evaluate_deep(session, prior, settings, inputs, &mut candidates);
         advance(session, &mut checkpoint);
         NotificationEvaluation {
             candidates,
@@ -127,7 +127,7 @@ fn candidate(
             .and_then(|event| event.timestamp.as_ref())
         })
         .and_then(|time| u64::try_from(time.timestamp_millis()).ok());
-    NotificationCandidate {
+    let mut result = NotificationCandidate {
         dedupe_key: key,
         rule,
         severity,
@@ -137,7 +137,9 @@ fn candidate(
         location: location(session, turn, line),
         occurred_at_ms,
         evidence,
-    }
+    };
+    result.dedupe_key = result.qualified_dedupe_key();
+    result
 }
 
 fn advance(session: &AgentSession, checkpoint: &mut SessionNotificationCheckpoint) {
@@ -363,7 +365,8 @@ fn evaluate_events(
     let tools: HashMap<&str, (&str, Option<&str>)> = session
         .events()
         .iter()
-        .filter_map(|event| match &event.kind {
+        .flat_map(|event| event.tool_operations())
+        .filter_map(|kind| match kind {
             EventKind::ToolCall {
                 tool,
                 call_id: Some(id),
@@ -379,13 +382,14 @@ fn evaluate_events(
         .iter()
         .filter(|event| prior.last_sequence.is_none_or(|last| event.sequence > last))
     {
-        match &event.kind {
-            EventKind::ToolResult {
+        for (operation_index, kind) in event.tool_operations().enumerate() {
+            if let EventKind::ToolResult {
                 tool,
                 call_id,
                 is_error,
                 ..
-            } => {
+            } = kind
+            {
                 let call = call_id.as_deref().and_then(|id| tools.get(id).copied());
                 let display_tool = tool.as_deref().or_else(|| call.map(|(tool, _)| tool));
                 let failure_key = display_tool
@@ -393,14 +397,17 @@ fn evaluate_events(
                 evaluate_tool_result(
                     session,
                     event,
+                    operation_index,
                     display_tool,
                     failure_key.as_deref(),
                     *is_error,
                     settings,
                     checkpoint,
                     out,
-                )
+                );
             }
+        }
+        match &event.kind {
             EventKind::Compacted(facts) => push_compaction(session, event, facts, settings, out),
             EventKind::Unrecognised => *unknown.entry(event.raw_type.as_str()).or_default() += 1,
             _ => {}
@@ -417,6 +424,7 @@ fn evaluate_events(
 fn evaluate_tool_result(
     session: &AgentSession,
     event: &ct_domain::Event,
+    operation_index: usize,
     tool: Option<&str>,
     failure_key: Option<&str>,
     failed: bool,
@@ -446,7 +454,11 @@ fn evaluate_tool_result(
         };
         out.push(candidate(
             session,
-            format!("tool-errors:{}:{}", session.id(), event.sequence),
+            format!(
+                "tool-errors:{}:{}:{operation_index}",
+                session.id(),
+                event.sequence
+            ),
             NotificationRuleId::ToolErrorStreak,
             NotificationSeverity::Warning,
             rule.delivery,
@@ -544,6 +556,7 @@ fn push_format_drift(
 
 fn evaluate_deep(
     session: &AgentSession,
+    prior: &SessionNotificationCheckpoint,
     settings: &NotificationSettings,
     inputs: NotificationInputs<'_>,
     out: &mut Vec<NotificationCandidate>,
@@ -559,6 +572,14 @@ fn evaluate_deep(
     }
     if let Some(drift) = inputs.instruction_drift {
         for change in &drift.changes {
+            // Deep analysis covers the whole file. Only newly completed turns
+            // may alert; baselining and ordinary appends must not replay history.
+            if !change
+                .to_turn
+                .is_some_and(|turn| prior.last_turn.is_none_or(|last| turn > last.get()))
+            {
+                continue;
+            }
             push_instruction(session, change, settings, out);
         }
     }
@@ -790,8 +811,8 @@ fn push_instruction(
         delivery,
         "Instructions changed",
         format!(
-            "{} instructions changed during the session.",
-            change.mechanism
+            "Recorded instruction signature changed for {} (label/size comparison).",
+            short_label(&change.to_label)
         ),
         turn,
         None,
@@ -852,6 +873,7 @@ mod tests {
                 },
                 event_indices: Vec::new(),
                 anchor_index: None,
+                response_start_index: None,
             })
             .collect();
         AgentSession::new(
@@ -865,6 +887,50 @@ mod tests {
             turns,
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn candidates_qualify_agent_identity_and_keep_format_drift_agent_wide() {
+        let codex = session(&[900], 1000);
+        let claude = AgentSession::new(
+            codex.id().clone(),
+            AgentKind::ClaudeCode,
+            codex.metadata().clone(),
+            Vec::new(),
+            codex.turns().to_vec(),
+            Vec::new(),
+        );
+        let other = AgentSession::new(
+            SessionId::new("other").unwrap(),
+            AgentKind::Codex,
+            codex.metadata().clone(),
+            Vec::new(),
+            codex.turns().to_vec(),
+            Vec::new(),
+        );
+        let finding = SecretFinding {
+            kind: crate::SecretKind::EnvironmentSecret,
+            occurrences: 1,
+            turn: Some(TurnNumber::new(1).unwrap()),
+            line_no: 2,
+            event_type: "user".into(),
+        };
+        let settings = NotificationSettings::default();
+        let key = |session: &AgentSession| {
+            let mut out = Vec::new();
+            push_secret(session, &finding, &settings, &mut out);
+            out.remove(0).dedupe_key
+        };
+        assert_ne!(key(&codex), key(&claude));
+        assert_ne!(key(&codex), key(&other));
+        assert_eq!(key(&codex), key(&codex));
+        let format_key = |session: &AgentSession| {
+            let mut out = Vec::new();
+            push_format_drift(session, "future", 1, &settings, &mut out);
+            out.remove(0).dedupe_key
+        };
+        assert_eq!(format_key(&codex), format_key(&other));
+        assert_ne!(format_key(&codex), format_key(&claude));
     }
 
     #[test]
@@ -929,6 +995,52 @@ mod tests {
         assert_eq!(candidates[0].location.line, Some(191));
         assert_eq!(candidates[0].location.turn, finding.turn);
         assert_eq!(candidates[0].title, "Potential secret in model context");
+    }
+
+    #[test]
+    fn historical_instruction_drift_does_not_replay_on_appends_or_restart() {
+        let before = session(&[100, 200], 1_000);
+        let prior = NotificationEngine::baseline(&before);
+        let after = session(&[100, 200, 300], 1_000);
+        let mut drift = InstructionDrift {
+            session_id: after.id().to_string(),
+            base_instructions_observed: false,
+            observations: vec![],
+            content_compared: false,
+            changes: vec![crate::InstructionChange {
+                mechanism: "nested_memory".into(),
+                from_turn: Some(1),
+                to_turn: Some(2),
+                from_label: "CLAUDE.md".into(),
+                to_label: "CLAUDE.md".into(),
+                from_char_len: 10,
+                to_char_len: 20,
+            }],
+        };
+        let settings = NotificationSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let evaluate = |drift: &InstructionDrift, prior: &SessionNotificationCheckpoint| {
+            NotificationEngine::evaluate(
+                &after,
+                prior,
+                &settings,
+                NotificationInputs {
+                    instruction_drift: Some(drift),
+                    ..Default::default()
+                },
+            )
+        };
+        assert!(evaluate(&drift, &prior).candidates.is_empty());
+        drift.changes[0].to_turn = Some(3);
+        let result = evaluate(&drift, &prior);
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(
+            result.candidates[0].rule,
+            NotificationRuleId::InstructionDrift
+        );
+        assert!(evaluate(&drift, &result.checkpoint).candidates.is_empty());
     }
 
     #[test]

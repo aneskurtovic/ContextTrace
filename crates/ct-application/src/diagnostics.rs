@@ -383,6 +383,7 @@ mod tests {
             raw_type: "x".into(),
             turn: None,
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }
@@ -398,6 +399,7 @@ mod tests {
             },
             event_indices: indices,
             anchor_index: indices_last(&[]),
+            response_start_index: None,
         }
     }
 
@@ -480,6 +482,7 @@ mod tests {
                     call_id: Some("toolu_017".into()),
                     char_len: 40,
                     target: None,
+                    file_target: None,
                 },
             ),
             event(

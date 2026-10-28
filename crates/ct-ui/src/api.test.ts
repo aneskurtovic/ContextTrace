@@ -23,9 +23,14 @@ import {
   getTurnDiff,
   inspectSession,
   listNotifications,
+  openContextFile,
+  takeNotificationActivations,
+  listenForNotificationActivations,
   listenForNotificationUpdates,
   listenForSessionUpdates,
   listProjects,
+  prepareResume,
+  resumeSession,
   markNotificationsRead,
   runDoctor,
   searchSessions,
@@ -55,6 +60,58 @@ afterEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   invoke.mockReset();
   listen.mockReset();
+});
+
+describe('native resume IPC', () => {
+  it('requires the desktop bridge and sends only session identity and the chosen folder', async () => {
+    await expect(prepareResume('codex', 'id')).rejects.toThrow('desktop app');
+    await expect(resumeSession('claude-code', 'id')).rejects.toThrow('desktop app');
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const plan = { agent: 'codex', id: 'id', project: null, directory: 'C:/work', command: 'codex resume id', canLaunch: true, reason: null, isParent: false };
+    invoke.mockResolvedValueOnce(plan);
+    await expect(prepareResume('codex', 'id', 'C:/work')).resolves.toEqual(plan);
+    expect(invoke).toHaveBeenLastCalledWith('prepare_resume', { agent: 'codex', id: 'id', directory: 'C:/work' });
+    invoke.mockResolvedValueOnce(undefined);
+    await resumeSession('claude-code', 'child');
+    expect(invoke).toHaveBeenLastCalledWith('resume_session', { agent: 'claude-code', id: 'child', directory: null });
+  });
+
+  it('rejects inconsistent launchability and forwards the temporary workspace filter', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValueOnce({ agent: 'codex', id: 'id', project: null, directory: null, command: 'cmd', canLaunch: true, reason: 'missing folder', isParent: false });
+    await expect(prepareResume('codex', 'id')).rejects.toThrow('invalid response');
+    invoke.mockResolvedValueOnce({ sessions: [], total: 0, offset: 0, hasMore: false });
+    await searchSessions(undefined, undefined, 0, 200, false, { kind: 'temporary' });
+    expect(invoke).toHaveBeenLastCalledWith('search_sessions', expect.objectContaining({ project: 'temporary' }));
+  });
+});
+
+describe('file and toast activation IPC contracts', () => {
+  it('sends file identity rather than an arbitrary path and refuses browser mode', async () => {
+    await expect(openContextFile('codex', 'session', 1, 'item', 'open')).rejects.toThrow('desktop app');
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValueOnce(undefined);
+    await openContextFile('codex', 'session', 1, 'item', 'reveal');
+    expect(invoke).toHaveBeenCalledWith('open_context_file', { agent: 'codex', id: 'session', turn: 1, itemId: 'item', action: 'reveal' });
+  });
+
+  it('validates exact file metadata and activation records', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const context = demoContext(24);
+    const fileTarget = { path: 'C:/image  one.png', resolvedPath: 'C:/image  one.png', status: 'file', canOpen: true };
+    invoke.mockResolvedValueOnce({ ...context, items: [{ ...context.items[0], fileTarget }] });
+    await expect(getContext('codex', 'session')).resolves.toMatchObject({ items: [{ fileTarget }] });
+    invoke.mockResolvedValueOnce({ ...context, items: [{ ...context.items[0], fileTarget: { ...fileTarget, status: 'invented' } }] });
+    await expect(getContext('codex', 'session')).rejects.toThrow('invalid response');
+    invoke.mockResolvedValueOnce([{ notification: demoNotificationPage.notifications[0], unavailable: false }, { notification: null, unavailable: true }]);
+    await expect(takeNotificationActivations()).resolves.toHaveLength(2);
+    invoke.mockResolvedValueOnce([{ notification: { id: '42' }, unavailable: false }]);
+    await expect(takeNotificationActivations()).rejects.toThrow('invalid response');
+    listen.mockResolvedValueOnce(() => undefined);
+    const callback = vi.fn();
+    await listenForNotificationActivations(callback);
+    expect(listen).toHaveBeenCalledWith('contexttrace://notification-activation', callback);
+  });
 });
 
 describe('transcript block IPC contracts', () => {
@@ -353,6 +410,24 @@ describe("desktop IPC response validation", () => {
   });
 
   describe('demo-path project and subagent filtering', () => {
+    it('keeps temporary grouping and filtering consistent for Windows and Unix fixtures', async () => {
+      const session = demoSessions.find((session) => session.threadRole.kind === 'root')!;
+      const original = session.project;
+      try {
+        for (const [path, temporary] of [
+          ['C:\\Users\\demo\\AppData\\Local\\Temp\\.tmp123', true],
+          ['/private/var/tmp/task', true],
+          ['C:/repos/tmp-project', false],
+          ['/tmp/../repos/project', false],
+        ] as const) {
+          session.project = path;
+          const options = await listProjects();
+          expect(options.find((option) => option.path === path)?.temporary).toBe(temporary);
+          const group = await searchSessions(undefined, undefined, 0, 200, false, { kind: 'temporary' });
+          expect(group.sessions.some((row) => row.id === session.id)).toBe(temporary);
+        }
+      } finally { session.project = original; }
+    });
     // These exercise the branch `!inTauri()` takes, which has to apply the
     // same two filters the backend does so the browser build behaves
     // identically -- nothing above this block calls `searchSessions` or
@@ -1242,6 +1317,25 @@ describe("desktop IPC response validation", () => {
       await expect(getInstructionFiles("codex", "s1")).rejects.toThrow(
         "ContextTrace received an invalid response from instruction-file comparison. Refresh and try again.",
       );
+    });
+
+    it.each(["unsafePath", "tooLarge", "notRegular"] as const)("accepts typed instruction refusal %s", async (status) => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const expected = demoInstructionFiles("s1");
+      expected.comparisons[0] = {
+        ...expected.comparisons[0], status, currentDigest: null, currentChars: null,
+        detail: "comparison refused by local reader",
+      };
+      expected.refusalCount = 1;
+      invoke.mockResolvedValue(expected);
+      await expect(getInstructionFiles("codex", "s1")).resolves.toEqual(expected);
+    });
+
+    it("rejects unknown instruction statuses", async () => {
+      (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+      const expected = demoInstructionFiles("s1");
+      invoke.mockResolvedValue({ ...expected, comparisons: [{ ...expected.comparisons[0], status: "invented" }] });
+      await expect(getInstructionFiles("codex", "s1")).rejects.toThrow("invalid response");
     });
 
     it("accepts instruction files with camelCase refusalCount", async () => {

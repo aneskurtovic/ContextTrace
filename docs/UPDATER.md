@@ -15,7 +15,7 @@ asset for that exact version rather than to a moving `latest` asset URL.
 ## First updater-enabled version
 
 Versions 0.1.0 and 0.1.1 predate the updater. Version 0.1.2 was the first
-updater-enabled stable release. Install 0.1.5 manually if upgrading from an
+updater-enabled stable release. Install the latest stable release manually if upgrading from an
 older version without the updater; subsequent compatible versions can be
 offered in-app.
 
@@ -34,3 +34,10 @@ key is unencrypted, so the workflow supplies an empty
 
 Use Woodpecker for CI and release packaging. See the [release
 procedure](RELEASING.md) for asset checks and clean-host acceptance.
+
+The publishing pipeline checks staged hashes, uploaded asset digests, the
+version-pinned installer URL and signature metadata agreement. This is separate
+from the desktop updater cryptographically verifying and installing a downloaded
+package. Current version-matched clean-host updater acceptance remains
+unverified; see [MVP status](MVP-STATUS.md). A Tauri updater signature is also
+separate from a Windows Authenticode signature.

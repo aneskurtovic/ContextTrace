@@ -286,6 +286,7 @@ mod tests {
             raw_type: "compacted".into(),
             turn: turn.map(|t| TurnNumber::new(t).unwrap()),
             links: EventLinks::default(),
+            tool_operations: Vec::new(),
             content_measurement: None,
         }
     }
@@ -305,6 +306,8 @@ mod tests {
                 },
                 event_indices: vec![],
                 anchor_index: None,
+
+                response_start_index: None,
             })
             .collect();
 
