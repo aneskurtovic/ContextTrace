@@ -31,7 +31,7 @@ mkdir -p "$smoke_home" "$work/smoke-config" "$work/smoke-data" "$work/smoke-cach
 chmod 700 "$work/smoke-runtime"
 smoke_env=("HOME=$smoke_home" "XDG_CONFIG_HOME=$work/smoke-config" "XDG_DATA_HOME=$work/smoke-data" "XDG_CACHE_HOME=$work/smoke-cache" "XDG_RUNTIME_DIR=$work/smoke-runtime" "CODEX_HOME=$work/smoke-codex" "CLAUDE_CONFIG_DIR=$work/smoke-claude" "CONTEXTTRACE_ARCHIVE=$work/smoke-archive")
 if [[ "$(id -u)" == 0 ]]; then smoke_env+=("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1"); fi
-env "${smoke_env[@]}" dbus-run-session -- xvfb-run -a node scripts/ci/smoke-linux-webdriver.mjs "$CARGO_TARGET_DIR/release/context-trace" "$work/smoke-archive" "$work/webdriver.png"
+env "${smoke_env[@]}" dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" node scripts/ci/smoke-linux-webdriver.mjs "$CARGO_TARGET_DIR/release/context-trace" "$work/smoke-archive" "$work/webdriver.png"
 cli="$CARGO_TARGET_DIR/release/ct"
 file "$cli" | grep -q 'x86-64' || { echo 'Wrong CLI architecture.' >&2; exit 1; }
 "$cli" --help >/dev/null
