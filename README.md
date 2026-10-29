@@ -78,7 +78,10 @@ What runs today:
 
 ## Install
 
-Windows x64 is the supported surface. A [macOS port](docs/MACOS.md) is in
+Windows x64 is the supported release surface. Native Linux x86_64 development
+builds produce deb and AppImage packages; see [Linux build and testing instructions](docs/LINUX.md).
+Linux release publication and clean-host desktop acceptance remain unverified.
+A [macOS port](docs/MACOS.md) is in
 development, with native build instructions and outstanding validation gates.
 Install the latest stable desktop version for the current user from PowerShell:
 

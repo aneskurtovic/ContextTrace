@@ -22,11 +22,34 @@ fn is_installed_build() -> bool {
         is_installed_macos_executable(&executable, home.as_deref())
     }
 
+    #[cfg(all(target_os = "linux", feature = "linux-updater", not(debug_assertions)))]
+    {
+        is_appimage(
+            std::env::var_os("APPIMAGE")
+                .as_deref()
+                .map(std::path::Path::new),
+        )
+    }
+
     #[cfg(not(any(
         target_os = "windows",
-        all(target_os = "macos", feature = "macos-updater")
+        all(target_os = "macos", feature = "macos-updater"),
+        all(target_os = "linux", feature = "linux-updater", not(debug_assertions))
     )))]
     false
+}
+
+// The AppImage runtime sets APPIMAGE to the outer image, not its mounted executable.
+#[cfg(any(
+    test,
+    all(target_os = "linux", feature = "linux-updater", not(debug_assertions))
+))]
+fn is_appimage(path: Option<&std::path::Path>) -> bool {
+    path.is_some_and(|path| {
+        path.is_absolute()
+            && path.is_file()
+            && path.extension().is_some_and(|ext| ext == "AppImage")
+    })
 }
 
 // Restrict updates to copies installed in a conventional Applications folder.
@@ -137,8 +160,20 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_installed_macos_executable;
+    use super::{is_appimage, is_installed_macos_executable};
     use std::path::Path;
+
+    #[test]
+    fn appimage_updater_requires_an_existing_absolute_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("ContextTrace.AppImage");
+        assert!(!is_appimage(Some(&image)));
+        std::fs::write(&image, b"image").unwrap();
+        assert!(is_appimage(Some(&image)));
+        assert!(!is_appimage(Some(Path::new("ContextTrace.AppImage"))));
+        assert!(!is_appimage(Some(dir.path())));
+        assert!(!is_appimage(None));
+    }
 
     #[test]
     fn mac_updates_require_an_app_in_an_applications_directory() {

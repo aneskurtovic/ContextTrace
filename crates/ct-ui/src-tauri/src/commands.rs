@@ -3550,9 +3550,19 @@ mod tests {
     #[test]
     fn composition_keeps_exact_file_targets_on_calls_and_results_and_rechecks_missing_files() {
         let homes = FixtureHomes::new();
-        let directory = homes
-            .root
-            .join(format!("{}end", "long directory ".repeat(7)));
+        let mut directory = homes.root.join("long directory");
+        // Temporary directory prefixes vary by platform. Add short components
+        // until the full filename exercises the long-label path on each host.
+        while directory
+            .join("image  one.png")
+            .display()
+            .to_string()
+            .chars()
+            .count()
+            <= 180
+        {
+            directory.push("long directory");
+        }
         fs::create_dir_all(&directory).unwrap();
         let image = directory.join("image  one.png");
         fs::write(&image, b"fixture image bytes").unwrap();

@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {spawnSync} = require('node:child_process');
-const {intake, names, verifyStage, json} = require('./release-assets.cjs');
+const {intake, intakeLinux, names, verifyStage, json} = require('./release-assets.cjs');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-'));
 const hash = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 const cli = path.resolve('crates/ct-ui/node_modules/@tauri-apps/cli/tauri.js');
@@ -28,15 +28,25 @@ test('intake accepts complete exact evidence and rejects malformed or partial in
 test('Tauri-generated signatures verify in Windows-only and macOS feeds and tampering fails', () => {
  const f=fixture(), key=path.join(tmp(),'key'); tauri(['signer','generate','--ci','--password','','--write-keys',key]);
  const pub=fs.readFileSync(key+'.pub','utf8').trim(); const privateKey=fs.readFileSync(key,'utf8');
- for (const mac of [false,true]) {
-  const stage=tmp(), tag=f.tag, version='1.2.3', all=names(version,mac); if(mac) intake(f.root,stage,tag,f.commit);
+ for (const [mac,linux] of [[false,false],[true,false],[false,true],[true,true]]) {
+  const stage=tmp(), tag=f.tag, version='1.2.3', all=names(version,mac,linux); if(mac) intake(f.root,stage,tag,f.commit);
   const platforms={'windows-x86_64':`ContextTrace-${version}-windows-x64-setup.exe`}; if(mac) { platforms['darwin-aarch64']=`ContextTrace-${version}-macos-arm64-updater.app.tar.gz`; platforms['darwin-x86_64']=`ContextTrace-${version}-macos-x64-updater.app.tar.gz`; }
+  if(linux) platforms['linux-x86_64']=`ContextTrace-${version}-linux-x64.AppImage`;
   for(const n of all) if(!fs.existsSync(path.join(stage,n)) && !n.endsWith('.sig') && n!=='latest.json' && n!=='SHA256SUMS.txt') fs.writeFileSync(path.join(stage,n),n);
   const feed={version,platforms:{}}; for(const [platform,n] of Object.entries(platforms)) { tauri(['signer','sign',path.join(stage,n)],{TAURI_SIGNING_PRIVATE_KEY:privateKey,TAURI_SIGNING_PRIVATE_KEY_PASSWORD:''}); feed.platforms[platform]={url:`https://github.com/aneskurtovic/ContextTrace/releases/download/${tag}/${n}`,signature:fs.readFileSync(path.join(stage,n+'.sig'),'utf8').trim()}; }
   fs.writeFileSync(path.join(stage,'latest.json'),JSON.stringify(feed)); fs.writeFileSync(path.join(stage,'SHA256SUMS.txt'),all.filter(n=>n!=='SHA256SUMS.txt').map(n=>`${hash(path.join(stage,n))} *${n}`).join('\n'));
-  verifyStage(stage,tag,mac,pub); assert.throws(()=>verifyStage(stage,tag,!mac,pub));
-  feed.platforms['windows-x86_64'].url += '?wrong'; fs.writeFileSync(path.join(stage,'latest.json'),JSON.stringify(feed)); fs.writeFileSync(path.join(stage,'SHA256SUMS.txt'),all.filter(n=>n!=='SHA256SUMS.txt').map(n=>`${hash(path.join(stage,n))} *${n}`).join('\n')); assert.throws(()=>verifyStage(stage,tag,mac,pub));
+  verifyStage(stage,tag,mac,pub,linux); assert.throws(()=>verifyStage(stage,tag,!mac,pub,linux));
+  feed.platforms['windows-x86_64'].url += '?wrong'; fs.writeFileSync(path.join(stage,'latest.json'),JSON.stringify(feed)); fs.writeFileSync(path.join(stage,'SHA256SUMS.txt'),all.filter(n=>n!=='SHA256SUMS.txt').map(n=>`${hash(path.join(stage,n))} *${n}`).join('\n')); assert.throws(()=>verifyStage(stage,tag,mac,pub,linux));
   feed.platforms['windows-x86_64'].url = feed.platforms['windows-x86_64'].url.replace('?wrong',''); fs.writeFileSync(path.join(stage,'latest.json'),JSON.stringify(feed));
-  fs.appendFileSync(path.join(stage,platforms['windows-x86_64']),'bad'); fs.writeFileSync(path.join(stage,'SHA256SUMS.txt'),all.filter(n=>n!=='SHA256SUMS.txt').map(n=>`${hash(path.join(stage,n))} *${n}`).join('\n')); assert.throws(()=>verifyStage(stage,tag,mac,pub));
+  fs.appendFileSync(path.join(stage,platforms['windows-x86_64']),'bad'); fs.writeFileSync(path.join(stage,'SHA256SUMS.txt'),all.filter(n=>n!=='SHA256SUMS.txt').map(n=>`${hash(path.join(stage,n))} *${n}`).join('\n')); assert.throws(()=>verifyStage(stage,tag,mac,pub,linux));
  }
+});
+
+test('Linux intake binds exact files to the tag and commit', () => {
+ const root=tmp(), stage=tmp(), tag='v1.2.3', commit='a'.repeat(40), prefix='ContextTrace-1.2.3-linux-x64', files={};
+ for (const name of [`${prefix}.deb`,`${prefix}.AppImage`,`${prefix}-cli.tar.gz`]) { fs.writeFileSync(path.join(root,name),name); files[name]=hash(path.join(root,name)); }
+ const evidence=path.join(root,'evidence.json'); fs.writeFileSync(evidence,JSON.stringify({schema:1,tag,commit,arch:'x64',files}));
+ intakeLinux(root,stage,tag,commit); assert.equal(fs.readdirSync(stage).length,3);
+ assert.throws(()=>intakeLinux(root,tmp(),tag,'b'.repeat(40)));
+ fs.appendFileSync(path.join(root,`${prefix}.deb`),'bad'); assert.throws(()=>intakeLinux(root,tmp(),tag,commit));
 });

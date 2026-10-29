@@ -24,3 +24,10 @@ test("rejects a failed check or a context that does not point to this Woodpecker
     status("frontend"), status("rust"), status("windows", "success", "https://example.com/other-ci"),
   ]).state, "failure");
 });
+
+test("Linux opt-in additionally requires a successful Linux desktop push status", () => {
+  const base = [status("frontend"), status("rust"), status("windows")];
+  assert.equal(assessPushChecks(base, true).state, "pending");
+  assert.equal(assessPushChecks([...base, status("linux-desktop")], true).state, "success");
+  assert.equal(assessPushChecks([...base, status("linux-desktop", "failure")], true).state, "failure");
+});

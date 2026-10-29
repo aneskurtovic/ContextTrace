@@ -10,9 +10,9 @@ const timeoutMs = 60 * 60_000;
 // GitHub's combined-status endpoint returns the latest status per context for
 // the requested commit. The Windows push workflow runs only on main, so its
 // success binds all three checks to a commit that was validated there.
-export function assessPushChecks(statuses) {
+export function assessPushChecks(statuses, requireLinux = false) {
   if (!Array.isArray(statuses)) throw new Error("GitHub returned no commit statuses array.");
-  const results = checks.map((name) => {
+  const results = [...checks, ...(requireLinux ? ["linux-desktop"] : [])].map((name) => {
     const status = statuses.find((item) => item.context === `${contextPrefix}${name}`);
     if (!status) return { name, state: "pending" };
     let validWoodpeckerUrl = false;
@@ -37,7 +37,8 @@ async function main() {
   if (!/^[0-9a-f]{40}$/.test(sha ?? "") || !/^v\d+\.\d+\.\d+$/.test(tag ?? "")) {
     throw new Error("A version tag and its full commit SHA are required from Woodpecker.");
   }
-  const deadline = Date.now() + timeoutMs;
+  const requireLinux = process.env.CONTEXTTRACE_REQUIRE_LINUX_VALIDATION === "1";
+  const deadline = Date.now() + (requireLinux ? 0 : timeoutMs);
   let previous = "";
   while (true) {
     const response = await fetch(`${apiRoot}/commits/${sha}/status`, {
@@ -51,7 +52,7 @@ async function main() {
     if (!response.ok) throw new Error(`GitHub commit status request failed: HTTP ${response.status}.`);
     const payload = await response.json();
     if (payload.sha !== sha) throw new Error("GitHub returned statuses for a different commit.");
-    const result = assessPushChecks(payload.statuses);
+    const result = assessPushChecks(payload.statuses, requireLinux);
     const summary = result.results.map(({ name, state }) => `${name}: ${state}`).join(", ");
     if (summary !== previous) console.log(`Woodpecker push checks for ${sha}: ${summary}`);
     previous = summary;

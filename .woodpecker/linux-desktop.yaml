@@ -1,0 +1,25 @@
+# Native Linux desktop validation, separate from portable Rust/MSRV checks.
+labels:
+  platform: linux/amd64
+  backend: docker
+
+when:
+  - event: [push, pull_request, manual]
+    evaluate: 'RELEASE_UPLOAD != "true"'
+
+steps:
+  - name: linux-desktop
+    image: node:22-bookworm
+    environment:
+      CI: "true"
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 xvfb xauth dbus-x11 xdg-utils webkit2gtk-driver
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+      - export PATH="$${HOME}/.cargo/bin:$${PATH}"
+      - cargo install tauri-driver --version 2.1.0 --locked
+      - bash scripts/ci/check-linux.sh

@@ -2,13 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-function names(version, mac) {
+function names(version, mac, linux = false) {
   const base = `ContextTrace-${version}-windows-x64`;
   const result = [`${base}-setup.exe`, `${base}-setup.exe.sig`, `${base}-portable.zip`, `${base}-cli.zip`];
   if (mac) for (const arch of ['arm64', 'x64']) {
     const p = `ContextTrace-${version}-macos-${arch}`;
     result.push(`${p}.dmg`, `${p}-cli.tar.gz`, `${p}-updater.app.tar.gz`, `${p}-updater.app.tar.gz.sig`);
   }
+  if (linux) { const p = `ContextTrace-${version}-linux-x64`; result.push(`${p}.deb`, `${p}.AppImage`, `${p}.AppImage.sig`, `${p}-cli.tar.gz`); }
   return [...result, 'SHA256SUMS.txt', 'latest.json'];
 }
 function exact(actual, expected, label) {
@@ -44,6 +45,17 @@ function intake(root, stage, tag, commit) {
     for (const f of files) { if (!/^[0-9a-f]{64}$/.test(e.files[f]) || hash(path.join(dir,f)) !== e.files[f]) throw Error(`Invalid checksum: ${f}`); fs.copyFileSync(path.join(dir,f),path.join(stage,f),fs.constants.COPYFILE_EXCL); if (hash(path.join(stage,f)) !== e.files[f]) throw Error(`Copy changed: ${f}`); }
   }
 }
+function intakeLinux(root, stage, tag, commit) {
+  if (!/^v\d+\.\d+\.\d+$/.test(tag) || !/^[0-9a-f]{40}$/.test(commit)) throw Error('Invalid tag or commit');
+  if (!path.isAbsolute(root) || fs.lstatSync(root).isSymbolicLink() || !fs.lstatSync(root).isDirectory()) throw Error('Intake root must be an absolute directory, not a link');
+  const p=`ContextTrace-${tag.slice(1)}-linux-x64`, files=[`${p}.deb`,`${p}.AppImage`,`${p}-cli.tar.gz`];
+  entries(root,['evidence.json',...files],'file');
+  const e=readJson(path.join(root,'evidence.json'));
+  exact(Object.keys(e),['schema','tag','commit','arch','files'],'evidence keys');
+  if (e.schema!==1 || e.tag!==tag || e.commit!==commit || e.arch!=='x64' || !e.files || typeof e.files!=='object' || Array.isArray(e.files)) throw Error('Evidence does not match tag, commit or architecture');
+  exact(Object.keys(e.files),files,'evidence files');
+  for (const f of files) { if (!/^[0-9a-f]{64}$/.test(e.files[f]) || hash(path.join(root,f))!==e.files[f]) throw Error(`Invalid checksum: ${f}`); fs.copyFileSync(path.join(root,f),path.join(stage,f),fs.constants.COPYFILE_EXCL); if (hash(path.join(stage,f))!==e.files[f]) throw Error(`Copy changed: ${f}`); }
+}
 function verifySignature(file, sigfile, pubkey) {
   const pubLines=Buffer.from(pubkey,'base64').toString('utf8').trim().split(/\r?\n/);
   const sigLines=Buffer.from(fs.readFileSync(sigfile,'utf8').trim(),'base64').toString('utf8').trim().split(/\r?\n/);
@@ -54,24 +66,25 @@ function verifySignature(file, sigfile, pubkey) {
   const digest=crypto.createHash('blake2b512').update(fs.readFileSync(file)).digest();
   if (!crypto.verify(null,digest,key,sig.subarray(10)) || !crypto.verify(null,Buffer.concat([sig.subarray(10),Buffer.from(sigLines[2].slice(17))]),key,global)) throw Error(`Invalid updater signature: ${file}`);
 }
-function platforms(version, mac) {
+function platforms(version, mac, linux = false) {
   const result={'windows-x86_64':`ContextTrace-${version}-windows-x64-setup.exe`};
   if (mac) { result['darwin-aarch64']=`ContextTrace-${version}-macos-arm64-updater.app.tar.gz`; result['darwin-x86_64']=`ContextTrace-${version}-macos-x64-updater.app.tar.gz`; }
+  if (linux) result['linux-x86_64']=`ContextTrace-${version}-linux-x64.AppImage`;
   return result;
 }
-function verifyStage(stage, tag, mac, pubkey) {
-  const version=tag.slice(1), all=names(version,mac); entries(stage,all,'file');
+function verifyStage(stage, tag, mac, pubkey, linux = false) {
+  const version=tag.slice(1), all=names(version,mac,linux); entries(stage,all,'file');
   const lines=fs.readFileSync(path.join(stage,'SHA256SUMS.txt'),'utf8').trim().split(/\r?\n/);
   const expected=all.filter(x=>x!=='SHA256SUMS.txt');
   if (lines.length !== expected.length) throw Error('Unexpected checksum entries');
   for (const f of expected) { const matches=lines.filter(line => line.slice(66) === f && /^[a-f0-9]{64} \*/.test(line)); if (matches.length !== 1 || matches[0].slice(0,64) !== hash(path.join(stage,f))) throw Error(`Invalid checksum: ${f}`); }
-  const feed=readJson(path.join(stage,'latest.json')); const p=platforms(version,mac);
+  const feed=readJson(path.join(stage,'latest.json')); const p=platforms(version,mac,linux);
   if (feed.version !== version || !feed.platforms) throw Error('Invalid feed version');
   exact(Object.keys(feed.platforms),Object.keys(p),'feed platforms');
   for (const [platform,file] of Object.entries(p)) { const entry=feed.platforms[platform], signature=fs.readFileSync(path.join(stage,`${file}.sig`),'utf8').trim(); if (!entry || entry.url !== `https://github.com/aneskurtovic/ContextTrace/releases/download/${tag}/${file}` || entry.signature !== signature) throw Error(`Invalid feed entry: ${platform}`); verifySignature(path.join(stage,file),path.join(stage,`${file}.sig`),pubkey); }
 }
-module.exports={names, intake, verifyStage, verifySignature, platforms, json};
+module.exports={names, intake, intakeLinux, verifyStage, verifySignature, platforms, json};
 if (require.main === module) {
-  try { const [cmd,...args]=process.argv.slice(2); if(cmd==='intake') intake(...args); else if(cmd==='verify') { const [stage,tag,mode]=args; const pubkey=readJson('crates/ct-ui/src-tauri/tauri.conf.json').plugins.updater.pubkey; verifyStage(stage,tag,mode==='1',pubkey); } else if(cmd==='names') console.log(JSON.stringify(names(args[0],args[1]==='1'))); else throw Error('Unknown command'); }
+  try { const [cmd,...args]=process.argv.slice(2); if(cmd==='intake') intake(...args); else if(cmd==='intake-linux') intakeLinux(...args); else if(cmd==='verify') { const [stage,tag,mode,linux]=args; const pubkey=readJson('crates/ct-ui/src-tauri/tauri.conf.json').plugins.updater.pubkey; verifyStage(stage,tag,mode==='1',pubkey,linux==='1'); } else if(cmd==='names') console.log(JSON.stringify(names(args[0],args[1]==='1',args[2]==='1'))); else throw Error('Unknown command'); }
   catch(e) { console.error(e.message); process.exitCode=1; }
 }

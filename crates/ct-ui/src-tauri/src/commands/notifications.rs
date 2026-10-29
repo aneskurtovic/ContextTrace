@@ -506,9 +506,9 @@ pub fn get_notification_status(
     state: tauri::State<'_, NotificationState>,
 ) -> NotificationStatusDto {
     let deliverability = state.deliverability(&app).clone();
-    // The desktop plugin returns Granted unconditionally, including macOS.
-    // Keep the established Windows behavior, but do not claim macOS permission.
-    let permission = if cfg!(target_os = "macos") {
+    // The desktop plugin returns Granted unconditionally. Keep the established
+    // Windows behavior; macOS and Linux cannot report permission here.
+    let permission = if cfg!(any(target_os = "macos", target_os = "linux")) {
         "unknown"
     } else {
         permission_label(app.notification().permission_state())
@@ -539,7 +539,11 @@ pub fn send_test_notification(
     let outcome = delivery::deliver(
         &deliverability,
         "ContextTrace test notification",
-        "Click to open ContextTrace notifications.",
+        if cfg!(target_os = "windows") {
+            "Click to open ContextTrace notifications."
+        } else {
+            "Open ContextTrace to view notifications."
+        },
         "contexttrace://notifications",
     );
     TestNotificationDto {
@@ -923,6 +927,17 @@ fn deliver_os(
     state: &NotificationState,
     record: &NotificationRecord,
 ) -> OsDeliveryStatus {
+    // Linux notification servers do not expose an application permission state.
+    // Submit directly so a D-Bus failure is preserved instead of trusting the
+    // plugin's unconditional Granted response.
+    if cfg!(target_os = "linux") {
+        return delivery::deliver(
+            state.deliverability(app),
+            &record.candidate.title,
+            &record.candidate.body,
+            &format!("contexttrace://notification/{}", record.id),
+        );
+    }
     match app.notification().permission_state() {
         Ok(PermissionState::Granted) => delivery::deliver(
             state.deliverability(app),

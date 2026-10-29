@@ -1,22 +1,8 @@
 # Rust gates that do not need Windows.
 #
-# Until this file existed, nothing had ever compiled this workspace off Windows
-# -- `rust-toolchain.toml` said so in a comment. It turned out to build, lint,
-# test and pass its MSRV check on Linux unchanged, because nothing these gates
-# compile is platform-conditional: the one `#[cfg(windows)]` mention in
-# `ct-adapters/src/archive.rs` is a comment explaining that the archive root is
-# resolved *without* one. The real ones live in `ct-ui`, which every compiling
-# step below excludes anyway -- Windows toast delivery is genuinely a Windows
-# path, and the Windows workflow is where it gets compiled and tested.
-#
-# So these gates move off the single Windows agent, where they were competing
-# for one machine, and the Windows workflow keeps only what Windows alone can
-# prove. See docs/CI.md.
-#
-# `ct-ui` is excluded from every compiling step here: the Tauri crate needs
-# webkit2gtk/gtk3/libsoup on Linux, and chasing that would buy a second way to
-# build a desktop app that only ships for Windows. `cargo fmt` still covers it,
-# because formatting does not compile.
+# Portable Rust checks exclude the desktop crate, whose GTK/WebKitGTK
+# dependencies are handled by the separate linux-desktop workflow.
+# `cargo fmt` still covers the full workspace.
 
 # An ABSENT labels stanza is a wildcard, not a default -- Woodpecker will place
 # the workflow on whichever agent has capacity. That is indistinguishable from

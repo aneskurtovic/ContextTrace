@@ -52,8 +52,17 @@ $publishedStage = Join-Path $stageRoot $tag
 $assetPrefix = "ContextTrace-$version-windows-x64"
 $installerName = "$assetPrefix-setup.exe"
 $macMode = if ($env:CONTEXTTRACE_MACOS_RELEASE -eq '1') { '1' } elseif ([string]::IsNullOrEmpty($env:CONTEXTTRACE_MACOS_RELEASE) -or $env:CONTEXTTRACE_MACOS_RELEASE -eq '0') { '0' } else { throw 'CONTEXTTRACE_MACOS_RELEASE must be 0 or 1.' }
+$linuxMode = if ($env:CONTEXTTRACE_LINUX_RELEASE -eq '1') { '1' } elseif ([string]::IsNullOrEmpty($env:CONTEXTTRACE_LINUX_RELEASE) -or $env:CONTEXTTRACE_LINUX_RELEASE -eq '0') { '0' } else { throw 'CONTEXTTRACE_LINUX_RELEASE must be 0 or 1.' }
+if ($linuxMode -eq '1') {
+    $env:CONTEXTTRACE_REQUIRE_LINUX_VALIDATION = '1'
+    try {
+        & node scripts/release/verify-main-validation.mjs
+        if ($LASTEXITCODE -ne 0) { throw 'Linux desktop push validation is required for Linux release intake.' }
+    } finally { Remove-Item Env:CONTEXTTRACE_REQUIRE_LINUX_VALIDATION -ErrorAction SilentlyContinue }
+}
+if ($linuxMode -eq '1' -and [string]::IsNullOrWhiteSpace($env:CONTEXTTRACE_LINUX_INTAKE_DIR)) { throw 'Linux release intake directory is required when enabled.' }
 if ($macMode -eq '1' -and [string]::IsNullOrWhiteSpace($env:CONTEXTTRACE_MACOS_INTAKE_DIR)) { throw 'Mac release intake directory is required when enabled.' }
-$assetNames = @(node scripts/release/release-assets.cjs names $version $macMode | ConvertFrom-Json)
+$assetNames = @(node scripts/release/release-assets.cjs names $version $macMode $linuxMode | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to determine release assets.' }
 
 
@@ -62,7 +71,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to determine release assets.' }
 # rebuilding it would produce a different digest and make safe retries fail.
 if (Test-Path -LiteralPath $publishedStage -PathType Container) {
     try {
-        & node scripts/release/release-assets.cjs verify $publishedStage $tag $macMode
+        & node scripts/release/release-assets.cjs verify $publishedStage $tag $macMode $linuxMode
         if ($LASTEXITCODE -ne 0) { throw 'Existing staged assets failed verification.' }
         # Recheck the trusted intake against cached native files on every retry.
         if ($macMode -eq '1') {
@@ -75,6 +84,20 @@ if (Test-Path -LiteralPath $publishedStage -PathType Container) {
                 if ($LASTEXITCODE -ne 0) { throw 'Mac intake verification failed.' }
                 foreach ($file in Get-ChildItem -LiteralPath $retryIntake -File) {
                     if ((Get-FileHash -LiteralPath $file.FullName).Hash -ne (Get-FileHash -LiteralPath (Join-Path $publishedStage $file.Name)).Hash) { throw 'Cached macOS artifact differs from trusted intake.' }
+                }
+            } finally { Remove-Item -LiteralPath $retryIntake -Recurse -Force }
+        }
+
+        if ($linuxMode -eq '1') {
+            $retryIntake = Join-Path $stageRoot (".intake-" + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $retryIntake | Out-Null
+            try {
+                $commit = (git rev-parse HEAD).Trim().ToLowerInvariant()
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($env:CI_COMMIT_SHA) -or $commit -ne $env:CI_COMMIT_SHA.ToLowerInvariant()) { throw 'Checkout does not match Woodpecker commit.' }
+                & node scripts/release/release-assets.cjs intake-linux $env:CONTEXTTRACE_LINUX_INTAKE_DIR $retryIntake $tag $commit
+                if ($LASTEXITCODE -ne 0) { throw 'Linux intake verification failed.' }
+                foreach ($file in Get-ChildItem -LiteralPath $retryIntake -File) {
+                    if ((Get-FileHash -LiteralPath $file.FullName).Hash -ne (Get-FileHash -LiteralPath (Join-Path $publishedStage $file.Name)).Hash) { throw 'Cached Linux artifact differs from trusted intake.' }
                 }
             } finally { Remove-Item -LiteralPath $retryIntake -Recurse -Force }
         }
@@ -95,6 +118,13 @@ if ($macMode -eq '1') {
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($env:CI_COMMIT_SHA) -or $commit -ne $env:CI_COMMIT_SHA.ToLowerInvariant()) { throw 'Checkout does not match Woodpecker commit.' }
     & node scripts/release/release-assets.cjs intake $env:CONTEXTTRACE_MACOS_INTAKE_DIR $stage $tag $commit
     if ($LASTEXITCODE -ne 0) { throw 'Mac intake verification failed.' }
+}
+
+if ($linuxMode -eq '1') {
+    $commit = (git rev-parse HEAD).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($env:CI_COMMIT_SHA) -or $commit -ne $env:CI_COMMIT_SHA.ToLowerInvariant()) { throw 'Checkout does not match Woodpecker commit.' }
+    & node scripts/release/release-assets.cjs intake-linux $env:CONTEXTTRACE_LINUX_INTAKE_DIR $stage $tag $commit
+    if ($LASTEXITCODE -ne 0) { throw 'Linux intake verification failed.' }
 }
 
 Write-Host "Building ContextTrace $version on the Windows Woodpecker agent."
@@ -121,6 +151,11 @@ try {
             & .\node_modules\.bin\tauri.cmd signer sign (Resolve-Path -LiteralPath $archive).Path
             if ($LASTEXITCODE -ne 0) { throw "Updater signing failed for $arch." }
         }
+    }
+    if ($linuxMode -eq '1') {
+        $archive = Join-Path $stage "ContextTrace-$version-linux-x64.AppImage"
+        & .\node_modules\.bin\tauri.cmd signer sign (Resolve-Path -LiteralPath $archive).Path
+        if ($LASTEXITCODE -ne 0) { throw 'Linux updater signing failed.' }
     }
 }
 finally {
@@ -186,6 +221,10 @@ if ($macMode -eq '1') {
         $platforms[$entry[1]] = @{ signature = (Get-Content -LiteralPath (Join-Path $stage "$archiveName.sig") -Raw).Trim(); url = "https://github.com/aneskurtovic/ContextTrace/releases/download/$tag/$archiveName" }
     }
 }
+if ($linuxMode -eq '1') {
+    $archiveName = "ContextTrace-$version-linux-x64.AppImage"
+    $platforms['linux-x86_64'] = @{ signature = (Get-Content -LiteralPath (Join-Path $stage "$archiveName.sig") -Raw).Trim(); url = "https://github.com/aneskurtovic/ContextTrace/releases/download/$tag/$archiveName" }
+}
 $latest = @{ version = $version; notes = "ContextTrace $version"; pub_date = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); platforms = $platforms } | ConvertTo-Json -Depth 5
 
 [System.IO.File]::WriteAllText(
@@ -199,7 +238,7 @@ $checksums = Get-ChildItem -LiteralPath $stage -File | Sort-Object Name | ForEac
 }
 Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') -Value $checksums -Encoding ascii
 
-& node scripts/release/release-assets.cjs verify $stage $tag $macMode
+& node scripts/release/release-assets.cjs verify $stage $tag $macMode $linuxMode
 if ($LASTEXITCODE -ne 0) { throw 'Staged release verification failed.' }
 
 if (Test-Path -LiteralPath $publishedStage) {
