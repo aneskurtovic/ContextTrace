@@ -62,8 +62,8 @@ if ($linuxMode -eq '1') {
 }
 if ($linuxMode -eq '1' -and [string]::IsNullOrWhiteSpace($env:CONTEXTTRACE_LINUX_INTAKE_DIR)) { throw 'Linux release intake directory is required when enabled.' }
 if ($macMode -eq '1' -and [string]::IsNullOrWhiteSpace($env:CONTEXTTRACE_MACOS_INTAKE_DIR)) { throw 'Mac release intake directory is required when enabled.' }
-$assetNames = @(node scripts/release/release-assets.cjs names $version $macMode $linuxMode | ConvertFrom-Json)
-if ($LASTEXITCODE -ne 0) { throw 'Unable to determine release assets.' }
+. (Join-Path $PSScriptRoot 'asset-names.ps1')
+$assetNames = @(Get-ReleaseAssetNames -Version $version -MacMode $macMode -LinuxMode $linuxMode)
 
 
 # Retrying a tag must reuse the exact updater manifest and archives already

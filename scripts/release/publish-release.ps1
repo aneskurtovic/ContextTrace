@@ -20,8 +20,8 @@ $assetPrefix = "ContextTrace-$version-windows-x64"
 $installerName = "$assetPrefix-setup.exe"
 $macMode = if ($env:CONTEXTTRACE_MACOS_RELEASE -eq '1') { '1' } elseif ([string]::IsNullOrEmpty($env:CONTEXTTRACE_MACOS_RELEASE) -or $env:CONTEXTTRACE_MACOS_RELEASE -eq '0') { '0' } else { throw 'CONTEXTTRACE_MACOS_RELEASE must be 0 or 1.' }
 $linuxMode = if ($env:CONTEXTTRACE_LINUX_RELEASE -eq '1') { '1' } elseif ([string]::IsNullOrEmpty($env:CONTEXTTRACE_LINUX_RELEASE) -or $env:CONTEXTTRACE_LINUX_RELEASE -eq '0') { '0' } else { throw 'CONTEXTTRACE_LINUX_RELEASE must be 0 or 1.' }
-$assetNames = @(node scripts/release/release-assets.cjs names $version $macMode $linuxMode | ConvertFrom-Json)
-if ($LASTEXITCODE -ne 0) { throw 'Unable to determine release assets.' }
+. (Join-Path $PSScriptRoot 'asset-names.ps1')
+$assetNames = @(Get-ReleaseAssetNames -Version $version -MacMode $macMode -LinuxMode $linuxMode)
 $stageDirectory = "C:\woodpecker-cache\contexttrace\release-assets\$Tag"
 & node scripts/release/release-assets.cjs verify $stageDirectory $Tag $macMode $linuxMode
 if ($LASTEXITCODE -ne 0) { throw 'Staged release verification failed.' }

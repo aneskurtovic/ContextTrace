@@ -22,7 +22,7 @@ session.
 *The desktop app shows the same local-first measurements in dark and light
 themes. These screenshots use synthetic demonstration data.*
 
-See the [release notes](docs/releases/v0.1.17.md) for recent changes and the
+See the [release notes](docs/releases/v0.1.18.md) for recent changes and the
 [releases page](https://github.com/aneskurtovic/ContextTrace/releases) for available downloads.
 
 ## What it is

@@ -51,6 +51,12 @@ steps:
     commands:
       - npm ci --prefix crates/ct-ui
 
+  - name: release-asset-names
+    image: *shell
+    environment: *windows_env
+    commands:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/test-asset-names.ps1
+
   - name: release-asset-tests
     image: *shell
     environment: *windows_env

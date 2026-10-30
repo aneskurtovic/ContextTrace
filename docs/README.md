@@ -23,7 +23,7 @@ provide additional detail for users and contributors.
 - [Architecture](architecture.md): crate boundaries, invariants and tests.
 - [CI](CI.md): automated checks, local equivalents and coverage limits.
 - [Release procedure](RELEASING.md): packaging and acceptance gates.
-- [Release notes](releases/v0.1.17.md): changes and retained limits.
+- [Release notes](releases/v0.1.18.md): changes and retained limits.
 - [Roadmap](ROADMAP.md): areas of future work, without commitments.
 
 The compatibility manifest and synthetic or redacted fixtures are maintained
