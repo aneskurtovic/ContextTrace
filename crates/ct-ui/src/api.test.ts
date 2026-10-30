@@ -625,9 +625,7 @@ describe("desktop IPC response validation", () => {
   });
 
   it("reports incomparable for a Codex turn against a Claude Code turn", async () => {
-    // The other previously-unreachable arm: no scale relates a real
-    // tokenizer to a fitted heuristic, and mixing agents is the ordinary way
-    // that happens now that the two sides can be different sessions.
+    // A tokenizer and a fitted heuristic do not share a scale.
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     const left = { agent: "codex" as const, id: "0198fce2e48a7b12", turn: 4 };
     const right = { agent: "claude-code" as const, id: "a30cb9e1-f9f4-4a37", turn: 12 };
@@ -824,7 +822,7 @@ describe("desktop IPC response validation", () => {
       scannedRecords: 12,
       unreadableRecords: 0,
       secrets: [],
-      // unmeasuredItems intentionally omitted -- CT-059 requires the doctor
+      // unmeasuredItems intentionally omitted: the doctor
       // report to always carry this count, even when it is zero, because a
       // structured consumer cannot tell "zero unmeasured" from "field never
       // wired up" any other way.
@@ -908,8 +906,7 @@ describe("desktop IPC response validation", () => {
   it("holds the demo session detail to the same contract as the real backend", async () => {
     // Nothing else in this suite exercises `inspect_session`, so nothing
     // would notice `demo.ts`'s `lineNo` field on a growth point's compaction
-    // drifting away from what the backend actually returns -- exactly the
-    // half-wiring CT-047 warns two prior attempts already shipped.
+    // drifting away from what the backend actually returns.
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     const detail = demoDetail(demoSessions[0].id);
     invoke.mockResolvedValue(detail);

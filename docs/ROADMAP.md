@@ -7,12 +7,6 @@ interest, not a schedule or commitment.
 
 ## Current focus
 
-The [maintainer handoff](../HANDOFF.md) and [engineering backlog](BACKLOG.md)
-record the current FEEDBACK audit follow-ups: 12 findings have remediation
-checkpoints and 22 remain open. Export writer coordination before bounded
-native worker dispatch, notification fidelity/cursors and Claude calibration
-scaling are next. Earlier parser/capture acceptance gaps remain explicit.
-
 - Keep Windows releases validated and published through Woodpecker; verify
   updater behavior and installation separately on a clean host.
 - Validate native session restoration and visible terminal behavior with real
@@ -28,5 +22,4 @@ scaling are next. Earlier parser/capture acceptance gaps remain explicit.
 - More ways to compare sessions and explore context changes over time.
 - Performance improvements driven by reproducible measurements.
 
-There is no promise that every item will be implemented. User-visible scope and
-release gates are recorded in [MVP status](MVP-STATUS.md).
+There is no promise that every item will be implemented. Release gates are recorded in the [release procedure](RELEASING.md).

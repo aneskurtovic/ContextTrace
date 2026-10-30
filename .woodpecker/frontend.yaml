@@ -1,16 +1,5 @@
-# The React/Vite half of the desktop app.
-#
-# This is the one job that was on `windows-latest` for no reason at all: it runs
-# `tsc`, `vitest` and `vite`, none of which touch a Windows API. The current
-# frontend suite and production bundle run here on pushes and pull requests.
-#
-# The Tauri side of the desktop app is a different question and stays on the
-# Windows agent, because it links a real WebView2 application. See windows.yaml.
-
-# Without this stanza Woodpecker may schedule these steps onto the Windows
-# agent, which is the opposite of the point: this file exists precisely because
-# none of `tsc`, `vitest` or `vite` needs Windows. An absent labels stanza is a
-# wildcard, not a default.
+# Frontend checks run on Linux; native desktop checks run separately.
+# Explicit labels prevent scheduling onto the Windows local agent.
 labels:
   platform: linux/amd64
   backend: docker
@@ -20,8 +9,7 @@ when:
     evaluate: 'RELEASE_UPLOAD != "true"'
 
 variables:
-  # package.json declares `engines.node: >=22.13.0`; the previous workflow
-  # pinned 22 in all three of its jobs.
+  # Meet the Node version minimum in package.json.
   - &node_image node:22-bookworm-slim
 
 steps:

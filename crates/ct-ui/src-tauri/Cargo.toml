@@ -29,13 +29,7 @@ ct-domain.workspace = true
 ct-application.workspace = true
 ct-runtime.workspace = true
 serde.workspace = true
-# Already in this crate's compiled graph twice over -- `tauri` serializes every
-# command's return value with it, and `ct-adapters` parses session logs with it
-# -- so naming it directly adds an edge, not a crate. `ct export` is the one
-# path where this UI must produce bytes itself rather than hand a value to
-# Tauri's IPC layer, and the alternative was re-implementing `ExportRecord`'s
-# wire shape in a file that does not own it, under a schema version that
-# promises it will not drift.
+# Desktop exports serialize the shared export record format.
 serde_json.workspace = true
 base64 = "0.22"
 chrono.workspace = true
@@ -45,9 +39,7 @@ tauri-plugin-updater = "2"
 # Pin versions that retain the workspace Rust 1.88 minimum.
 tauri-plugin-opener = "=2.5.3"
 tauri-plugin-deep-link = "=2.4.7"
-# A second instance polls the same logs and writes the same notification store
-# as the first, with no cross-process locking between them. There is no use for
-# two, so there is one.
+# Prevent concurrent instances from writing the notification store.
 tauri-plugin-single-instance = "2"
 
 # WinRT is already in the notification dependency graph. Direct XML enables

@@ -634,10 +634,8 @@ impl ContextTrace {
     /// exact count is the model-visible text of an item, deliberately not the
     /// item's whole footprint in the request: the field names, role markers and
     /// block structure around it are excluded, because counting serialized JSON
-    /// is the mistake CT-012 exists to prevent. So the remainder is the tool
-    /// schemas *plus* that framing. Measured on two fully-exact Codex turns it
-    /// came to 10,218 and 9,630 tokens -- large, stable, and now attributable
-    /// to something specific rather than to our own arithmetic.
+    /// would count syntax rather than model-visible text. The remainder includes
+    /// tool schemas and request framing.
     pub fn snapshot_exact_with(
         &self,
         session: &AgentSession,

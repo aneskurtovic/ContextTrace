@@ -717,7 +717,7 @@ impl AppState {
         // Neither section below can see an item with no content measurement --
         // that pass is what `analyzed: true` above requested. One count covers
         // both: they share the same gate, so a per-detector split would just
-        // print the same number twice under two names. See CT-059.
+        // print the same number twice under two names.
         let unmeasured_items = unmeasured_content_items(snapshot.items());
 
         let duplicate_content = snapshot.duplicate_content();
@@ -1203,8 +1203,7 @@ impl AppState {
         )))
     }
 
-    /// The unlogged remainder across a session's turns: CT-072's signature
-    /// measurement, previously reachable only from `ct residual`.
+    /// The unlogged remainder across a session's turns.
     ///
     /// A sum type, not a `DerivedRatio` with nullable fields, because there
     /// are four genuinely different situations here and a nullable field
@@ -1219,8 +1218,7 @@ impl AppState {
     /// "reconstructed more than the prompt held" refusal.
     /// Routing that session into `fitted` would render a confident header
     /// (a chars-per-token figure, a dispersion, a step threshold) above a
-    /// chart with nothing plottable on it -- CT-072's "drawing a line through
-    /// nothing" made literal. So a series is only ever reported as `fitted`
+    /// chart with nothing plottable on it. A series is only reported as `fitted`
     /// when at least one turn has a known remainder; otherwise, fitted or
     /// not, it is `overCounted`. That discrimination is
     /// [`series_has_a_measurable_remainder`], kept as a pure function over
@@ -1535,7 +1533,7 @@ fn redaction_label(redaction: ExportRedaction) -> &'static str {
 
 /// Whether at least one turn in a residual series has a known remainder.
 ///
-/// The one judgement call CT-072 forbids getting wrong: a session can fit a
+/// A session can fit a
 /// ratio and still have nothing plottable, when reconstruction over-counts on
 /// every turn that was measured. An empty series answers `false` here too --
 /// nothing can be drawn from zero points either -- so the caller does not
@@ -1790,7 +1788,7 @@ pub struct ResidualStepSummary {
 ///
 /// A sum type rather than a `DerivedRatio` DTO with nullable fields --
 /// [`AppState::residual`] documents why in full, but the shape of the
-/// argument is that this crosses the exact boundary CT-072 is about:
+/// argument is that this crosses a critical boundary:
 /// "the panel must render \[a refused fit\] as the answer, not fall back to a
 /// plausible-looking curve." A nullable `unloggedOverhead` on a single struct
 /// would let a caller build that plausible-looking curve out of `points` even
@@ -4894,7 +4892,7 @@ mod tests {
         }
     }
 
-    /// The three acceptance shapes CT-047 names: a Codex compaction with a
+    /// Three outcomes: a Codex compaction with a
     /// real diff, a Claude Code session where the agent itself never records
     /// replacement history, and a line number that names no compaction at
     /// all.
@@ -5128,7 +5126,7 @@ mod tests {
         assert!(step.get("near_compaction").is_none());
     }
 
-    /// The discrimination CT-072 calls out as the whole risk: a session can
+    /// A session can
     /// fit a ratio and still have nothing plottable, when reconstruction
     /// over-counts on every turn. Pinned as a pure-function test rather than
     /// through `AppState::residual`, because the committed fixtures are too

@@ -1,12 +1,6 @@
 //! NDJSON export: the whole session as one record per line.
 //!
-//! This exists so ContextTrace's analysis is reachable from `jq`, `duckdb` and
-//! whatever a user writes themselves, without a database driver in the
-//! dependency tree. It replaces the dropped DuckDB export (CT-032) and gets
-//! most of its value: `duckdb` reads NDJSON natively, so
-//! `SELECT sum(tokens) FROM 'session.ndjson' WHERE type = 'item'` works the same
-//! way, and nothing new is linked into a binary whose whole privacy claim rests
-//! on being auditable.
+//! Consumers such as `jq` and DuckDB can read NDJSON without a database driver.
 //!
 //! # The one thing an export can get catastrophically wrong
 //!
@@ -69,11 +63,8 @@ pub enum ExportRecord<'a> {
         redaction: &'static str,
         /// Which estimator produced every item size in this file.
         ///
-        /// Not decoration. For Claude Code the CLI fits a characters-per-token
-        /// ratio to the session itself (CT-014), and the flat default differs
-        /// from it enough to move a turn's unattributed remainder by 82% on a
-        /// real session. A file whose numbers cannot be reproduced is a file
-        /// whose numbers cannot be trusted, so it names its instrument.
+        /// Claude Code can use a session-fitted ratio, so exports name the
+        /// estimator needed to interpret their measurements.
         estimator: &'a str,
         /// Fraction of events mapped to domain concepts. A file exported from a
         /// session this build only partly understood must say so, or its sums

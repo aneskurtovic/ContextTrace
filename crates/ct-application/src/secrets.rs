@@ -1140,7 +1140,7 @@ mod tests {
 
     #[test]
     fn a_pgp_block_cut_off_mid_body_still_redacts_to_the_end_of_the_record() {
-        // CT-049's unterminated-block behaviour must hold for every label,
+        // Unterminated-block behaviour must hold for every label,
         // including the newly added PGP one.
         let truncated = concat!(
             "tool output: -----BEGIN PGP PRIVATE KEY BLOCK-----\n",

@@ -6,8 +6,7 @@
 //! `chars / ratio`. A hardcoded ratio is a guess about content we can see, and
 //! it is wrong by different amounts in different sessions: a session of English
 //! design discussion and a session of Windows paths and minified JSON do not
-//! tokenize alike, and the local corpus spreads across roughly 2 to 7 characters
-//! per token depending on which it is.
+//! tokenize alike.
 //!
 //! # Why the ratio matters even though calibration rescales everything
 //!

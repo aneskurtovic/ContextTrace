@@ -253,8 +253,7 @@ fn project_slug(path: &Path) -> Option<&str> {
 
 /// Read a session's place in its thread group out of where the file sits.
 ///
-/// Claude Code's *in-session* subagent activity is per-event (CT-015's
-/// sidechains) and has no separate file. Its *spawned* subagents do: the
+/// Claude Code's *in-session* subagent activity is per-event (sidechains) and has no separate file. Its *spawned* subagents do: the
 /// harness writes them to
 /// `<project>/<parent-session-id>/subagents/agent-<hex>.jsonl`, and every one
 /// of the 24 local transcripts follows that layout exactly. So the parent this

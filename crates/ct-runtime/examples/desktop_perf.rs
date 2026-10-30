@@ -1,41 +1,13 @@
-//! Manual performance probe for the desktop discovery-to-context workflow.
+//! Manual performance probe for desktop discovery and context.
 //!
-//! Usage:
-//! `cargo run -p ct-runtime --release --example desktop_perf -- <session-id>`
+//! Usage: `cargo run -p ct-runtime --release --example desktop_perf -- <session-id>`
+//! Prints only timings and aggregate counts, never session content.
 //!
-//! It prints timings and aggregate counts only. No prompt, event, path, label or
-//! other session content crosses stdout.
-//!
-//! Two loads are timed, because two different paths exist in the real app:
-//! `ct_application::ContextTrace::load` (used by `ct largest`) and
-//! `load_with_content_analysis` (used by the doctor view and `ct context`),
-//! which additionally SHA-256s and DEFLATEs every model-visible payload.
-//! `load_with_content_analysis` runs *first*, while the OS page cache for
-//! this session's file is least likely to be warm, because it is the
-//! heavier path and the one a deferral decision (CT-029) depends on -- it
-//! must not be measured with a warm-cache advantage. The plain `load` then
-//! runs second, against a same-process-lifetime-warmer cache for the same
-//! bytes, so `load_plain_warmcache_ms` is a lower bound on that path's true
-//! cold cost, not a fair cold-to-cold comparison.
-//!
-//! This process cannot force a genuinely disk-cold read (that needs a fresh
-//! boot or a dropped OS cache, neither of which this example does), so
-//! "cold" here means "first read of this file in this process". That is
-//! weaker than it sounds: the OS page cache measurably outlives one process,
-//! so a second run against the same session is a warm-cache lower bound and
-//! not a repeat cold measurement. How much the two differ depends on whether
-//! a given session's load is dominated by reading bytes or by hashing and
-//! deflating them, which is a property of that session and not something this
-//! comment can state once for all of them. Record measurements with the input
-//! size, session identifier and cache state used for that run.
-//! Take `load_content_analysis_cold_ms` only from a run against a file
-//! this machine has not read recently, and record what state it was in;
-//! measurements taken any other way must carry that caveat rather than being
-//! presented as repeatable benchmark results.
-//!
-//! `content_analysis_path_total_ms` covers only the content-analysis leg up
-//! to the first rendered snapshot (it stops before the plain load and before
-//! the cached turn switch, which is a separate, later user action).
+//! Content analysis runs first; the plain load follows with a warmer cache.
+//! The first read is not necessarily disk-cold because the OS cache persists
+//! across processes. Record input size and cache state alongside measurements.
+//! `content_analysis_path_total_ms` ends at the first rendered snapshot, before
+//! the plain load and the separate cached turn switch.
 
 use ct_application::SessionFilter;
 use ct_domain::ports::TokenEstimator;

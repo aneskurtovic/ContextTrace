@@ -49,8 +49,7 @@ impl RecordTransform for RedactingTransform {
 /// one **already-parsed field value**. For that caller, `find_private_keys`
 /// claiming everything to the end of its input when a PEM block never closes is
 /// exactly right: truncated tool output is the material this project reads most,
-/// and leaving the tail of a key unredacted would be worse than over-redacting
-/// (CT-049).
+/// and leaving the tail of a key unredacted would be worse than over-redacting.
 ///
 /// Handing it a whole JSONL line changes what "the end of its input" means. The
 /// line ends with the record's own closing `"` and `}`, so an unterminated key
@@ -541,7 +540,7 @@ mod tests {
     fn a_record_holding_an_unterminated_key_block_still_parses_after_redaction() {
         // The case that forced `redact_json_record` to exist. `find_private_keys`
         // claims everything to the end of its input when a PEM block never
-        // closes (CT-049), which is right for `ct export`, where its input is
+        // closes, which is right for `ct export`, where its input is
         // one already-parsed field. Handed a whole JSONL line it used to eat the
         // record's own closing `"` and `}`, leaving something that was not JSON
         // -- an archived record that no parser could read, which is worse than

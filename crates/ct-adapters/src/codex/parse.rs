@@ -20,7 +20,7 @@ use std::path::Path;
 #[derive(Default)]
 pub struct Header {
     /// `payload.id`. Unique across every rollout file, including a subagent
-    /// thread's -- see CT-069. This is the field a descriptor's identity is
+    /// thread's. This is the field a descriptor's identity is
     /// built from.
     pub id: Option<String>,
     /// `payload.session_id`. Equal to `id` for an ordinary session; on a
@@ -312,11 +312,9 @@ fn response_item_text(payload: &Value) -> Option<String> {
 ///
 /// `parent_thread_id` is the primary source once `thread_source` says
 /// `"subagent"`. `session_id` is the fallback: on a subagent thread it holds
-/// the parent's id even when `parent_thread_id` is missing, which is the same
-/// fact CT-069 was filed about, read the other way round. Every subagent
-/// thread in the local corpus carries `parent_thread_id`, so the fallback is
-/// a safety net rather than the normal path. If neither field yields a usable
-/// id, the session is reported as a root rather than as a subagent with no
+/// the parent's id even when `parent_thread_id` is missing. If neither field
+/// yields a usable id, the session is reported as a root rather than as a
+/// subagent with no
 /// parent to name -- that combination has no honest representation.
 ///
 /// A thread that resolves to *itself* as parent is a root, not a cycle. The
@@ -905,7 +903,7 @@ fn saturating_u32(value: usize) -> u32 {
 /// Identity of the payload the API item contributes, excluding transport ids.
 ///
 /// A retried tool result has a new `call_id` but the same `output`; comparing
-/// the whole JSON object would miss exactly the duplicate CT-023 is about.
+/// the whole JSON object would miss the duplicate.
 fn response_item_measurement(
     payload: &Value,
     inner: Option<&str>,
@@ -1079,10 +1077,7 @@ fn translate_response_item(payload: &Value, inner: Option<&str>) -> EventKind {
         // The tool name is derived from the item type rather than read, because
         // the payload does not carry one.
         //
-        // No `web_search_call_output` item exists anywhere in the local corpus,
-        // so the results the model read are not in the log. They are real
-        // context and they land in the unattributed remainder; saying more than
-        // that would be guessing at how the harness replays them.
+        // Results absent from the log remain in the unattributed remainder.
         Some("web_search_call") => EventKind::ToolCall {
             file_target: None,
             tool: "web_search".into(),
@@ -2264,7 +2259,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Thread role (CT-069)
+    // Thread role
     // -----------------------------------------------------------------------
 
     #[test]
@@ -2339,7 +2334,7 @@ mod tests {
 
     #[test]
     fn a_subagent_thread_falls_back_to_session_id_when_parent_thread_id_is_missing() {
-        // The same fact CT-069 was filed about, used deliberately: a subagent
+        // A subagent
         // thread's `session_id` holds the parent's id even when
         // `parent_thread_id` itself is absent.
         let header = Header {
@@ -2379,9 +2374,7 @@ mod tests {
 
     #[test]
     fn a_thread_naming_itself_as_its_parent_is_a_root() {
-        // Observed once in the local corpus, where `ct sessions` printed
-        // `[subagent of 01a00fe2]` on session `01a00fe2`. The `session_id`
-        // fallback is only meaningful when it holds someone else's id.
+        // The `session_id` fallback is meaningful only for a different id.
         let header = Header {
             id: Some("01a00fe2".into()),
             session_id: Some("01a00fe2".into()),

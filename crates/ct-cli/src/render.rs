@@ -93,11 +93,7 @@ pub fn sessions(list: &[SessionDescriptor], json: bool) {
             .last_activity
             .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "-".into());
-        // Appended after the last column rather than given one of its own:
-        // a marker on 26 of 99 rows must not shift every column for the
-        // other 73. Naming the parent, not just flagging the row, is the
-        // point -- CT-069 settled on "sibling session, marked" precisely so
-        // the group's structure is stated rather than merely hidden.
+        // Append the parent marker without shifting columns for root sessions.
         let marker = match &d.thread_role {
             ThreadRole::Root => String::new(),
             ThreadRole::Subagent { parent } => {

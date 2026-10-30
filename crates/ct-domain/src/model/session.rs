@@ -50,9 +50,7 @@ impl fmt::Display for AgentKind {
 /// non-subagent `thread_source`") cannot be constructed at all, rather than
 /// merely being unlikely to occur.
 ///
-/// Deliberately flat, not a tree: CT-069 measured every local subagent thread
-/// naming its group's root directly, with no nesting to model. A nested or
-/// tree presentation is a separate, later question.
+/// The relationship records the parent directly; it does not construct a tree.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ThreadRole {

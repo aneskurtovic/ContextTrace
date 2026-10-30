@@ -1,10 +1,4 @@
 [toolchain]
-# Use the stable toolchain for the host platform: a host-neutral channel lets
-# rustup select the native target rather than pinning one. The previous
-# Windows-GNU pin stopped linking when the local LLVM-MinGW installation no
-# longer supplied GCC runtime libraries.
-#
-# Portable Rust checks and native Linux desktop builds have separate
-# Woodpecker workflows. See docs/CI.md and docs/MACOS.md for acceptance limits.
+# Use the native host toolchain; CI also checks the workspace minimum version.
 channel = "stable"
 components = ["rustfmt", "clippy"]

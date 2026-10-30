@@ -2065,7 +2065,7 @@ h2 {
   }
 }
 
-/* Turn comparison (CT-048). Reuses the doctor panel's row scaffolding so the
+/* Turn comparison. Reuses the doctor panel's row scaffolding so the
    two analysis panels read as one family rather than two dialects. */
 .pin-turn {
   background: var(--panel-hover);
@@ -2136,7 +2136,7 @@ h2 {
   opacity: .65;
 }
 
-/* --- Unlogged context (CT-072) ------------------------------------------ */
+/* --- Unlogged context ------------------------------------------ */
 
 .residual-legend {
   margin-top: 14px;

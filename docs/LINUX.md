@@ -48,8 +48,9 @@ AppImage runtime also supports `--appimage-extract-and-run` where mounting is
 unavailable. A running desktop display, WebKitGTK dependencies, and a D-Bus
 session are needed for the graphical app and desktop integration. Notifications
 also need a desktop notification service. AppImage desktop integration depends
-on the user's environment or integration tool; verify registration and click
-behavior on the actual desktop.
+on the user's environment or integration tool; verify registration on the
+actual desktop. Linux notifications do not support click-through navigation;
+open the app to view and navigate findings.
 
 To install a trusted deb on Debian or Ubuntu and let apt resolve dependencies:
 
@@ -85,7 +86,7 @@ On clean Debian 12 and Ubuntu 24.04 desktop hosts, record distribution,
 desktop/session type, architecture, installed prerequisites and artifact hashes.
 Check deb install, app launch, log discovery for both agents, upgrade, removal
 and archive preservation. Separately run the AppImage, test its updater on a
-signed release, protocol registration, notification delivery and click
-navigation, local file opening, and resume with each available terminal and
+signed release, protocol registration, notification delivery and in-app
+notification navigation, local file opening, and resume with each available terminal and
 both agent CLIs. A headless CI smoke does not prove these behaviors; record
 failures and untested cases independently from Woodpecker results.

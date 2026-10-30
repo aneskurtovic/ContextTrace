@@ -1,40 +1,7 @@
-# What only real Windows can prove.
-#
-# Everything that compiles on Linux moved to rust.yaml and frontend.yaml. What
-# is left is the part that would be a lie anywhere else:
-#
-#   - the Tauri desktop app, which links a real WebView2 application;
-#   - clippy and the test suite over the *whole* workspace, ct-ui included;
-#   - the CLI fixture smokes, which assert on Windows path handling and on the
-#     bytes the archive writes under %LOCALAPPDATA% semantics.
-#
-# This workflow needs the Windows agent advertising the labels below. The
-# explicit scheduler tag is part of the safety boundary: this job links Tauri,
-# exercises MSVC/WebView2 and runs local-host archive smokes.
-#
-# The `local` backend runs these commands directly on the host: same user, same
-# filesystem, no container. That is why no untrusted fork may trigger this
-# repository, and why the release pipeline -- which handles signing material --
-# runs on the trusted Woodpecker Windows agent after a version tag is pushed.
-#
-# There is not one backslash in this file. PowerShell accepts forward slashes in
-# paths, and commit 4ff69ee is the record of what a stray control character
-# inside an embedded Windows path does to a CI file: `.\target\release\ct.exe`
-# became `.` TAB `arget` CR `elease\ct.exe`, and the YAML stopped parsing.
-
-# Narrower than the Linux workflows on purpose. A push to a branch with an open
-# PR fires both `push` and `pull_request`, and Woodpecker cancels superseded
-# pipelines within an event type, not across them. Running both events here
-# would land on one machine running WOODPECKER_MAX_WORKFLOWS=1, so the full
-# workspace clippy, the test
-# suite, npm ci, a Tauri build, a release CLI build and three smokes would run
-# twice back to back on the owner's actual desktop, delaying anything else
-# queued on that machine.
-#
-# This backend executes directly on the owner's persistent Windows host. With
-# a public repository, untrusted pull-request code must never run here. Linux
-# workflows validate pull requests; Windows validation runs after merge on main
-# or by an explicit manual trigger.
+# Native Windows workspace, desktop, and CLI smoke validation.
+# The local backend runs on the host without container isolation; never run
+# untrusted pull-request code on this agent. Push validation runs on main and
+# release packaging runs separately after trusted version tags.
 when:
   - event: [push, manual]
     branch: main
@@ -48,29 +15,12 @@ variables:
   # On the local backend `image` names the shell, not a container.
   - &shell powershell
   - &windows_env
-    # Woodpecker sets CI=woodpecker. Tauri's CLI
-    # binds a `--ci` flag to this variable and parses it as a strict boolean, so
-    # `woodpecker` is rejected outright:
-    #
-    #   error: invalid value 'woodpecker' for '--ci'
-    #     [possible values: true, false]
-    #
-    # The message names the flag, not the variable that set it, which makes this
-    # a genuinely confusing migration failure. Any tool with a strict-bool flag
-    # bound to CI has the same problem, so normalise it for the whole workflow
-    # rather than for the one step that happened to trip over it.
+    # Tauri parses CI as a boolean; Woodpecker defaults it to "woodpecker".
     CI: "true"
     CARGO_TERM_COLOR: always
     CARGO_INCREMENTAL: "0"
-    # Woodpecker's local backend discards the workspace after every pipeline, so
-    # an in-workspace target/ means a cold build of a Tauri-sized dependency
-    # graph on every push -- which on a personal machine is the difference
-    # between CI that gets used and CI that gets switched off. This is the
-    # persistent dependency cache.
-    #
-    # Incremental compilation stays off, so what carries over is fingerprinted
-    # build output, not incremental state a clean checkout would not reproduce.
-    # The agent runs one workflow at a time, so nothing else writes here.
+    # Reuse fingerprinted build output; incremental compilation stays off.
+    # The agent runs one workflow at a time.
     CARGO_TARGET_DIR: C:/woodpecker-cache/contexttrace/target
     npm_config_cache: C:/woodpecker-cache/contexttrace/npm
 
@@ -94,13 +44,7 @@ steps:
     commands:
       - cargo test --workspace --all-targets
 
-  # NO `directory:` in this file. The local backend ignores it -- silently.
-  # pipeline/backend/local/command.go hardcodes `cmd.Dir = state.workspaceDir`
-  # and never reads step.WorkingDir, so a `directory:` here is not a constraint,
-  # a warning, or an error: it simply has no effect, and the step runs at the
-  # workspace root. The Docker backend DOES honour it, which is why the same key
-  # works in frontend.yaml and dropped `npm ci` into the wrong directory here.
-  # Every path below is therefore relative to the repository root.
+  # The local backend ignores `directory:`; paths are relative to the root.
   - name: frontend-dependencies
     image: *shell
     environment: *windows_env

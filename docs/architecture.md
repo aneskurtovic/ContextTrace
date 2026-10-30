@@ -91,9 +91,9 @@ model did not need.
 | `ct-application` — use cases, diagnostics, secret scan/redaction, NDJSON export, item lifecycle, diff, growth | Implemented |
 | `ct-runtime` — shared CLI/desktop composition root | Implemented |
 | `ct-cli` — the commands listed in the [README](../README.md#commands) | Implemented |
-| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented, including project organization and native agent resume; current release acceptance is tracked in [MVP status](MVP-STATUS.md) |
+| `ct-ui` — Tauri v2 + React paged search, growth, composition, contributor lifecycle and Context Doctor | Implemented, including project organization and native agent resume |
 | Standalone JSONL fixture files | Implemented |
-| Reproducible CI, installable release artifacts, release documentation | Woodpecker validates main and packages/publishes version tags; see [MVP status](MVP-STATUS.md) for verified publication |
+| Reproducible CI, installable release artifacts, release documentation | Woodpecker validates main and packages/publishes version tags |
 | Session metadata search | Implemented server-side with explicit paging |
 | SQLite index | Deferred until measured desktop performance requires it |
 
@@ -101,8 +101,7 @@ Formatting, Rust lint/tests, frontend tests/build and the fixture compatibility
 validators are the repeatable local gates. CI runs portable checks on Linux and
 the native Tauri/MSVC build plus Windows-specific CLI smokes on Windows. See
 [CI](CI.md) for the current commands and the limits of what those checks prove.
-The [roadmap](ROADMAP.md) records non-committal future areas; current release
-gates are in [MVP status](MVP-STATUS.md).
+The [roadmap](ROADMAP.md) records non-committal future areas; release gates are in the [release procedure](RELEASING.md).
 
 ## Fixtures
 
@@ -119,6 +118,4 @@ format-drift sweeps run against user-selected data and are not part of the CI
 fixture corpus. The fixture catalog is the reproducible public compatibility
 evidence; it is not an automatic capture of upstream agent releases.
 
-The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records parser
-findings and local validation as of that date. [HANDOFF](../HANDOFF.md) tracks the remaining
-capture, semantic coverage and nested drift-detection work.
+See the [compatibility policy](FORMAT-COMPATIBILITY.md) for coverage limits.

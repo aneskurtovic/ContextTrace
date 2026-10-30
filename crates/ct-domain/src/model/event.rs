@@ -105,9 +105,7 @@ pub enum EventKind {
         /// True when the agent wrote the block but stripped its text, leaving
         /// only an opaque signature.
         ///
-        /// This is the normal case for Claude Code extended thinking -- 99.2% of
-        /// thinking blocks in the local corpus -- and it matters because the
-        /// reasoning still occupied the model's context. `char_len` for a
+        /// The reasoning still occupied the model's context. `char_len` for a
         /// redacted block is *derived from the signature's length*, so it is a
         /// weaker figure than a measured one and diagnostics say so.
         redacted: bool,

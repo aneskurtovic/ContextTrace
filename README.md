@@ -12,8 +12,8 @@ session.
 > **Status: source and Windows releases are public.**
 > The CLI and Windows desktop app implement the discovery-to-diagnosis
 > workflow. Context reconstruction and explicit stream imports have separate
-> contracts, limited to the surfaces and producer versions covered by fixtures. See [MVP status](docs/MVP-STATUS.md)
-> for current verification and release gates.
+> contracts, limited to the surfaces and producer versions covered by fixtures. See
+> [compatibility](docs/FORMAT-COMPATIBILITY.md) and the [release procedure](docs/RELEASING.md).
 
 ![ContextTrace dark overview showing prompt growth and the selected-turn snapshot with synthetic demonstration data](docs/images/desktop-overview-dark.png)
 
@@ -22,11 +22,8 @@ session.
 *The desktop app shows the same local-first measurements in dark and light
 themes. These screenshots use synthetic demonstration data.*
 
-The v0.1.16 release candidate adds request, archive and tool-accounting fixes, safer local-file
-handling, independent live refresh and browsing without usage metrics. See
-[release notes](docs/releases/v0.1.16.md), [current verification](docs/MVP-STATUS.md)
-and the [engineering backlog](docs/BACKLOG.md). Latest stable remains v0.1.15
-until the configured Windows runner returns and Woodpecker publishes v0.1.16.
+See the [release notes](docs/releases/v0.1.16.md) for recent changes and the
+[releases page](https://github.com/aneskurtovic/ContextTrace/releases) for available downloads.
 
 ## What it is
 
@@ -43,10 +40,6 @@ fixtures, limits and the update process. Saved Codex exec/app-server and Claude
 stdout captures have a separate [CLI timeline importer](docs/STREAM-IMPORTS.md);
 those streams do not expose complete request history.
 
-The [2026-10-07 format audit](docs/FORMAT-AUDIT-2026-10-07.md) records recent
-parser fixes and remaining coverage gaps. Maintainers should start with
-[HANDOFF.md](HANDOFF.md) for validation evidence and next steps.
-
 ## Features
 
 What runs today:
@@ -57,7 +50,7 @@ What runs today:
 | Session transcript | What was actually said, with injected content and tool results in place | CLI + desktop |
 | Named sessions | Which session is which, from the log's own title or first prompt | CLI + desktop |
 | Project organization | Temporary workspaces grouped separately, with reversible project visibility preferences | Desktop |
-| Native session resume | Open a saved Codex or Claude Code conversation in a Windows terminal | Desktop |
+| Native session resume | Open a saved Codex or Claude Code conversation in a Windows or Linux terminal | Desktop |
 | Context composition | What filled a turn's context window, by category and confidence | CLI + desktop |
 | Largest contributors | Which items are biggest, ranked and named by what they acted on | CLI + desktop |
 | Item lifecycle tracing | When an item entered context, and when — or why — it left | CLI + desktop |
@@ -175,8 +168,7 @@ Other local settings, including webview project visibility preferences, are not 
 
 Until a release candidate has a verified Windows signature, expect
 SmartScreen to warn about the unsigned installer. See
-[MVP status](docs/MVP-STATUS.md) for the current evidence ceiling and
-[the release procedure](docs/RELEASING.md) for operator checks.
+[the release procedure](docs/RELEASING.md) for verification and acceptance checks.
 
 ## Quickstart
 
@@ -415,7 +407,6 @@ redact by default applies to it unchanged.
 | [Compatibility](docs/FORMAT-COMPATIBILITY.md) | Versioned format evidence and the fixture update process |
 | [Methodology](docs/methodology.md) | How two agents' logs become comparable numbers, and where the tool refuses to answer |
 | [Architecture](docs/architecture.md) | Crate layout, the invariants the type system enforces, fixtures and testing |
-| [MVP status](docs/MVP-STATUS.md) | What's implemented, what's gated, and the release plan |
 | [Release procedure](docs/RELEASING.md) | How Woodpecker packages, signs for the updater, publishes and verifies Windows releases |
 | [Continuous integration](docs/CI.md) | What runs on Linux, what needs real Windows, and what a green pipeline still does not prove |
 | [Projects and resume](docs/projects-and-resume.md) | Temporary folders, project visibility and native conversation continuation |
@@ -428,52 +419,10 @@ redact by default applies to it unchanged.
 The [roadmap](docs/ROADMAP.md) lists areas of interest, not commitments.
 Project-specific contributor guidance is in [CLAUDE.md](CLAUDE.md).
 
-These are the gates [CI](docs/CI.md) enforces. Most of them run on Linux, and
-need no Windows to reproduce:
+See [CI](docs/CI.md) for local checks and platform-specific validation.
 
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --exclude ct-ui --all-targets --locked -- -D warnings
-cargo test --workspace --exclude ct-ui --all-targets --locked
-cargo +1.88.0 check --workspace --exclude ct-ui --all-targets --locked
-cd crates/ct-ui
-npm ci
-npm test
-npm run build
-```
-
-The rest run only on Windows, because `ct-ui` links a real WebView2
-application and the smokes assert on Windows path handling and on the bytes
-the archive writes:
-
-```powershell
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --all-targets --locked
-cargo build --release --locked -p ct-cli
-
-Push-Location crates/ct-ui
-npm ci
-.\node_modules\.bin\tauri.cmd build --no-bundle --ci -- --locked
-Pop-Location
-
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-cli.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-secrets.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-archive.ps1
-```
-
-The smokes arrange their own fixtures under isolated `CODEX_HOME`,
-`CLAUDE_CONFIG_DIR` and `CONTEXTTRACE_ARCHIVE` roots, so running them cannot
-read or write your real sessions and archive.
-
-`npm run dev` by itself opens a browser preview backed by synthetic sessions;
-`npm run tauri dev` runs the native app against the real read-only local
-adapters.
-
-Node 18 runs `npm ci` successfully and then silently omits an optional
-native binding, so the failure surfaces later as `Cannot find native
-binding` — use Node 22. The minimum Rust version is **1.88**, raised from
-1.85 once the Tauri dependency graph made the old claim false; CI checks
-1.88 explicitly.
+`npm run dev` opens a browser preview with synthetic sessions;
+`npm run tauri dev` runs the native app against the local adapters.
 
 ## License
 

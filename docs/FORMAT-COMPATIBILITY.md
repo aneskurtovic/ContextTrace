@@ -1,8 +1,5 @@
 # JSONL format compatibility
 
-The [2026-10-07 audit](FORMAT-AUDIT-2026-10-07.md) records producer
-versions as of that audit, parser fixes, sampled corpus evidence and remaining coverage limits.
-
 ContextTrace supports the persisted, on-disk session formats written by:
 
 - **Codex CLI** under `sessions` and `archived_sessions`;
@@ -62,19 +59,9 @@ The current fixtures are deliberately synthetic and therefore provide
 captures derived from real local JSONL and contain no prompts, source, tool
 output, identifiers or credentials.
 
-The 2026-10-07 evidence adds a synthetic upstream contract for Codex **0.161.0**
-and a local corpus sweep of 229 sessions / 100,651 events. The only remaining
-unrecognised event was one malformed Claude line. Recent Codex files included
-0.161.0; recent Claude files reached 2.1.292. The [2026-10-08 follow-up](FORMAT-FOLLOWUP-2026-10-08.md) subsequently added
-reviewed persisted/stdout captures for Codex **0.161.0** and Claude **2.1.293**.
-Rare Codex shapes still lack feature-matched real captures.
-
-Upstream was rechecked on 2026-10-08 for v0.1.13: the
-[Codex stable release](https://github.com/openai/codex/releases/tag/rust-v0.161.0)
-is still **0.161.0**; the [Claude changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
-now lists **2.1.294**. No version-matched 2.1.294 capture or real-agent resume
-acceptance was added in this patch; it remains unverified. These observations
-do not certify every feature of either producer.
+Reviewed captures include persisted and stdout shapes for Codex **0.161.0**
+and Claude **2.1.293**. Rare Codex shapes still lack feature-matched real
+captures. Claude **2.1.294** has no version-matched capture in this evidence.
 
 The historical reviewed-capture evidence is:
 
@@ -110,19 +97,6 @@ external. A separate synthetic-chain regression verifies that replay traverses
 these notices without dropping the original prompt or counting notice text.
 Unknown future subtypes and malformed JSON still warn.
 
-Classification was checked against the installed Claude **2.1.294** executable
-(SHA-256 `1f6471eb5a1c21a1f8b54a7827329d64433424dcce51717a54e837adb542163a`).
-Its `j6o` and `$6o` constructors create these presentation records; `S_` excludes
-system records other than `local_command`, and the request converter skips
-them. This is local producer-code evidence, not a complete version certification.
-The fixture catalog records the persisted capture's own producer version.
-
-The updated development CLI scanned 43 local Claude sessions / 21,574 events:
-one unrecognised event (the existing malformed JSON line), no unreadable files,
-and no remaining `away_summary` or `bridge_status` warnings. Doctor still exits
-1 for the malformed record. This is local parser verification; the change is
-included in v0.1.10 and was absent from v0.1.9.
-
 ## Update procedure
 
 When a Codex or Claude release changes its persisted transcript shape:
@@ -134,7 +108,7 @@ When a Codex or Claude release changes its persisted transcript shape:
 4. retain the older fixture so the previous format family remains covered;
 5. run `ct doctor --dir --json` against an isolated, version-inventoried local
    corpus and record unknown event types and unreadable files; and
-6. update this catalog's review date and the release notes with the exact
+6. update this document and the release notes with the exact
    producer versions and surfaces verified.
 
 Never commit a real session merely to refresh a template. Prompts, source code,
@@ -152,9 +126,3 @@ corpus local.
 | Unknown/future producer versions | Best-effort parse with visible fidelity limits; no completeness guarantee. |
 | Codex stdout/app-server JSONL | Separate explicit timeline importer; no context reconstruction. See [stream imports](STREAM-IMPORTS.md). |
 | Claude `stream-json` stdout | Separate explicit timeline importer; no context reconstruction. |
-
-
-The [audit follow-up](FORMAT-FOLLOWUP-2026-10-08.md) adds reviewed persisted
-Codex 0.161.0 and Claude 2.1.293 captures, bounded input handling, nested drift
-diagnostics, and separately catalogued stream contracts. Rare new Codex shapes
-remain synthetic-only evidence.

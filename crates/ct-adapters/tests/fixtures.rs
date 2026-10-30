@@ -768,14 +768,7 @@ fn codex_reads_the_per_request_usage_not_the_running_total() {
     );
 }
 
-/// CT-069: a subagent thread's `session_id` names its *parent*, not itself.
-/// Before the fix, the adapter reported `session_id` as identity, so every
-/// thread in a group collapsed onto one id and `ContextTrace::resolve`'s
-/// exact-match short circuit made all but the first file in a group
-/// unreachable. This builds a two-file corpus shaped exactly like a real
-/// group -- one root, one subagent naming it -- through the adapter's public
-/// discovery and load API, so it fails the same way the real defect did if
-/// identity regresses to `session_id`.
+/// A subagent's session_id names its parent; payload.id identifies the thread.
 #[test]
 fn a_subagent_thread_and_its_root_are_independently_reachable() {
     let unique = format!("ct-adapters-subagent-group-{}", std::process::id());

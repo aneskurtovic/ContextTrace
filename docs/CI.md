@@ -9,9 +9,9 @@ job for the native Tauri/MSVC build and Windows-specific CLI smoke tests. The
 Windows job is limited to trusted repository events; do not enable untrusted
 pull requests on any self-hosted runner that can access the host or secrets.
 
-The `main` push runs the frontend, Rust and Windows validation workflows. A
-version tag does not run them again. Its Linux release gate checks their latest
-GitHub commit statuses for the exact tagged SHA, then the Woodpecker Windows
+The `main` push runs the frontend, Rust, Windows and linux-desktop validation
+workflows. A version tag does not run them again. Its Linux release gate checks
+the required GitHub commit statuses for the exact tagged SHA, then the Woodpecker Windows
 workflow packages, publishes and verifies the release. The gate receives no
 release secrets and does not use the Windows runner while checks are pending.
 
@@ -38,6 +38,10 @@ cargo test --workspace --all-targets --locked
 cargo build --release --locked -p ct-cli
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/check-fixture-manifest.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/test-fixture-manifest.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-cli.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-secrets.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ci/smoke-archive.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release/test-release-notes.ps1
 ```
 
 Run the native desktop build on Windows with MSVC and WebView2 prerequisites:
@@ -72,11 +76,8 @@ release artifact.
 
 Release-specific gates are listed in [the release procedure](RELEASING.md).
 
-The [maintainer handoff](../HANDOFF.md) records the latest local validation and
-the local single-worker frontend verification command. That diagnostic
-retry does not replace the configured Woodpecker frontend check. Pipeline
-results must be checked on the exact pushed commit, separately from older
-release pipelines and local corpus evidence.
+Pipeline results must be checked on the exact pushed commit, separately from
+local development checks and clean-host acceptance.
 
 ## Linux desktop lane
 

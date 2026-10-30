@@ -65,13 +65,8 @@ pub fn reconstruct(
             // Everything before this point stopped being in context -- except
             // the system prompt, which was never part of the list being
             // replaced. Codex sends it as the request's own instructions field.
-            // Measured across the local corpus: 47 compactions in 15 sessions,
-            // 593 `replacement_history` entries, of which 450 are user
-            // messages, 96 developer messages and 47 opaque `compaction`
-            // blobs. No entry carries the system role. Clearing it made
-            // `ct trace` report the system prompt as evicted by a compaction,
-            // and inflated the unattributed remainder of every post-compaction
-            // turn by its size.
+            // Clearing it would falsely report eviction and inflate the
+            // unattributed remainder after compaction.
             live.retain(|item| item.source == ContextSource::AgentSystemPrompt);
             preceding_compaction = Some(CompactionEvent {
                 turn: event.turn,

@@ -29,7 +29,7 @@ arguments, legacy `local_shell_call`, `additional_tools`, the
 `retained_context` families are model-invisible host evidence and do not add
 another copy of their text to context. Audio URLs, file-based images and nested
 encrypted content remain opaque estimates. See the
-[dated audit](FORMAT-AUDIT-2026-10-07.md) for unhandled variants and evidence limits.
+[compatibility policy](FORMAT-COMPATIBILITY.md) for evidence limits.
 
 ## Claude Code
 

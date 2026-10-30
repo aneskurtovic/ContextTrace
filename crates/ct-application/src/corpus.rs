@@ -1,29 +1,7 @@
-//! What the whole local corpus says, rather than one session.
+//! Aggregate discovered sessions using usage records and event metadata.
 //!
-//! Every other use case here is scoped to a session, which answers "why did
-//! *that* happen" and never "where did my month go". This one sweeps every
-//! discovered session and reports the totals, the distributions and the
-//! repeat offenders across all of them.
-//!
-//! # Why a full parse is affordable
-//!
-//! [`ContextTrace::sweep_drift`](crate::ContextTrace::sweep_drift) already
-//! walks every binding's `discover()` and `load()`, and did 816 sessions and
-//! 148,970 events in 5.88 seconds (`docs/MVP-STATUS.md`). This sweep is that
-//! walk with more counted per session, so it is bounded by the same parse.
-//!
-//! What keeps it there is what it declines to do. No content analysis: no
-//! payload is hashed or compressed. No reconstruction: no turn's context is
-//! rebuilt, which is the expensive per-turn path the composition views run.
-//! Everything below is read from turn usage records and event metadata that
-//! parsing produced anyway.
-//!
-//! # What it will not claim
-//!
-//! Cost is summed from each session's own report, and the turns those reports
-//! could not price are carried through as a count rather than dropped. A
-//! corpus total that quietly omitted a fifth of the turns would be the most
-//! confidently wrong number this tool could print.
+//! The sweep does not reconstruct context or perform content analysis. Unpriced
+//! turns remain visible as a count so cost totals do not imply full coverage.
 
 use crate::cost;
 use ct_domain::model::event::EventKind;
@@ -136,10 +114,9 @@ pub struct CorpusReport {
     pub sessions_with_compaction: usize,
     /// Compactions that recorded both a before and an after size.
     ///
-    /// The denominator for [`CorpusReport::reclaimed_tokens`], and not a
-    /// detail: every compaction in the local corpus is a Codex one, and Codex
-    /// records the replacement history rather than the two token counts. So
-    /// the reclaimed total is legitimately zero *because nothing measured it*,
+    /// The denominator for [`CorpusReport::reclaimed_tokens`]. Codex records
+    /// replacement history rather than both token counts, so the reclaimed total
+    /// can be zero because nothing measured it,
     /// which reads identically to "compaction freed nothing" unless this
     /// number is beside it.
     pub compactions_measured: usize,
@@ -656,8 +633,7 @@ mod tests {
 
     #[test]
     fn a_compaction_that_recorded_no_sizes_is_counted_but_never_measured() {
-        // Every compaction in the local corpus is a Codex one, and Codex
-        // records the replacement history rather than a before and an after.
+        // Codex can record replacement history without before and after sizes.
         // Reporting `reclaimed 0` alone would read as "compaction freed
         // nothing" when the truth is that nothing measured it.
         let mut corpus = Corpus::new();

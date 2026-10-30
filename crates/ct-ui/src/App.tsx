@@ -1881,7 +1881,7 @@ function CompactionGroup({
 }
 
 /** Groups items by disposition so the three outcomes -- dropped, preserved,
- *  added by replacement -- are distinguishable at a glance, per CT-047. */
+ *  added by replacement -- are distinguishable at a glance. */
 function CompactionGroups({ items }: { items: CompactionDiffItem[] }) {
   const dropped = items.filter((item) => item.disposition.kind === "dropped");
   const preserved = items.filter((item) => item.disposition.kind === "preserved");
@@ -2606,9 +2606,6 @@ function EvidenceTools({
           </button>
         </div>
       </div>
-      {/* The baseline control lives beside the button it gates. It was
-          previously only reachable from the turn view, which left this panel
-          showing a permanently disabled button and no way to find out why. */}
       <div className="ghost-baseline">
         <span>
           {pinnedTurn == null

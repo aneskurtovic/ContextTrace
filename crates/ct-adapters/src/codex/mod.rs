@@ -169,8 +169,8 @@ fn describe(path: &Path) -> PortResult<SessionDescriptor> {
 
     // `payload.id` is the file's own identity and is unique across every
     // local rollout file, including a subagent thread's -- unlike
-    // `session_id`, which a subagent thread reports as its *parent's* id (see
-    // CT-069). Prefer it; fall back to `session_id` only when a line predates
+    // `session_id`, which a subagent thread reports as its *parent's* id.
+    // Prefer it; fall back to `session_id` only when a line predates
     // `id` entirely, then to the uuid in the filename.
     let id = header
         .id
@@ -246,10 +246,7 @@ mod tests {
         path
     }
 
-    // CT-069: a subagent thread's `session_id` names its *parent*, not
-    // itself. Before the fix, `describe` reported `session_id` as identity,
-    // so every thread in a group collapsed onto the same id and only one file
-    // per group was reachable.
+    // A subagent thread's `session_id` names its parent, not itself.
     #[test]
     fn describe_uses_payload_id_not_the_parents_session_id() {
         let path = temp_rollout(

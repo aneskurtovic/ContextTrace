@@ -102,11 +102,7 @@ export const demoSessions: SessionSummary[] = [
     threadRole: root,
   },
   {
-    // A demo subagent thread, so the marker this feature adds has something
-    // to render without needing a real corpus to show it. Named after the
-    // Codex session above rather than a new parent, matching CT-069's
-    // measured shape: every local group's children point at their group's
-    // root directly.
+    // Demonstrate a subagent linked to the Codex session above.
     id: "0198fce2-a9c1-4f30",
     agent: "codex",
     path: "C:\\Users\\demo\\.codex\\sessions\\contexttrace-subagent.jsonl",

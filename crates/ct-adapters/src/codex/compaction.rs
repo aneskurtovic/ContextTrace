@@ -359,17 +359,8 @@ mod tests {
         TiktokenEstimator::o200k().unwrap()
     }
 
-    // CT-066: the quadratic scan paired the Nth occurrence of a value in
-    // `before` with the Nth *unclaimed* occurrence in `replacement`, walking
-    // both lists in ascending index order. A naive `HashMap<Fingerprint,
-    // usize>` rewrite would instead let every occurrence after the first
-    // collide on one slot, so this fixes three duplicate `dup` items in
-    // `before` against two in `replacement` and checks the exact pairing,
-    // including which occurrence gets `Dropped` when a side runs out, and
-    // that `replacement_index` (not just `history_index`) is preserved
-    // for each match. This test was run against the pre-CT-066 quadratic
-    // `compare` (by temporarily reverting just the matching loop) before the
-    // fingerprint rewrite landed, and passed unchanged.
+    // Duplicate values pair in ascending order, preserving both indices and
+    // marking unmatched occurrences as dropped.
     #[test]
     fn duplicate_values_pair_off_in_ascending_index_order_on_both_sides() {
         let source = SourceRef::new(FileId(0), 0, 500, 1);
@@ -453,25 +444,10 @@ mod tests {
         );
     }
 
-    // CT-066: demonstrates the linear-scan claim rather than just asserting
-    // it. Not run by default (timing assertions in a normal CI pass are
-    // flaky by nature) — this exists so the claim can be re-checked by hand.
-    // Worst case for the old quadratic scan: zero overlap between the two
-    // histories means every pre-compaction item forces a full scan of the
-    // replacement array (`.find` never short-circuits on a match), so this
-    // isolates the O(n*m) term as cleanly as possible.
-    //
-    // Measured on this machine, `cargo test -p ct-adapters --release --
-    // --ignored --nocapture linear_scan_replaces_the_quadratic_one_it_replaced`,
-    // 5,000 x 5,000 non-overlapping items: the fingerprint version in this
-    // file completes in ~0.41s. Temporarily restoring the pre-CT-066
-    // quadratic `compare` (the one with `replacement.iter().enumerate().find`)
-    // and rerunning the identical test took ~4.52s -- an ~11x difference
-    // already at this size, growing without bound as histories grow further
-    // since one term is O(n) and the other O(n^2). See the CT-066 report for
-    // the exact numbers from that run.
+    // Non-overlapping histories exercise the matching scan's worst case.
+    // This timing check is manual because timing assertions are flaky in CI.
     #[test]
-    #[ignore = "CT-066: manual verification of the linear-scan claim, not a CI assertion"]
+    #[ignore = "Manual timing check, not a CI assertion"]
     fn linear_scan_replaces_the_quadratic_one_it_replaced() {
         use std::time::Instant;
 
@@ -513,7 +489,7 @@ mod tests {
             CompactionItemDisposition::AddedByReplacement { .. }
         )));
 
-        eprintln!("CT-066 timing: {N}x{N} non-overlapping items compared in {elapsed:?}");
+        eprintln!("Timing: {N}x{N} non-overlapping items compared in {elapsed:?}");
     }
 
     #[test]

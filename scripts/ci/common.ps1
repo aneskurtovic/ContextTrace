@@ -1,28 +1,8 @@
-# Shared helpers for the ContextTrace CI smoke scripts. Dot-source, do not run.
-#
-# These assertions used to live inline in `.github/workflows/ci.yml`, as ~190
-# lines of PowerShell embedded in YAML. They are here as real script files for
-# three reasons:
-#
-# 1. They are the security assertions -- that no credential survives a redacted
-#    export, and that none reaches the archive on disk. Under Woodpecker's
-#    `local` backend the step body is handed to a generated shell wrapper, and a
-#    wrapper that swallowed a mid-script `throw` or a non-zero native exit code
-#    would report green. A single `.ps1` invocation has one unambiguous exit
-#    code, so the check does not depend on wrapper semantics we have not proven.
-# 2. The owner can run the exact bytes CI runs, before pushing.
-# 3. PowerShell embedded in YAML has already broken this repository once: commit
-#    4ff69ee repaired a workflow whose `.\target\release\ct.exe` had been mangled
-#    into `.` TAB `arget` CR `elease\ct.exe` in five places, taking the whole
-#    file out of the YAML parser. Fewer control characters inside YAML strings
-#    is a defect class removed rather than mitigated.
-
-# Version 1.0 deliberately, not Latest. 1.0 catches the misspelled variable,
-# which is the mistake that would quietly weaken an assertion here. 2.0 and up
-# also prohibit reading a property an object does not have -- and these scripts
-# filter heterogeneous JSON (`$_.disposition.kind` over compaction items), where
-# a missing property is data, not a defect. Turning that into a failure would
-# trade a silent weakening for a noisy false red.
+# Shared helpers for CI smoke scripts. Dot-source, do not run.
+# Individual scripts provide an unambiguous exit code for security assertions
+# under the Woodpecker shell wrapper, including on Windows PowerShell 5.1.
+# Strict mode 1.0 catches undefined variables while allowing missing properties
+# in heterogeneous JSON; higher versions reject those properties.
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = 'Stop'
 
@@ -42,16 +22,8 @@ function New-CleanDirectory {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
-# Every smoke script calls this, and it always isolates *both* agent homes plus
-# the archive -- never only the agent whose fixture the script asserts on.
-#
-# On a fresh GitHub-hosted runner, isolating one home was harmless because the
-# other was empty. On a self-hosted agent it is the owner's own machine, where
-# `%USERPROFILE%\.claude` holds hundreds of real sessions; those get discovered,
-# and `ct sessions` returns its default page of them rather than the fixture.
-# The failure is a wrong session id, not an error. Isolating the archive matters
-# for the same reason: `CONTEXTTRACE_ARCHIVE` unset resolves to `%LOCALAPPDATA%`,
-# and CI must never write into the operator's real archive.
+# Isolate both agent homes and the archive so self-hosted CI neither reads
+# the operator's sessions nor writes to the operator's archive.
 function Use-IsolatedAgentHomes {
     param([Parameter(Mandatory)][string]$Root)
 

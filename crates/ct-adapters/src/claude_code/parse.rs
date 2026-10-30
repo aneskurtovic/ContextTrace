@@ -773,10 +773,8 @@ fn block_type(block: &Value) -> Option<&str> {
 /// Signature characters per character of thinking text.
 ///
 /// Extended-thinking blocks are written to the log with their text removed and
-/// only an opaque `signature` left behind -- 5,820 of 5,869 thinking blocks in
-/// the local corpus, some 27 million characters of signature in total. Counting
-/// those blocks as zero would silently drop the largest single category of
-/// unlogged context.
+/// only an opaque `signature` left behind. Counting those blocks as zero
+/// would omit context that the model received.
 ///
 /// # Why a regression slope and not the median ratio
 ///
@@ -1060,9 +1058,7 @@ fn block_text(block: &Value) -> Option<String> {
             .and_then(Value::as_str)
             .map(str::to_string),
         "thinking" => Some(match block.get("thinking").and_then(Value::as_str) {
-            // The ordinary case in the local corpus: 5,820 of 5,869 thinking
-            // blocks were written with their text stripped. The block still
-            // occupied the model's context, so the reader is told it was there.
+            // A redacted block still occupied the model's context.
             Some(thinking) if !thinking.is_empty() => thinking.to_string(),
             _ => "[thinking, recorded without its text]".into(),
         }),
@@ -1126,17 +1122,9 @@ fn first_text(blocks: Option<&Vec<Value>>, max: usize) -> String {
 ///
 /// One assistant message can be produced by several API calls, which the log
 /// records in an `iterations` array. When it does, the *top-level*
-/// `cache_creation_input_tokens` and `cache_read_input_tokens` are the sums
-/// across those calls -- verified on 466 of 474 multi-iteration records in the
-/// local corpus, where both fields matched the sum exactly.
-///
-/// Summing them therefore reports a prompt far larger than any that was sent:
-/// one record totals 844,611 tokens while its largest single call is 429,328.
-///
-/// The prompt we want is the biggest single request, because "what was in the
-/// model's context at this turn" is a property of one call. The last call is
-/// usually within a fraction of a percent of the largest, but the largest is the
-/// high-water mark the rest of the tool talks about.
+/// `cache_creation_input_tokens` and `cache_read_input_tokens` can be sums
+/// across those calls, rather than the size of a single prompt. Use the largest
+/// individual request as the turn's context high-water mark.
 pub(crate) fn usage_from_message(v: &Value) -> Option<TokenUsage> {
     let usage = v.get("message")?.get("usage")?;
 

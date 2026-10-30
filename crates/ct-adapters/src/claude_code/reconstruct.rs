@@ -34,9 +34,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Guard against a malformed or cyclic parent chain.
 ///
-/// Sessions in the local corpus reach a few thousand events; a chain longer
-/// than this means a `parentUuid` cycle, and spinning forever is a worse
-/// failure than truncating.
+/// Bound traversal of unusually long chains as well as malformed cycles.
 const MAX_CHAIN: usize = 100_000;
 
 pub fn reconstruct(
@@ -501,9 +499,7 @@ mod tests {
     #[test]
     fn a_subagent_transcript_never_enters_the_main_thread_context() {
         // A subagent runs against its own context window. Folding its transcript
-        // into the main thread inflates every figure for the main thread, and
-        // nothing in the corpus would catch it: no session on this machine uses
-        // subagents, so only a fixture can hold the line.
+        // into the main thread inflates its figures.
         let mut sub = ev(2, "sub", Some("a"), msg(MessageRole::Assistant, 500_000));
         sub.links.is_sidechain = true;
 
